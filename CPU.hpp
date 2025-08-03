@@ -963,17 +963,14 @@ public:
         SIZE_T bytesRead = 0;
         Zydis disasm(true);
 
-#if analyze_ENABLED
-
-        if (compareRegState(g_regs_first_time, g_regs) && !is_first_time)
-            LOG_analyze(GREEN,"Maybe OEP ? aT :0x"<<std::hex<< g_regs.rip);
-        if (is_first_time) {
-
-            g_regs_first_time = g_regs;
-            is_first_time = 0;
-        }
-
-#endif
+//#if analyze_ENABLED
+//
+//        if (is_first_time) {
+//
+//            g_regs_first_time = g_regs;
+//
+//        }
+//#endif
         while (true) {
             //DumpRegisters();
             if (!ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, sizeof(buffer), &bytesRead) || bytesRead == 0) {
@@ -982,7 +979,14 @@ public:
                     << L", GetLastError = " << std::dec << err);
                 break;
             }
-
+//#if analyze_ENABLED
+//
+//            if (compareRegState(g_regs_first_time, g_regs) && !is_first_time)
+//                LOG_analyze(GREEN, "Maybe OEP ? aT :0x" << std::hex << g_regs.rip);
+//            else
+//                is_first_time = 0;
+//
+//#endif
 
             if (disasm.Disassemble(address, buffer, bytesRead)) {
 #if DB_ENABLED
