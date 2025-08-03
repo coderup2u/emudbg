@@ -15,7 +15,7 @@
 
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -922,6 +922,10 @@ public:
             { ZYDIS_MNEMONIC_CVTSI2SD, &CPU::emulate_cvtsi2sd },
             { ZYDIS_MNEMONIC_DIVSD, &CPU::emulate_divsd },
             { ZYDIS_MNEMONIC_MULSD, &CPU::emulate_mulsd },
+            { ZYDIS_MNEMONIC_SUBSS, &CPU::emulate_subss },
+            { ZYDIS_MNEMONIC_ADDSD, &CPU::emulate_addsd },
+            { ZYDIS_MNEMONIC_SUBSD, &CPU::emulate_subsd },
+            { ZYDIS_MNEMONIC_SQRTPD, &CPU::emulate_sqrtpd },
             
         };
 
@@ -1975,6 +1979,91 @@ private:
         LOG(L"[+] ADDSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => " << std::dec << result_scalar);
+    }
+    void emulate_subss(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        __m128 dst_val, src_val;
+        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operands for SUBSS");
+            return;
+        }
+
+        float a = dst_val.m128_f32[0];
+        float b = src_val.m128_f32[0];
+        float result_scalar = a - b;
+
+        dst_val.m128_f32[0] = result_scalar;
+
+        write_operand_value(dst, 128, dst_val);
+
+        LOG(L"[+] SUBSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
+            << L" => " << std::dec << result_scalar);
+    }
+    void emulate_addsd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        __m128d dst_val, src_val;
+        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operands for ADDSD");
+            return;
+        }
+
+        double a = dst_val.m128d_f64[0];
+        double b = src_val.m128d_f64[0];
+        double result_scalar = a + b;
+
+        dst_val.m128d_f64[0] = result_scalar;
+
+        write_operand_value(dst, 128, dst_val);
+
+        LOG(L"[+] ADDSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
+            << L" => " << std::dec << result_scalar);
+    }
+    void emulate_subsd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        __m128d dst_val, src_val;
+        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operands for SUBSD");
+            return;
+        }
+
+        double a = dst_val.m128d_f64[0];
+        double b = src_val.m128d_f64[0];
+        double result_scalar = a - b;
+
+        dst_val.m128d_f64[0] = result_scalar;
+
+        write_operand_value(dst, 128, dst_val);
+
+        LOG(L"[+] SUBSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
+            << L" => " << std::dec << result_scalar);
+    }
+    void emulate_sqrtpd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        __m128d src_val;
+        if (!read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operand for SQRTPD");
+            return;
+        }
+
+        __m128d result;
+        result.m128d_f64[0] = std::sqrt(src_val.m128d_f64[0]);
+        result.m128d_f64[1] = std::sqrt(src_val.m128d_f64[1]);
+
+        write_operand_value(dst, 128, result);
+
+        LOG(L"[+] SQRTPD => sqrt([" << src_val.m128d_f64[0] << ", " << src_val.m128d_f64[1]
+            << L"]) = [" << result.m128d_f64[0] << ", " << result.m128d_f64[1] << "]");
     }
 
     void emulate_mul(const ZydisDisassembledInstruction* instr) {
