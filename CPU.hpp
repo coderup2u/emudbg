@@ -1014,6 +1014,17 @@ public:
                     if (!IsInEmulationRange(address)) {
 #if analyze_ENABLED
                         LOG_analyze( CYAN ,  GetExportedFunctionNameByAddress(address).c_str());
+
+                        uint8_t buffer[16] = {};
+                        if (ReadMemory(address, buffer, sizeof(buffer))) {
+                            if (disasm.Disassemble(address, buffer, bytesRead)) {
+                                const ZydisDisassembledInstruction* op = disasm.GetInstr();
+                                if (op->info.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
+                                    LOG_analyze(YELLOW, "indirect syscall from RIP[0x"<<std::hex<< g_regs.rip<<"]");
+                                }
+                            }
+                        }
+
 #endif
 
                         uint64_t value = 0;
