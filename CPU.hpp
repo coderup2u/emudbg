@@ -860,6 +860,7 @@ public:
             { ZYDIS_MNEMONIC_CVTDQ2PS, &CPU::emulate_cvtdq2ps },
             { ZYDIS_MNEMONIC_ADDSS, &CPU::emulate_addss },
             { ZYDIS_MNEMONIC_CDQ, &CPU::emulate_cdq },
+            { ZYDIS_MNEMONIC_CQO, &CPU::emulate_cqo },
             
         };
 
@@ -2586,6 +2587,14 @@ private:
         LOG(L"[+] CDQ => EAX = 0x" << std::hex << g_regs.rax.d
             << L", EDX = 0x" << g_regs.rdx.q);
     }
+    void emulate_cqo(const ZydisDisassembledInstruction* instr) {
+        int64_t rax = static_cast<int64_t>(g_regs.rax.q);
+        g_regs.rdx.q = (rax < 0) ? 0xFFFFFFFFFFFFFFFF : 0x0000000000000000;
+
+        LOG(L"[+] CQO => RAX = 0x" << std::hex << g_regs.rax.q
+            << L", RDX = 0x" << g_regs.rdx.q);
+    }
+
     void emulate_stosq(const ZydisDisassembledInstruction* instr) {
 
         WriteMemory(g_regs.rdi.q, &g_regs.rax.q, sizeof(uint64_t));
