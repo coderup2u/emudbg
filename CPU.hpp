@@ -861,6 +861,9 @@ public:
             { ZYDIS_MNEMONIC_ADDSS, &CPU::emulate_addss },
             { ZYDIS_MNEMONIC_CDQ, &CPU::emulate_cdq },
             { ZYDIS_MNEMONIC_CQO, &CPU::emulate_cqo },
+            { ZYDIS_MNEMONIC_CVTSI2SD, &CPU::emulate_cvtsi2sd },
+            { ZYDIS_MNEMONIC_DIVSD, &CPU::emulate_divsd },
+            { ZYDIS_MNEMONIC_MULSD, &CPU::emulate_mulsd },
             
         };
 
@@ -2060,6 +2063,31 @@ private:
             << L" => " << std::dec << result_scalar);
     }
 
+    void emulate_mulsd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];  // XMM register
+        const auto& src = instr->operands[1];  // XMM register or memory
+
+        __m128d dst_val, src_val;
+        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operands for MULSD");
+            return;
+        }
+
+
+        double a = dst_val.m128d_f64[0];
+        double b = src_val.m128d_f64[0];
+
+        double result_scalar = a * b;
+
+
+        dst_val.m128d_f64[0] = result_scalar;
+
+        write_operand_value(dst, 128, dst_val);
+
+        LOG(L"[+] MULSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
+            << L" => " << std::dec << result_scalar);
+    }
 
     void emulate_scasd(const ZydisDisassembledInstruction* instr) {
 
@@ -2637,6 +2665,38 @@ private:
 
         LOG(L"[+] CVTTSS2SI " << (width == 64 ? L"(qword)" : L"(dword)")
             << " => " << std::dec << fval << " -> " << result);
+    }
+    void emulate_cvtsi2sd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];  // XMM register
+        const auto& src = instr->operands[1];  // GPR (r/m32 or r/m64)
+
+        uint64_t src_val = 0;
+        if (!read_operand_value(src, src.size, src_val)) {
+            LOG(L"[!] Failed to read source operand for CVTSI2SD");
+            return;
+        }
+
+        double result = 0.0;
+
+        if (src.size == 32) {
+            result = static_cast<double>(static_cast<int32_t>(src_val));  // sign-extend then convert
+        }
+        else if (src.size == 64) {
+            result = static_cast<double>(static_cast<int64_t>(src_val));
+        }
+        else {
+            LOG(L"[!] Unsupported source size for CVTSI2SD: " << src.size);
+            return;
+        }
+
+        __m128d dst_val = {};
+        dst_val.m128d_f64[0] = result;  // Only the low double is written; upper remains unchanged or zero
+
+        write_operand_value(dst, 128, dst_val);
+
+        LOG(L"[+] CVTSI2SD => Int(" << (src.size == 32 ? static_cast<int32_t>(src_val)
+            : static_cast<int64_t>(src_val))
+            << L") -> Double = " << result);
     }
 
 
@@ -3775,6 +3835,24 @@ private:
         LOG(L"[+] DIVSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => " << std::dec << result.m128_f32[0]);
+    }
+    void emulate_divsd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];  // XMM register
+        const auto& src = instr->operands[1];  // XMM register or memory
+
+        __m128d dst_val, src_val;
+        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operands for DIVSD");
+            return;
+        }
+
+        __m128d result = _mm_div_sd(dst_val, src_val);  // Only affects lower 64 bits (double)
+
+        write_operand_value(dst, 128, result);
+
+        LOG(L"[+] DIVSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
+            << L" => " << std::dec << result.m128d_f64[0]);
     }
 
     void emulate_rdtsc(const ZydisDisassembledInstruction*) {
