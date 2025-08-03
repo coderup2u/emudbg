@@ -110,7 +110,7 @@ int wmain(int argc, wchar_t* argv[]) {
                 uint64_t pointer = ctx.Rdx, address = 0;
                 if (ReadProcessMemory(pi.hProcess, (LPCVOID)pointer, &address, sizeof(address), nullptr) && IsInEmulationRange(address)) {
 #if analyze_ENABLED
-                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : "<< address);
+                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << address);
 
 #endif
                     CPU cpu(hThread);
