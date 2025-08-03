@@ -962,7 +962,7 @@ public:
         BYTE buffer[16] = { 0 };
         SIZE_T bytesRead = 0;
         Zydis disasm(true);
-
+//
 //#if analyze_ENABLED
 //
 //        if (is_first_time) {
