@@ -1,4 +1,5 @@
 ﻿#include "cpu.hpp"
+
 using namespace std;
 
 std::unordered_map<DWORD, CPU> cpuThreads;
@@ -81,15 +82,7 @@ int wmain(int argc, wchar_t* argv[]) {
                         auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
                         valid_ranges.emplace_back(moduleBase, moduleBase + optionalHeader.SizeOfImage);
                         HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
-                        if (modEntryRVA) {
-                            uint64_t addr = moduleBase + modEntryRVA;
-                            if (bpType == BreakpointType::Hardware)
-                                SetHardwareBreakpointAuto(hThread, addr);
-                            else {
-                                BYTE orig;
-                                if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
-                            }
-                        }
+                        if (modEntryRVA) modTLSRVAs.push_back(modEntryRVA);
 
                         for (auto &rva : modTLSRVAs) {
                             uint64_t addr = moduleBase + rva;
@@ -117,7 +110,7 @@ int wmain(int argc, wchar_t* argv[]) {
                 uint64_t pointer = ctx.Rdx, address = 0;
                 if (ReadProcessMemory(pi.hProcess, (LPCVOID)pointer, &address, sizeof(address), nullptr) && IsInEmulationRange(address)) {
 #if analyze_ENABLED
-                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : "<<std::hex<< address);
+                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : "<< address);
 
 #endif
                     CPU cpu(hThread);
@@ -149,15 +142,7 @@ int wmain(int argc, wchar_t* argv[]) {
             }
 
             if (!waitForModule) {
-                if (entryRVA) {
-                    uint64_t addr = baseAddress + entryRVA;
-                    if (bpType == BreakpointType::Hardware)
-                        SetHardwareBreakpointAuto(hThread, addr);
-                    else {
-                        BYTE orig;
-                        if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
-                    }
-                }
+                if (entryRVA) tlsRVAs.push_back(entryRVA);
                
                 for (auto &rva : tlsRVAs) {
                     uint64_t addr = baseAddress + rva;
