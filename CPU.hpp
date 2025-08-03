@@ -29,7 +29,49 @@
 #define LOG(x)
 #endif
 
+union GPR {
+    uint64_t q;
+    uint32_t d;
+    uint16_t w;
+    struct { uint8_t l, h; };
+};
+union YMM {
+    struct {
+        uint8_t xmm[16];
+        uint8_t ymmh[16];
+    };
+    uint8_t full[32];
+};
+struct Flags {
+    uint64_t CF : 1;
+    uint64_t : 1;
+    uint64_t PF : 1;
+    uint64_t : 1;
+    uint64_t AF : 1;
+    uint64_t : 1;
+    uint64_t ZF : 1;
+    uint64_t SF : 1;
+    uint64_t TF : 1;
+    uint64_t IF : 1;
+    uint64_t DF : 1;
+    uint64_t OF : 1;
+};
 
+union RFlags {
+    uint64_t value;
+    Flags flags;
+};
+
+struct RegState {
+    GPR rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp;
+    GPR r8, r9, r10, r11, r12, r13, r14, r15;
+    uint64_t rip;
+    RFlags rflags;
+    YMM ymm[16];
+    uint64_t gs_base;
+    uint64_t fs_base;
+    uint64_t peb_address;
+};
 enum class ThreadState {
     Unknown,
     Running,
@@ -60,6 +102,22 @@ IMAGE_OPTIONAL_HEADER64 optionalHeader;
 #if analyze_ENABLED
 #include <psapi.h>
 uint64_t ntdllBase = 0;
+bool is_first_time = 1;
+bool compareGPR(const GPR& a, const GPR& b) {
+    return a.q == b.q;
+}
+bool compareRegState(const RegState& a, const RegState& b) {
+    const GPR* gprs_a[] = {  &a.rbx, &a.rcx, &a.rdx, &a.rsi, &a.rdi, &a.rbp,
+                            &a.r8, &a.r9, &a.r10, &a.r11, &a.r12, &a.r13, &a.r14, &a.r15 };
+    const GPR* gprs_b[] = {  &b.rbx, &b.rcx, &b.rdx, &b.rsi, &b.rdi, &b.rbp,
+                            &b.r8, &b.r9, &b.r10, &b.r11, &b.r12, &b.r13, &b.r14, &b.r15 };
+
+    for (int i = 0; i < 14; ++i) {
+        if (!compareGPR(*gprs_a[i], *gprs_b[i]))
+            return false;
+    }
+}
+RegState g_regs_first_time;
 static const std::map<uint64_t, std::string> ntdll_directory_offsets = {
     {0x00000070, "Export Directory RVA"},
     {0x00000078, "Export Directory Size"},
@@ -905,6 +963,17 @@ public:
         SIZE_T bytesRead = 0;
         Zydis disasm(true);
 
+#if analyze_ENABLED
+
+        if (compareRegState(g_regs_first_time, g_regs) && !is_first_time)
+            LOG_analyze(GREEN,"Maybe OEP ? aT :0x"<<std::hex<< g_regs.rip);
+        if (is_first_time) {
+
+            g_regs_first_time = g_regs;
+            is_first_time = 0;
+        }
+
+#endif
         while (true) {
             //DumpRegisters();
             if (!ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, sizeof(buffer), &bytesRead) || bytesRead == 0) {
@@ -1272,49 +1341,7 @@ public:
 private:
     // ------------------- Register State -------------------
 
-    union GPR {
-        uint64_t q;
-        uint32_t d;
-        uint16_t w;
-        struct { uint8_t l, h; };
-    };
-    union YMM {
-        struct {
-            uint8_t xmm[16];
-            uint8_t ymmh[16];
-        };
-        uint8_t full[32];
-    };
-    struct Flags {
-        uint64_t CF : 1;
-        uint64_t : 1;
-        uint64_t PF : 1;
-        uint64_t : 1;
-        uint64_t AF : 1;
-        uint64_t : 1;
-        uint64_t ZF : 1;
-        uint64_t SF : 1;
-        uint64_t TF : 1;
-        uint64_t IF : 1;
-        uint64_t DF : 1;
-        uint64_t OF : 1;
-    };
-
-    union RFlags {
-        uint64_t value;
-        Flags flags;
-    };
-
-    struct RegState {
-        GPR rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp;
-        GPR r8, r9, r10, r11, r12, r13, r14, r15;
-        uint64_t rip;
-        RFlags rflags;
-        YMM ymm[16];
-        uint64_t gs_base;
-        uint64_t fs_base;
-        uint64_t peb_address;
-    } g_regs;
+    RegState g_regs;
     std::unordered_map<ZydisMnemonic, void (CPU::*)(const ZydisDisassembledInstruction*)> dispatch_table;
     std::unordered_map<ZydisRegister, void* > reg_lookup;
 
