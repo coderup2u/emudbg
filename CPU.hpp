@@ -13,13 +13,16 @@
 #include <tlhelp32.h>
 #include <xmmintrin.h>
 
+
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
 #define DB_ENABLED 0
+//stealth 
+#define Stealth_Mode_ENABLED 1
 //------------------------------------------
 
 
@@ -97,10 +100,12 @@ BreakpointType bpType = BreakpointType::Software;
 std::vector<std::pair<uint64_t, uint64_t>> valid_ranges;
 PROCESS_INFORMATION pi;
 IMAGE_OPTIONAL_HEADER64 optionalHeader;
-
+#if Stealth_Mode_ENABLED
+uint64_t kernelBase_address;
+#endif
 
 #if analyze_ENABLED
-#include <psapi.h>
+
 uint64_t ntdllBase = 0;
 bool is_first_time = 1;
 bool compareGPR(const GPR& a, const GPR& b) {
@@ -740,6 +745,7 @@ std::vector<uint32_t> GetTLSCallbackRVAs(const std::wstring& exePath) {
     return tlsCallbacks;
 }
 
+
 uint32_t GetEntryPointRVA(const std::wstring& exePath) {
     std::ifstream file(exePath, std::ios::binary);
     if (!file) return 0;
@@ -755,6 +761,78 @@ uint32_t GetEntryPointRVA(const std::wstring& exePath) {
     file.read(reinterpret_cast<char*>(&optionalHeader), sizeof(optionalHeader));
     return optionalHeader.AddressOfEntryPoint;
 }
+
+bool EnableStealthMode(HANDLE hThread) {
+    uint64_t tebAddr = GetTEBAddress(hThread);
+    if (tebAddr == 0) return false;
+
+    uint64_t pebAddr = 0;
+    if (!ReadProcessMemory(pi.hProcess, (LPCVOID)(tebAddr + 0x60), &pebAddr, sizeof(pebAddr), nullptr)) {
+        return false;
+    }
+
+    BYTE zero = 0;
+
+    // 1. Clear BeingDebugged (PEB+0x2)
+    if (!WriteProcessMemory(pi.hProcess, (LPVOID)(pebAddr + 0x2), &zero, sizeof(zero), nullptr)) {
+        return false;
+    }
+
+    // 2. Clear NtGlobalFlag (PEB+0xBC)
+    if (!WriteProcessMemory(pi.hProcess, (LPVOID)(pebAddr + 0xBC), &zero, sizeof(zero), nullptr)) {
+        return false;
+    }
+
+    // 3. Clear HeapFlags and HeapForceFlags
+    uint64_t processHeapAddr = 0;
+    if (!ReadProcessMemory(pi.hProcess, (LPCVOID)(pebAddr + 0x30), &processHeapAddr, sizeof(processHeapAddr), nullptr)) {
+        return false;
+    }
+
+    DWORD heapFlags = 0;
+    DWORD heapForceFlags = 0;
+
+    // HeapFlags = ProcessHeap + 0x70
+  //  WriteProcessMemory(pi.hProcess, (LPVOID)(processHeapAddr + 0x70), &heapFlags, sizeof(heapFlags), nullptr);
+
+    // HeapForceFlags = ProcessHeap + 0x74
+  //  WriteProcessMemory(pi.hProcess, (LPVOID)(processHeapAddr + 0x74), &heapForceFlags, sizeof(heapForceFlags), nullptr);
+
+
+
+    return true;
+}
+
+bool Patch_CheckRemoteDebuggerPresent() {
+    if (!kernelBase_address) return false;
+
+    HMODULE hLocalKernelBase = GetModuleHandleW(L"kernelbase.dll");
+    if (!hLocalKernelBase) return false;
+
+    FARPROC localFunc = GetProcAddress(hLocalKernelBase, "CheckRemoteDebuggerPresent");
+    if (!localFunc) return false;
+
+    uintptr_t offset = (uintptr_t)localFunc - (uintptr_t)hLocalKernelBase;
+    LPVOID remoteFuncAddr = (LPVOID)(kernelBase_address + offset);
+
+    BYTE patch[] = {
+        0x48, 0x31, 0xC0,  // xor rax, rax
+        0xC3               // ret
+    };
+
+    DWORD oldProtect;
+    if (VirtualProtectEx(pi.hProcess, remoteFuncAddr, sizeof(patch), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        if (WriteProcessMemory(pi.hProcess, remoteFuncAddr, patch, sizeof(patch), nullptr)) {
+            VirtualProtectEx(pi.hProcess, remoteFuncAddr, sizeof(patch), oldProtect, &oldProtect);
+            return true;
+        }
+
+        VirtualProtectEx(pi.hProcess, remoteFuncAddr, sizeof(patch), oldProtect, &oldProtect);
+    }
+
+    return false;
+}
+
 // ----------------------------- CPU Class Definition -----------------------------
 
 class CPU {
