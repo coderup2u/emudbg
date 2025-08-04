@@ -16,7 +16,7 @@
 
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -105,7 +105,7 @@ uint64_t kernelBase_address;
 #endif
 
 #if analyze_ENABLED
-
+#include <psapi.h>  
 uint64_t ntdllBase = 0;
 bool is_first_time = 1;
 bool compareGPR(const GPR& a, const GPR& b) {
@@ -1004,6 +1004,7 @@ public:
             { ZYDIS_MNEMONIC_ADDSD, &CPU::emulate_addsd },
             { ZYDIS_MNEMONIC_SUBSD, &CPU::emulate_subsd },
             { ZYDIS_MNEMONIC_SQRTPD, &CPU::emulate_sqrtpd },
+            { ZYDIS_MNEMONIC_IDIV, &CPU::emulate_idiv },
             
         };
 
@@ -1469,6 +1470,36 @@ private:
             assert(false && "Invalid operand width for get_mask_for_width");
             return 0;
         }
+    }
+    std::pair<int64_t, int64_t> div_128_by_64_signed(uint64_t high, uint64_t low, int64_t divisor) {
+
+        bool dividend_negative = (high & (1ULL << 63)) != 0;
+        bool divisor_negative = divisor < 0;
+
+        uint128_t dividend_abs;
+        if (dividend_negative) {
+
+            uint64_t low_neg = ~low + 1;
+            uint64_t high_neg = ~high + (low_neg == 0 ? 1 : 0);
+            dividend_abs.low = low_neg;
+            dividend_abs.high = high_neg;
+        }
+        else {
+            dividend_abs.low = low;
+            dividend_abs.high = high;
+        }
+
+        uint64_t divisor_abs = divisor_negative ? (uint64_t)(-divisor) : (uint64_t)divisor;
+
+        auto [quotient_u, remainder_u] = div_128_by_64(dividend_abs.high, dividend_abs.low, divisor_abs);
+
+        bool quotient_negative = dividend_negative ^ divisor_negative;
+        bool remainder_negative = dividend_negative;
+
+        int64_t quotient = quotient_negative ? -(int64_t)quotient_u : (int64_t)quotient_u;
+        int64_t remainder = remainder_negative ? -(int64_t)remainder_u : (int64_t)remainder_u;
+
+        return { quotient, remainder };
     }
 
 
@@ -4261,6 +4292,76 @@ private:
         // g_regs.rflags.flags.CF = g_regs.rflags.flags.CF;
 
         LOG(L"[+] INC executed: result = 0x" << std::hex << result);
+    }
+    void emulate_idiv(const ZydisDisassembledInstruction* instr) {
+        const auto& src = instr->operands[0];
+        uint32_t width = instr->info.operand_width;
+
+        int64_t divisor = read_signed_operand(src, width);
+        if (divisor == 0) {
+            LOG(L"[!] Division by zero");
+            return;
+        }
+
+        bool overflow = false;
+
+        switch (width) {
+        case 8: {
+            int16_t dividend = static_cast<int16_t>(get_register_value<uint16_t>(ZYDIS_REGISTER_AX));
+            int8_t quotient = static_cast<int8_t>(dividend / divisor);
+            int8_t remainder = static_cast<int8_t>(dividend % divisor);
+
+            overflow = (quotient > INT8_MAX) || (quotient < INT8_MIN);
+
+            g_regs.rax.l = static_cast<uint8_t>(quotient);
+            g_regs.rax.h = static_cast<uint8_t>(remainder);
+            break;
+        }
+        case 16: {
+            int32_t dividend = (static_cast<int32_t>(static_cast<int16_t>(g_regs.rdx.w)) << 16) | static_cast<uint16_t>(g_regs.rax.w);
+            int16_t quotient = static_cast<int16_t>(dividend / divisor);
+            int16_t remainder = static_cast<int16_t>(dividend % divisor);
+
+            overflow = (quotient > INT16_MAX) || (quotient < INT16_MIN);
+
+            g_regs.rax.w = static_cast<uint16_t>(quotient);
+            g_regs.rdx.w = static_cast<uint16_t>(remainder);
+            break;
+        }
+        case 32: {
+            int64_t dividend = (static_cast<int64_t>(static_cast<int32_t>(g_regs.rdx.d)) << 32) | g_regs.rax.d;
+            int32_t quotient = static_cast<int32_t>(dividend / divisor);
+            int32_t remainder = static_cast<int32_t>(dividend % divisor);
+
+            overflow = (quotient > INT32_MAX) || (quotient < INT32_MIN);
+
+            g_regs.rax.d = static_cast<uint32_t>(quotient);
+            g_regs.rdx.d = static_cast<uint32_t>(remainder);
+            break;
+        }
+        case 64: {
+            uint64_t high = g_regs.rdx.q;
+            uint64_t low = g_regs.rax.q;
+
+            auto [quotient, remainder] = div_128_by_64_signed(high, low, divisor);
+
+
+            overflow = false; 
+
+            g_regs.rax.q = quotient;
+            g_regs.rdx.q = remainder;
+            break;
+        }
+        default:
+            LOG(L"[!] Unsupported operand width for IDIV: " << width);
+            return;
+        }
+
+
+            g_regs.rflags.flags.OF = overflow;
+            g_regs.rflags.flags.CF = overflow;
+
+        LOG(L"[+] IDIV executed: divisor = " << divisor << ", overflow = " << overflow);
     }
 
 
