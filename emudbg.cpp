@@ -70,11 +70,11 @@ int wmain(int argc, wchar_t* argv[]) {
                     std::wstring lowerTarget = targetModuleName;
                     std::transform(lowerTarget.begin(), lowerTarget.end(), lowerTarget.begin(), ::towlower);
 #if Stealth_Mode_ENABLED
-                    LOG_analyze(GREEN, "DLL LOADED : " << lowerLoaded.c_str());
+
                     if (lowerLoaded.find(L"kernelbase.dll") != std::wstring::npos) {
                         kernelBase_address = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
                         Patch_CheckRemoteDebuggerPresent();
-                        LOG(L"[+] kernelbase.dll loaded at 0x" << std::hex << ntdllBase);
+                        LOG(L"[+] kernelbase.dll loaded at 0x" << std::hex << kernelBase_address);
                     }
 #endif
 #if analyze_ENABLED
