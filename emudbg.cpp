@@ -258,7 +258,7 @@ int wmain(int argc, wchar_t* argv[]) {
                         ctx.Rip -= 1;
                         SetThreadContext(hThread, &ctx);
                     }
-                   /// RemoveAllBreakpoints(pi.hProcess,breakpoints);
+                    RemoveAllBreakpoints(pi.hProcess,breakpoints);
                     auto it = cpuThreads.find(dbgEvent.dwThreadId);
                     if (it != cpuThreads.end()) {
                         CPU& cpu = it->second;
