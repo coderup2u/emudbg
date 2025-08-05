@@ -40,6 +40,51 @@ int wmain(int argc, wchar_t* argv[]) {
         return 1;
     }
 
+
+    DWORD64 FeatureMask;
+
+    // If this function was called before and we were not running on 
+    // at least Windows 7 SP1, then bail.
+    if (pfnGetEnabledXStateFeatures == (PGETENABLEDXSTATEFEATURES)-1)
+    {
+        _tprintf(_T("This needs to run on Windows 7 SP1 or greater.\n"));
+    }
+
+    // Get the addresses of the AVX XState functions.
+    if (pfnGetEnabledXStateFeatures == NULL)
+    {
+        HMODULE hm = GetModuleHandle(_T("kernel32.dll"));
+        if (hm == NULL)
+        {
+            pfnGetEnabledXStateFeatures = (PGETENABLEDXSTATEFEATURES)-1;
+            _tprintf(_T("GetModuleHandle failed (error == %d).\n"), GetLastError());
+        }
+
+        pfnGetEnabledXStateFeatures = (PGETENABLEDXSTATEFEATURES)GetProcAddress(hm, "GetEnabledXStateFeatures");
+        pfnInitializeContext = (PINITIALIZECONTEXT)GetProcAddress(hm, "InitializeContext");
+        pfnGetXStateFeaturesMask = (PGETXSTATEFEATURESMASK)GetProcAddress(hm, "GetXStateFeaturesMask");
+        pfnLocateXStateFeature = (LOCATEXSTATEFEATURE)GetProcAddress(hm, "LocateXStateFeature");
+        pfnSetXStateFeaturesMask = (SETXSTATEFEATURESMASK)GetProcAddress(hm, "SetXStateFeaturesMask");
+
+        if (pfnGetEnabledXStateFeatures == NULL
+            || pfnInitializeContext == NULL
+            || pfnGetXStateFeaturesMask == NULL
+            || pfnLocateXStateFeature == NULL
+            || pfnSetXStateFeaturesMask == NULL)
+        {
+            pfnGetEnabledXStateFeatures = (PGETENABLEDXSTATEFEATURES)-1;
+            _tprintf(_T("This needs to run on Windows 7 SP1 or greater.\n"));
+ 
+        }
+    }
+
+    FeatureMask = pfnGetEnabledXStateFeatures();
+    if ((FeatureMask & XSTATE_MASK_AVX) == 0)
+    {
+        _tprintf(_T("The AVX feature is not enabled.\n"));
+
+    }
+
     STARTUPINFOW si = { sizeof(si) };
     uint32_t entryRVA = GetEntryPointRVA(exePath);
     std::vector<uint32_t> tlsRVAs = GetTLSCallbackRVAs(exePath);
@@ -207,23 +252,23 @@ int wmain(int argc, wchar_t* argv[]) {
                     RemoveBreakpoint(pi.hProcess, exAddr, bp.originalByte);
 
                     CONTEXT ctx = { 0 };
-                    ctx.ContextFlags = CONTEXT_FULL;
+                    ctx.ContextFlags = CONTEXT_FULL ;
                     HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
                     if (hThread && GetThreadContext(hThread, &ctx)) {
                         ctx.Rip -= 1;
                         SetThreadContext(hThread, &ctx);
                     }
-                    RemoveAllBreakpoints(pi.hProcess,breakpoints);
+                   /// RemoveAllBreakpoints(pi.hProcess,breakpoints);
                     auto it = cpuThreads.find(dbgEvent.dwThreadId);
                     if (it != cpuThreads.end()) {
                         CPU& cpu = it->second;
                         cpu.CPUThreadState = ThreadState::Running;
-                        cpu.UpdateRegistersFromContext(ctx);
+                        cpu.UpdateRegistersFromContext();
 
                         uint64_t addr = cpu.start_emulation();
                         LOG(L"[+] Emulation returned address: 0x" << std::hex << addr);
 
-                        cpu.ApplyRegistersToContext(ctx);
+                        cpu.ApplyRegistersToContext();
 
 
                         bp.remainingHits--;
@@ -264,12 +309,12 @@ int wmain(int argc, wchar_t* argv[]) {
                 if (it != cpuThreads.end()) {
                     CPU& cpu = it->second;
                     cpu.CPUThreadState = ThreadState::Running;
-                    cpu.UpdateRegistersFromContext(ctx);
+                    cpu.UpdateRegistersFromContext();
 
                     uint64_t addr = cpu.start_emulation();
                     LOG(L"[+] Emulation returned address: 0x" << std::hex << addr);
 
-                    cpu.ApplyRegistersToContext(ctx);
+                    cpu.ApplyRegistersToContext();
 
                     if (SetHardwareBreakpointAuto(hThread, addr)) {
                         LOG(L"[+] Breakpoint set at new address: 0x" << std::hex << addr);

@@ -12,8 +12,30 @@
 #include "deps/zydis_wrapper.h"
 #include <tlhelp32.h>
 #include <xmmintrin.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <tchar.h>
+#include <winerror.h>
 
 
+
+#define XSTATE_AVX                          (XSTATE_GSSE)
+#define XSTATE_MASK_AVX                     (XSTATE_MASK_GSSE)
+
+typedef DWORD64(WINAPI* PGETENABLEDXSTATEFEATURES)();
+PGETENABLEDXSTATEFEATURES pfnGetEnabledXStateFeatures = NULL;
+
+typedef BOOL(WINAPI* PINITIALIZECONTEXT)(PVOID Buffer, DWORD ContextFlags, PCONTEXT* Context, PDWORD ContextLength);
+PINITIALIZECONTEXT pfnInitializeContext = NULL;
+
+typedef BOOL(WINAPI* PGETXSTATEFEATURESMASK)(PCONTEXT Context, PDWORD64 FeatureMask);
+PGETXSTATEFEATURESMASK pfnGetXStateFeaturesMask = NULL;
+
+typedef PVOID(WINAPI* LOCATEXSTATEFEATURE)(PCONTEXT Context, DWORD FeatureId, PDWORD Length);
+LOCATEXSTATEFEATURE pfnLocateXStateFeature = NULL;
+
+typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMask);
+SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
 #define analyze_ENABLED 1
@@ -23,7 +45,7 @@
 #define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
-//emulate everything in user mode 
+//emulate everything in dll user mode 
 #define FUll_user_MODE 0
 //------------------------------------------
 
@@ -1245,35 +1267,107 @@ public:
         std::wcout << L"==========================" << std::endl;
     }
 
-    void UpdateRegistersFromContext(const CONTEXT& ctx)
+
+
+    void UpdateRegistersFromContext()
     {
 
+   
         g_regs.gs_base = GetTEBAddress(hThread);
 
-        g_regs.rip = ctx.Rip;
-        g_regs.rax.q = ctx.Rax;
-        g_regs.rbx.q = ctx.Rbx;
-        g_regs.rcx.q = ctx.Rcx;
-        g_regs.rdx.q = ctx.Rdx;
-        g_regs.rsi.q = ctx.Rsi;
-        g_regs.rdi.q = ctx.Rdi;
-        g_regs.rbp.q = ctx.Rbp;
-        g_regs.rsp.q = ctx.Rsp;
-        g_regs.r8.q = ctx.R8;
-        g_regs.r9.q = ctx.R9;
-        g_regs.r10.q = ctx.R10;
-        g_regs.r11.q = ctx.R11;
-        g_regs.r12.q = ctx.R12;
-        g_regs.r13.q = ctx.R13;
-        g_regs.r14.q = ctx.R14;
-        g_regs.r15.q = ctx.R15;
-        g_regs.rflags.value = ctx.EFlags;
+
+        CONTEXT ctx = {};
+        ctx.ContextFlags = CONTEXT_ALL | CONTEXT_XSTATE;
+
+        DWORD ctxSize = 0;
+        if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+        {
+            LOG(L"[-] InitializeContext query size failed");
+            return;
+        }
+
+
+        void* buf = malloc(ctxSize);
+        if (!buf) {
+            LOG(L"[-] malloc failed");
+            return;
+        }
+
+
+        PCONTEXT pCtx = NULL;
+        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
+        {
+            LOG(L"[-] InitializeContext failed");
+            free(buf);
+            return;
+        }
+
+
+        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_AVX))
+        {
+            LOG(L"[-] SetXStateFeaturesMask failed");
+            free(buf);
+            return;
+        }
+
+
+        if (!GetThreadContext(hThread, pCtx))
+        {
+            LOG(L"[-] GetThreadContext failed");
+            free(buf);
+            return;
+        }
+
+
+        g_regs.rip = pCtx->Rip;
+        g_regs.rax.q = pCtx->Rax;
+        g_regs.rbx.q = pCtx->Rbx;
+        g_regs.rcx.q = pCtx->Rcx;
+        g_regs.rdx.q = pCtx->Rdx;
+        g_regs.rsi.q = pCtx->Rsi;
+        g_regs.rdi.q = pCtx->Rdi;
+        g_regs.rbp.q = pCtx->Rbp;
+        g_regs.rsp.q = pCtx->Rsp;
+        g_regs.r8.q = pCtx->R8;
+        g_regs.r9.q = pCtx->R9;
+        g_regs.r10.q = pCtx->R10;
+        g_regs.r11.q = pCtx->R11;
+        g_regs.r12.q = pCtx->R12;
+        g_regs.r13.q = pCtx->R13;
+        g_regs.r14.q = pCtx->R14;
+        g_regs.r15.q = pCtx->R15;
+        g_regs.rflags.value = pCtx->EFlags;
+        LOG(L"[+] General registers copied");
+
+        DWORD featureLength = 0;
+        PM128A pXmm = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
+        if (!pXmm || featureLength < 16 * sizeof(M128A)) {
+            LOG(L"[-] LocateXStateFeature for XMM failed");
+            free(buf);
+            return;
+        }
+        LOG(L"[+] XMM feature located");
+
+        PM128A pYmmHigh = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_AVX, NULL);
+        if (!pYmmHigh) {
+            LOG(L"[-] LocateXStateFeature for YMM High failed");
+            free(buf);
+            return;
+        }
+        LOG(L"[+] YMM High feature located");
+
+        for (int i = 0; i < 16; i++) {
+            memcpy(g_regs.ymm[i].xmm, &pXmm[i], 16);
+            memcpy(g_regs.ymm[i].ymmh, &pYmmHigh[i], 16);
+        }
+        LOG(L"[+] YMM registers copied");
+
+        free(buf);
+        LOG(L"[+] Finished UpdateRegistersFromContextEx");
+      
 #if DB_ENABLED
         g_regs.rflags.flags.TF = 1;
 #endif
-        for (int i = 0; i < 16; i++) {
-            memcpy(g_regs.ymm[i].xmm, (&ctx.Xmm0) + i, 16);
-        }
 #if analyze_ENABLED
         SIZE_T read_peb;
         ReadProcessMemory(pi.hProcess, (LPCVOID)(g_regs.gs_base + 0x60), &g_regs.peb_address, sizeof(g_regs.peb_address), &read_peb) && read_peb == sizeof(g_regs.peb_address);
@@ -1398,41 +1492,114 @@ public:
             { ZYDIS_REGISTER_YMM14, &g_regs.ymm[14] },
             { ZYDIS_REGISTER_YMM15, &g_regs.ymm[15] },
         };
+
     }
-    bool ApplyRegistersToContext(CONTEXT& ctx) {
+
+    bool ApplyRegistersToContext()
+    {
+
+
 #if DB_ENABLED
         g_regs.rflags.flags.TF = 0;
 #endif
-        ctx.Rip = g_regs.rip;
-        ctx.Rsp = g_regs.rsp.q;
-        ctx.Rbp = g_regs.rbp.q;
-        ctx.Rax = g_regs.rax.q;
-        ctx.Rbx = g_regs.rbx.q;
-        ctx.Rcx = g_regs.rcx.q;
-        ctx.Rdx = g_regs.rdx.q;
-        ctx.Rsi = g_regs.rsi.q;
-        ctx.Rdi = g_regs.rdi.q;
-        ctx.R8 = g_regs.r8.q;
-        ctx.R9 = g_regs.r9.q;
-        ctx.R10 = g_regs.r10.q;
-        ctx.R11 = g_regs.r11.q;
-        ctx.R12 = g_regs.r12.q;
-        ctx.R13 = g_regs.r13.q;
-        ctx.R14 = g_regs.r14.q;
-        ctx.R15 = g_regs.r15.q;
-        ctx.EFlags = static_cast<DWORD>(g_regs.rflags.value);
 
-        for (int i = 0; i < 16; i++) {
-            memcpy((&ctx.Xmm0) + i, g_regs.ymm[i].xmm, 16);
+        CONTEXT ctx = {};
+        ctx.ContextFlags = CONTEXT_ALL | CONTEXT_XSTATE;
+
+        DWORD ctxSize = 0;
+        if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+        {
+            LOG(L"[-] InitializeContext query size failed");
+
         }
 
-        if (!SetThreadContext(hThread, &ctx)) {
-            LOG(L"[!] Failed to set thread context");
+
+        void* buf = malloc(ctxSize);
+        if (!buf) {
+            LOG(L"[-] malloc failed");
+
+        }
+
+
+        PCONTEXT pCtx = NULL;
+        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
+        {
+            LOG(L"[-] InitializeContext failed");
+            free(buf);
+        }
+
+
+        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_AVX))
+        {
+            LOG(L"[-] SetXStateFeaturesMask failed");
+            free(buf);
+   
+        }
+
+
+        if (!GetThreadContext(hThread, pCtx))
+        {
+            LOG(L"[-] GetThreadContext failed");
+            free(buf);
+  
+        }
+
+        pCtx->Rip = g_regs.rip;
+        pCtx->Rsp = g_regs.rsp.q;
+        pCtx->Rbp = g_regs.rbp.q;
+        pCtx->Rax = g_regs.rax.q;
+        pCtx->Rbx = g_regs.rbx.q;
+        pCtx->Rcx = g_regs.rcx.q;
+        pCtx->Rdx = g_regs.rdx.q;
+        pCtx->Rsi = g_regs.rsi.q;
+        pCtx->Rdi = g_regs.rdi.q;
+        pCtx->R8 = g_regs.r8.q;
+        pCtx->R9 = g_regs.r9.q;
+        pCtx->R10 = g_regs.r10.q;
+        pCtx->R11 = g_regs.r11.q;
+        pCtx->R12 = g_regs.r12.q;
+        pCtx->R13 = g_regs.r13.q;
+        pCtx->R14 = g_regs.r14.q;
+        pCtx->R15 = g_regs.r15.q;
+        pCtx->EFlags = static_cast<DWORD>(g_regs.rflags.value);
+
+        LOG(L"[+] General registers applied");
+
+
+        DWORD featureLength = 0;
+        PM128A pXmm = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
+        if (!pXmm || featureLength < 16 * sizeof(M128A)) {
+            LOG(L"[-] LocateXStateFeature for XMM failed");
+            free(buf);
             return false;
         }
 
+        PM128A pYmmHigh = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_AVX, NULL);
+        if (!pYmmHigh) {
+            LOG(L"[-] LocateXStateFeature for YMM High failed");
+            free(buf);
+            return false;
+        }
+
+        for (int i = 0; i < 16; i++) {
+            memcpy(&pXmm[i], g_regs.ymm[i].xmm, 16); 
+            memcpy(&pYmmHigh[i], g_regs.ymm[i].ymmh, 16); 
+        }
+
+        LOG(L"[+] YMM registers applied");
+
+
+        if (!SetThreadContext(hThread, pCtx)) {
+            LOG(L"[-] Failed to set thread context");
+            free(buf);
+            return false;
+        }
+
+        free(buf);
+        LOG(L"[+] Finished ApplyRegistersToContext");
         return true;
     }
+
 
 private:
     // ------------------- Register State -------------------
@@ -1851,11 +2018,15 @@ private:
     template<>
     __m256i get_register_value<__m256i>(ZydisRegister reg) {
         auto it = reg_lookup.find(reg);
-        if (it != reg_lookup.end())
-            return *reinterpret_cast<__m256i*>(it->second);
-        else
-            return _mm256_setzero_si256();
+        if (it != reg_lookup.end()) {
+            YMM* ymm = reinterpret_cast<YMM*>(it->second);
+            __m128i lo = _mm_loadu_si128(reinterpret_cast<const __m128i*>(ymm->xmm));
+            __m128i hi = _mm_loadu_si128(reinterpret_cast<const __m128i*>(ymm->ymmh));
+            return _mm256_set_m128i(hi, lo);
+        }
+        return _mm256_setzero_si256();
     }
+
     template<>
     uint8_t* get_register_value<uint8_t*>(ZydisRegister reg) {
         auto it = reg_lookup.find(reg);
@@ -1908,7 +2079,11 @@ private:
     void set_register_value<__m256i>(ZydisRegister reg, __m256i value) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end()) {
-            *reinterpret_cast<__m256i*>(it->second) = value;
+            YMM* ymm = reinterpret_cast<YMM*>(it->second);
+            __m128i lo = _mm256_castsi256_si128(value);
+            __m128i hi = _mm256_extracti128_si256(value, 1);
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(ymm->xmm), lo);
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(ymm->ymmh), hi);
         }
     }
 
@@ -6306,15 +6481,24 @@ private:
         const auto& dst = instr->operands[0]; // GPR
         const auto& src = instr->operands[1]; // XMM/YMM
 
-        uint32_t width = instr->info.operand_width; 
+        uint32_t src_size_bits = src.size; 
 
-        if (width == 256) { // YMM
+        if (src_size_bits == 256) { // YMM
             __m256i val;
-            if (!read_operand_value<__m256i>(src, width, val)) {
+            if (!read_operand_value<__m256i>(src, src_size_bits, val)) {
                 LOG(L"[!] Failed to read source operand in VPMOVMSKB (YMM)");
                 return;
             }
-
+            uint8_t bytes[32];
+            _mm256_storeu_si256((__m256i*)bytes, val);
+            std::wstringstream ss;
+            ss << L"YMM raw:";
+            for (int i = 0; i < 32; i++) {
+                ss << L" "
+                    << std::hex << std::setw(2) << std::setfill(L'0')
+                    << (int)bytes[i];
+            }
+            LOG(ss.str());
             int mask = _mm256_movemask_epi8(val);
 
             if (!write_operand_value<uint32_t>(dst, 32, (uint32_t)mask)) {
@@ -6324,9 +6508,9 @@ private:
 
             LOG(L"[+] VPMOVMSKB (YMM) executed, mask=0x" << std::hex << mask);
         }
-        else { // XMM
+        else if (src_size_bits == 128) { // XMM
             __m128i val;
-            if (!read_operand_value<__m128i>(src, 128, val)) {
+            if (!read_operand_value<__m128i>(src, src_size_bits, val)) {
                 LOG(L"[!] Failed to read source operand in VPMOVMSKB (XMM)");
                 return;
             }
@@ -6339,6 +6523,9 @@ private:
             }
 
             LOG(L"[+] VPMOVMSKB (XMM) executed, mask=0x" << std::hex << mask);
+        }
+        else {
+            LOG(L"[!] Unsupported register size in VPMOVMSKB: " << src_size_bits << " bits");
         }
     }
 
