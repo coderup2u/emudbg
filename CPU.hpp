@@ -16,15 +16,15 @@
 
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 1
+#define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //------------------------------------------
 
 
@@ -1010,6 +1010,7 @@ public:
             { ZYDIS_MNEMONIC_LFENCE, &CPU::emulate_lfence },
             { ZYDIS_MNEMONIC_VPXOR, &CPU::emulate_vpxor },
             { ZYDIS_MNEMONIC_VPCMPEQW, &CPU::emulate_vpcmpeqw },
+            { ZYDIS_MNEMONIC_VPMOVMSKB, &CPU::emulate_vpmovmskb },
             
         };
 
@@ -6297,6 +6298,45 @@ private:
             }
 
             LOG(L"[+] VMOVUPS (XMM) executed");
+        }
+    }
+    void emulate_vpmovmskb(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0]; // GPR
+        const auto& src = instr->operands[1]; // XMM/YMM
+
+        uint32_t width = instr->info.operand_width; 
+
+        if (width == 256) { // YMM
+            __m256i val;
+            if (!read_operand_value<__m256i>(src, width, val)) {
+                LOG(L"[!] Failed to read source operand in VPMOVMSKB (YMM)");
+                return;
+            }
+
+            int mask = _mm256_movemask_epi8(val);
+
+            if (!write_operand_value<uint32_t>(dst, 32, (uint32_t)mask)) {
+                LOG(L"[!] Failed to write destination operand in VPMOVMSKB (YMM)");
+                return;
+            }
+
+            LOG(L"[+] VPMOVMSKB (YMM) executed, mask=0x" << std::hex << mask);
+        }
+        else { // XMM
+            __m128i val;
+            if (!read_operand_value<__m128i>(src, 128, val)) {
+                LOG(L"[!] Failed to read source operand in VPMOVMSKB (XMM)");
+                return;
+            }
+
+            int mask = _mm_movemask_epi8(val);
+
+            if (!write_operand_value<uint32_t>(dst, 32, (uint32_t)mask)) {
+                LOG(L"[!] Failed to write destination operand in VPMOVMSKB (XMM)");
+                return;
+            }
+
+            LOG(L"[+] VPMOVMSKB (XMM) executed, mask=0x" << std::hex << mask);
         }
     }
 
