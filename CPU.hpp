@@ -1240,22 +1240,6 @@ public:
             << std::endl;
         std::wcout << L"GS:  0x" << std::hex << std::setw(16) << g_regs.gs_base << std::endl;
 
-        BYTE buffer[16] = { 0 };
-        SIZE_T bytesRead = 0;
-        if (ReadProcessMemory(pi.hProcess, (LPCVOID)g_regs.rip, buffer, sizeof(buffer), &bytesRead) && bytesRead > 0) {
-            Zydis disasm(true);
-            if (disasm.Disassemble(g_regs.rip, buffer, bytesRead)) {
-                auto instrText = disasm.InstructionText();
-                std::wstring wInstrText(instrText.begin(), instrText.end());
-                std::wcout << L"Instruction at RIP: " << wInstrText << std::endl;
-            }
-            else {
-                std::wcout << L"Failed to disassemble instruction at RIP" << std::endl;
-            }
-        }
-        else {
-            std::wcout << L"Failed to read memory at RIP" << std::endl;
-        }
         // ----------------------------------------------
 
         std::wcout << L"==========================" << std::endl;
@@ -2712,7 +2696,14 @@ private:
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
 
-        uint8_t width = instr->info.operand_width; 
+        uint8_t width = 0;
+
+        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+            if (dst.reg.value >= ZYDIS_REGISTER_XMM0 && dst.reg.value <= ZYDIS_REGISTER_XMM31)
+                width = 128;
+            else if (dst.reg.value >= ZYDIS_REGISTER_YMM0 && dst.reg.value <= ZYDIS_REGISTER_YMM31)
+                width = 256;
+        }
 
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported width in vpxor: " << (int)width);
@@ -2733,8 +2724,6 @@ private:
                 LOG(L"[!] Failed to write result in vpxor");
                 return;
             }
-
-
         }
         else if (width == 256) {
             __m256i v1, v2;
@@ -2750,8 +2739,6 @@ private:
                 LOG(L"[!] Failed to write result in vpxor");
                 return;
             }
-
-
         }
 
         LOG(L"[+] VPXOR executed successfully");
@@ -4915,24 +4902,24 @@ private:
     void emulate_nop(const ZydisDisassembledInstruction*) {
         LOG(L"[+] NOP");
     }
-
     void emulate_movq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
-        const uint32_t width = 64;
+        const uint32_t width = 64; 
 
-        // movq xmm, gpr or xmm
-        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && dst.reg.value >= ZYDIS_REGISTER_XMM0 && dst.reg.value <= ZYDIS_REGISTER_XMM31) {
+        // movq xmm, reg/mem
+        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+            dst.reg.value >= ZYDIS_REGISTER_XMM0 && dst.reg.value <= ZYDIS_REGISTER_XMM31)
+        {
             uint64_t value = 0;
 
             if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
                 if (src.reg.value >= ZYDIS_REGISTER_XMM0 && src.reg.value <= ZYDIS_REGISTER_XMM31) {
-                    // movq xmm, xmm (copy lower 64 bits)
-                    memcpy(
-                        g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0].xmm,
-                        g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0].xmm,
-                        sizeof(uint64_t)
-                    );
+                    // movq xmm, xmm 
+                    auto& dst_xmm = g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0];
+                    auto& src_xmm = g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0];
+                    memcpy(dst_xmm.xmm, src_xmm.xmm, sizeof(uint64_t));
+                    memset(dst_xmm.xmm + 8, 0, 8); 
                     LOG(L"[+] MOVQ xmm, xmm executed");
                     return;
                 }
@@ -4942,11 +4929,9 @@ private:
                         LOG(L"[!] Failed to read gpr in movq");
                         return;
                     }
-                    memcpy(
-                        g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0].xmm,
-                        &value,
-                        sizeof(uint64_t)
-                    );
+                    auto& dst_xmm = g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0];
+                    memcpy(dst_xmm.xmm, &value, sizeof(uint64_t));
+                    memset(dst_xmm.xmm + 8, 0, 8);
                     LOG(L"[+] MOVQ xmm, gpr executed");
                     return;
                 }
@@ -4956,58 +4941,56 @@ private:
                     LOG(L"[!] Failed to read memory in movq");
                     return;
                 }
-                memcpy(
-                    g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0].xmm,
-                    &value,
-                    sizeof(uint64_t)
-                );
+                auto& dst_xmm = g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0];
+                memcpy(dst_xmm.xmm, &value, sizeof(uint64_t));
+                memset(dst_xmm.xmm + 8, 0, 8);
                 LOG(L"[+] MOVQ xmm, [mem] executed");
                 return;
             }
         }
-
         // movq gpr, xmm or mem
-        else if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && dst.reg.value >= ZYDIS_REGISTER_RAX && dst.reg.value <= ZYDIS_REGISTER_R15) {
+        else if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+            dst.reg.value >= ZYDIS_REGISTER_RAX && dst.reg.value <= ZYDIS_REGISTER_R15)
+        {
             uint64_t value = 0;
-
-            if (src.type == ZYDIS_OPERAND_TYPE_REGISTER && src.reg.value >= ZYDIS_REGISTER_XMM0 && src.reg.value <= ZYDIS_REGISTER_XMM31) {
-                memcpy(
-                    &value,
-                    g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0].xmm,
-                    sizeof(uint64_t)
-                );
-                write_operand_value(dst, width, value);
+            if (src.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+                src.reg.value >= ZYDIS_REGISTER_XMM0 && src.reg.value <= ZYDIS_REGISTER_XMM31)
+            {
+                auto& src_xmm = g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0];
+                memcpy(&value, src_xmm.xmm, sizeof(uint64_t));
+                if (!write_operand_value(dst, width, value)) {
+                    LOG(L"[!] Failed to write gpr in movq");
+                    return;
+                }
                 LOG(L"[+] MOVQ gpr, xmm executed");
                 return;
             }
-            else if (!read_operand_value(src, width, value)) {
-                LOG(L"[!] Failed to read src operand in movq");
+            else {
+                if (!read_operand_value(src, width, value)) {
+                    LOG(L"[!] Failed to read src operand in movq");
+                    return;
+                }
+                if (!write_operand_value(dst, width, value)) {
+                    LOG(L"[!] Failed to write dst operand in movq");
+                    return;
+                }
+                LOG(L"[+] MOVQ gpr, src executed");
                 return;
             }
-            if (!write_operand_value(dst, width, value)) {
-                LOG(L"[!] Failed to write dst operand in movq");
-                return;
-            }
-            LOG(L"[+] MOVQ gpr, src executed");
-            return;
         }
-
         // movq [mem], xmm or gpr
         else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             uint64_t value = 0;
-
             if (src.reg.value >= ZYDIS_REGISTER_XMM0 && src.reg.value <= ZYDIS_REGISTER_XMM31) {
-                memcpy(
-                    &value,
-                    g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0].xmm,
-                    sizeof(uint64_t)
-                );
+                auto& src_xmm = g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0];
+                memcpy(&value, src_xmm.xmm, sizeof(uint64_t));
             }
-            else if (!read_operand_value(src, width, value)) {
-                LOG(L"[!] Failed to read register in movq");
-                return;
+            else {
+                if (!read_operand_value(src, width, value)) {
+                    LOG(L"[!] Failed to read register in movq");
+                    return;
+                }
             }
-
             if (!write_operand_value(dst, width, value)) {
                 LOG(L"[!] Failed to write to memory in movq");
                 return;
@@ -7042,6 +7025,8 @@ private:
                     std::wcout << std::hex << std::setw(2) << std::setfill(L'0') << (int)ctx_ptr[j] << L" ";
                 }
                 std::wcout << std::endl;
+                DumpRegisters();
+                exit(0);
             }
         }
     }
