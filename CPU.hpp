@@ -16,13 +16,15 @@
 
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
+//emulate everything in user mode 
+#define FUll_user_MODE 1
 //------------------------------------------
 
 

@@ -84,6 +84,28 @@ int wmain(int argc, wchar_t* argv[]) {
                         LOG(L"[+] ntdll.dll loaded at 0x" << std::hex << ntdllBase);
                     }
 #endif
+#if FUll_user_MODE
+
+                    if (lowerLoaded.find(L"system32") == std::wstring::npos &&
+                        lowerLoaded.find(L"ntdll.dll") == std::wstring::npos) {
+                        IMAGE_DOS_HEADER dosHeader{};
+                        IMAGE_NT_HEADERS64 ntHeaders{};
+                        if (ReadProcessMemory(pi.hProcess, ld.lpBaseOfDll, &dosHeader, sizeof(dosHeader), nullptr) &&
+                            dosHeader.e_magic == IMAGE_DOS_SIGNATURE &&
+                            ReadProcessMemory(pi.hProcess, (BYTE*)ld.lpBaseOfDll + dosHeader.e_lfanew, &ntHeaders, sizeof(ntHeaders), nullptr) &&
+                            ntHeaders.Signature == IMAGE_NT_SIGNATURE) {
+
+                            uint64_t dllBase = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
+                            uint64_t dllSize = ntHeaders.OptionalHeader.SizeOfImage;
+                            valid_ranges.emplace_back(dllBase, dllBase + dllSize);
+
+                            LOG(L"[+] User-mode DLL added to valid_ranges: " << lowerLoaded.c_str()
+                                << L" at 0x" << std::hex << dllBase
+                                << L" - size: 0x" << dllSize);
+                        }
+                    }
+
+#endif
                     if (waitForModule && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
                         moduleBase = (uint64_t)ld.lpBaseOfDll;
                         auto modEntryRVA = GetEntryPointRVA(buffer);
