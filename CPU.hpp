@@ -1007,6 +1007,8 @@ public:
             { ZYDIS_MNEMONIC_SUBSD, &CPU::emulate_subsd },
             { ZYDIS_MNEMONIC_SQRTPD, &CPU::emulate_sqrtpd },
             { ZYDIS_MNEMONIC_IDIV, &CPU::emulate_idiv },
+            { ZYDIS_MNEMONIC_LFENCE, &CPU::emulate_lfence },
+            { ZYDIS_MNEMONIC_VPXOR, &CPU::emulate_vpxor },
             
         };
 
@@ -2658,6 +2660,73 @@ private:
                 << ", OF=" << g_regs.rflags.flags.OF << ")");
         }
     }
+    void emulate_vpxor(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+
+        uint8_t width = instr->info.operand_width; 
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpxor: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpxor");
+                return;
+            }
+
+            __m128i result = _mm_xor_si128(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpxor");
+                return;
+            }
+
+            uint64_t low64 = _mm_cvtsi128_si64(result);
+            g_regs.rflags.flags.CF = 0;
+            g_regs.rflags.flags.OF = 0;
+            g_regs.rflags.flags.ZF = (low64 == 0);
+            g_regs.rflags.flags.SF = ((low64 >> (width - 1)) & 1);
+
+
+            uint8_t byte0 = (uint8_t)low64;
+            g_regs.rflags.flags.PF = !parity((uint8_t)low64);
+
+        }
+        else if (width == 256) {
+            __m256i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpxor");
+                return;
+            }
+
+            __m256i result = _mm256_xor_si256(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpxor");
+                return;
+            }
+
+            uint64_t low64 = _mm256_extract_epi64(result, 0);
+            g_regs.rflags.flags.CF = 0;
+            g_regs.rflags.flags.OF = 0;
+            g_regs.rflags.flags.ZF = (low64 == 0);
+            g_regs.rflags.flags.SF = ((low64 >> (width - 1)) & 1);
+
+
+            uint8_t byte0 = (uint8_t)low64;
+            g_regs.rflags.flags.PF = !parity((uint8_t)low64);
+        }
+
+        LOG(L"[+] VPXOR executed successfully");
+    }
+
 
     void emulate_xorps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -5077,7 +5146,11 @@ private:
             LOG(L"[+] CMOVS skipped: SF == 0");
         }
     }
+    void emulate_lfence(const ZydisDisassembledInstruction* instr) {
 
+        LOG(L"[+] LFENCE executed");
+
+    }
     void emulate_mov(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0], src = instr->operands[1];
         uint8_t width = instr->info.operand_width;
