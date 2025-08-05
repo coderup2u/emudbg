@@ -1009,6 +1009,7 @@ public:
             { ZYDIS_MNEMONIC_IDIV, &CPU::emulate_idiv },
             { ZYDIS_MNEMONIC_LFENCE, &CPU::emulate_lfence },
             { ZYDIS_MNEMONIC_VPXOR, &CPU::emulate_vpxor },
+            { ZYDIS_MNEMONIC_VPCMPEQW, &CPU::emulate_vpcmpeqw },
             
         };
 
@@ -2586,6 +2587,32 @@ private:
         LOG(L"[+] CMOVP executed: moved 0x" << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
+    void emulate_vpcmpeqw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+
+        constexpr uint32_t width = 128; 
+        __m128i v1, v2;
+
+        if (!read_operand_value<__m128i>(src1, width, v1)) {
+            LOG(L"[!] Failed to read src1 in VPCMPEQW");
+            return;
+        }
+        if (!read_operand_value<__m128i>(src2, width, v2)) {
+            LOG(L"[!] Failed to read src2 in VPCMPEQW");
+            return;
+        }
+
+        __m128i result = _mm_cmpeq_epi16(v1, v2);
+
+        if (!write_operand_value<__m128i>(dst, width, result)) {
+            LOG(L"[!] Failed to write result in VPCMPEQW");
+            return;
+        }
+
+        LOG(L"[+] VPCMPEQW executed");
+    }
 
     void emulate_xadd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -2687,15 +2714,6 @@ private:
                 return;
             }
 
-            uint64_t low64 = _mm_cvtsi128_si64(result);
-            g_regs.rflags.flags.CF = 0;
-            g_regs.rflags.flags.OF = 0;
-            g_regs.rflags.flags.ZF = (low64 == 0);
-            g_regs.rflags.flags.SF = ((low64 >> (width - 1)) & 1);
-
-
-            uint8_t byte0 = (uint8_t)low64;
-            g_regs.rflags.flags.PF = !parity((uint8_t)low64);
 
         }
         else if (width == 256) {
@@ -2713,15 +2731,7 @@ private:
                 return;
             }
 
-            uint64_t low64 = _mm256_extract_epi64(result, 0);
-            g_regs.rflags.flags.CF = 0;
-            g_regs.rflags.flags.OF = 0;
-            g_regs.rflags.flags.ZF = (low64 == 0);
-            g_regs.rflags.flags.SF = ((low64 >> (width - 1)) & 1);
 
-
-            uint8_t byte0 = (uint8_t)low64;
-            g_regs.rflags.flags.PF = !parity((uint8_t)low64);
         }
 
         LOG(L"[+] VPXOR executed successfully");
