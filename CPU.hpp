@@ -16,15 +16,15 @@
 
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
-#define LOG_ENABLED 1
+#define LOG_ENABLED 0
 //test with real cpu
 #define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //------------------------------------------
 
 
@@ -1239,6 +1239,25 @@ public:
             << L"OF=" << g_regs.rflags.flags.OF
             << std::endl;
         std::wcout << L"GS:  0x" << std::hex << std::setw(16) << g_regs.gs_base << std::endl;
+
+        BYTE buffer[16] = { 0 };
+        SIZE_T bytesRead = 0;
+        if (ReadProcessMemory(pi.hProcess, (LPCVOID)g_regs.rip, buffer, sizeof(buffer), &bytesRead) && bytesRead > 0) {
+            Zydis disasm(true);
+            if (disasm.Disassemble(g_regs.rip, buffer, bytesRead)) {
+                auto instrText = disasm.InstructionText();
+                std::wstring wInstrText(instrText.begin(), instrText.end());
+                std::wcout << L"Instruction at RIP: " << wInstrText << std::endl;
+            }
+            else {
+                std::wcout << L"Failed to disassemble instruction at RIP" << std::endl;
+            }
+        }
+        else {
+            std::wcout << L"Failed to read memory at RIP" << std::endl;
+        }
+        // ----------------------------------------------
+
         std::wcout << L"==========================" << std::endl;
     }
 
@@ -7007,12 +7026,22 @@ private:
         }
 
 
-
         for (int i = 0; i < 16; i++) {
             if (memcmp(g_regs.ymm[i].xmm, &ctx.Xmm0 + i, 16) != 0) {
                 std::wcout << L"[!] XMM" << i << L" mismatch" << std::endl;
-                //  DumpRegisters();
-                  //exit(0);
+
+                std::wcout << L"g_regs.ymm[" << i << L"].xmm: ";
+                for (int j = 0; j < 16; j++) {
+                    std::wcout << std::hex << std::setw(2) << std::setfill(L'0') << (int)((unsigned char*)g_regs.ymm[i].xmm)[j] << L" ";
+                }
+                std::wcout << std::endl;
+
+                std::wcout << L"ctx.Xmm" << i << L": ";
+                unsigned char* ctx_ptr = (unsigned char*)(&ctx.Xmm0) + i * 16;
+                for (int j = 0; j < 16; j++) {
+                    std::wcout << std::hex << std::setw(2) << std::setfill(L'0') << (int)ctx_ptr[j] << L" ";
+                }
+                std::wcout << std::endl;
             }
         }
     }
