@@ -16,6 +16,8 @@
 #include <stdio.h>
 #include <tchar.h>
 #include <winerror.h>
+#include <emmintrin.h>  
+#include <nmmintrin.h>  
 
 
 
@@ -38,15 +40,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
-#define LOG_ENABLED 1
+#define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 1
+#define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //------------------------------------------
 
 
@@ -146,7 +148,7 @@ bool compareRegState(const RegState& a, const RegState& b) {
             return false;
     }
 }
-RegState g_regs_first_time;
+//RegState g_regs_first_time;
 static const std::map<uint64_t, std::string> ntdll_directory_offsets = {
     {0x00000070, "Export Directory RVA"},
     {0x00000078, "Export Directory Size"},
@@ -1033,6 +1035,7 @@ public:
             { ZYDIS_MNEMONIC_VPXOR, &CPU::emulate_vpxor },
             { ZYDIS_MNEMONIC_VPCMPEQW, &CPU::emulate_vpcmpeqw },
             { ZYDIS_MNEMONIC_VPMOVMSKB, &CPU::emulate_vpmovmskb },
+            { ZYDIS_MNEMONIC_PCMPISTRI, &CPU::emulate_pcmpistri },
             
         };
 
@@ -2770,7 +2773,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-        auto width = ZydisRegisterGetWidth(ZYDIS_MACHINE_MODE_LONG_64, dst.reg.value);
+        auto width = dst.size;
     
 
 
@@ -6879,8 +6882,40 @@ private:
 
         LOG(L"[+] SETP => " << std::hex << static_cast<int>(value));
     }
+    void emulate_pcmpistri(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        __m128i v1, v2;
+        if (!read_operand_value<__m128i>(src1, src1.size, v1) ||
+            !read_operand_value<__m128i>(src2, src2.size, v2)) {
+            LOG(L"[!] Failed to read source operands in pcmpistri");
+            return;
+        }
+
+        const uint8_t* s1 = reinterpret_cast<const uint8_t*>(&v1);
+        const uint8_t* s2 = reinterpret_cast<const uint8_t*>(&v2);
+
+        int index = 16;
+        for (int i = 0; i < 16; i++) {
+            if (s1[i] == 0 || s2[i] == 0) { 
+                index = i;
+                break;
+            }
+            if (s1[i] != s2[i]) {  
+                index = i;
+                break;
+            }
+        }
+
+            g_regs.rcx.q = index;
+    
 
 
+        g_regs.rflags.flags.ZF = (index == 16);
+
+        LOG(L"[+] PCMPISTRI executed, index = " << index);
+    }
 
     void emulate_jns(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
@@ -6953,6 +6988,13 @@ private:
         case ZYDIS_OPERAND_TYPE_IMMEDIATE:
             if constexpr (std::is_integral_v<T>) {
                 out = static_cast<T>(op.imm.value.s);
+                return true;
+            }
+            else if (width <= 64) {
+                uint64_t tmp = op.imm.is_signed
+                    ? static_cast<uint64_t>(op.imm.value.s)
+                    : static_cast<uint64_t>(op.imm.value.u);
+                std::memcpy(&out, &tmp, sizeof(tmp));
                 return true;
             }
             else {
