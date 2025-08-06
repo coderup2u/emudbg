@@ -2770,24 +2770,51 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
+        auto width = ZydisRegisterGetWidth(ZYDIS_MACHINE_MODE_LONG_64, dst.reg.value);
+    
 
-        constexpr uint32_t width = 128; 
-        __m128i v1, v2;
 
-        if (!read_operand_value<__m128i>(src1, width, v1)) {
-            LOG(L"[!] Failed to read src1 in VPCMPEQW");
-            return;
-        }
-        if (!read_operand_value<__m128i>(src2, width, v2)) {
-            LOG(L"[!] Failed to read src2 in VPCMPEQW");
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpcmpeqw: " << (int)width);
             return;
         }
 
-        __m128i result = _mm_cmpeq_epi16(v1, v2);
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value<__m128i>(src1, width, v1) || !read_operand_value<__m128i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in vpcmpeqw (128-bit)");
+                return;
+            }
 
-        if (!write_operand_value<__m128i>(dst, width, result)) {
-            LOG(L"[!] Failed to write result in VPCMPEQW");
-            return;
+            __m128i result = _mm_cmpeq_epi16(v1, v2);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpcmpeqw (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v1, v2;
+            if (!read_operand_value<__m256i>(src1, width, v1) || !read_operand_value<__m256i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in vpcmpeqw (256-bit)");
+                return;
+            }
+
+#if defined(__AVX2__)
+            __m256i result = _mm256_cmpeq_epi16(v1, v2);
+#else
+         
+            __m128i lo = _mm_cmpeq_epi16(_mm256_castsi256_si128(v1),
+                _mm256_castsi256_si128(v2));
+            __m128i hi = _mm_cmpeq_epi16(_mm256_extracti128_si256(v1, 1),
+                _mm256_extracti128_si256(v2, 1));
+            __m256i result = _mm256_set_m128i(hi, lo);
+#endif
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpcmpeqw (256-bit)");
+                return;
+            }
         }
 
         LOG(L"[+] VPCMPEQW executed");
