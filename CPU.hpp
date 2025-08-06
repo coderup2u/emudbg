@@ -11,13 +11,8 @@
 #include <cstdint>
 #include "deps/zydis_wrapper.h"
 #include <tlhelp32.h>
-#include <xmmintrin.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <tchar.h>
-#include <winerror.h>
-#include <emmintrin.h>  
-#include <nmmintrin.h>  
+
 
 
 
@@ -40,15 +35,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
-#define LOG_ENABLED 0
+#define LOG_ENABLED 1
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //------------------------------------------
 
 
@@ -1603,10 +1598,10 @@ public:
         return true;
     }
 
-    RegState g_regs;
+
 private:
     // ------------------- Register State -------------------
-
+    RegState g_regs;
 
     std::unordered_map<ZydisMnemonic, void (CPU::*)(const ZydisDisassembledInstruction*)> dispatch_table;
     std::unordered_map<ZydisRegister, void* > reg_lookup;
@@ -6883,40 +6878,47 @@ private:
         LOG(L"[+] SETP => " << std::hex << static_cast<int>(value));
     }
     void emulate_pcmpistri(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];
-        const auto& src1 = instr->operands[1];
+        const auto& dst = instr->operands[0]; 
+        const auto& src1 = instr->operands[1]; 
         const auto& src2 = instr->operands[2];
-        __m128i v1, v2;
-        if (!read_operand_value<__m128i>(src1, src1.size, v1) ||
-            !read_operand_value<__m128i>(src2, src2.size, v2)) {
-            LOG(L"[!] Failed to read source operands in pcmpistri");
+        const auto& immediate = src2.imm.value.u;
+
+        int result = 0;
+
+        std::wstring string1;
+        std::wstring string2;
+
+        if (!read_operand_value(src1, src1.size, string1)) {
+            LOG(L"[!] Failed to read first string operand in PCMPistri");
             return;
         }
 
-        const uint8_t* s1 = reinterpret_cast<const uint8_t*>(&v1);
-        const uint8_t* s2 = reinterpret_cast<const uint8_t*>(&v2);
-
-        int index = 16;
-        for (int i = 0; i < 16; i++) {
-            if (s1[i] == 0 || s2[i] == 0) { 
-                index = i;
-                break;
-            }
-            if (s1[i] != s2[i]) {  
-                index = i;
-                break;
-            }
+        if (!read_operand_value(src2, src2.size, string2)) {
+            LOG(L"[!] Failed to read second string operand in PCMPistri");
+            return;
         }
 
-            g_regs.rcx.q = index;
-    
+        if (immediate == 0) {
 
+            result = (string1 == string2) ? 1 : 0;
+        }
+        else if (immediate == 1) {
 
-        g_regs.rflags.flags.ZF = (index == 16);
+            result = (string1 != string2) ? 1 : 0;
+        }
 
-        LOG(L"[+] PCMPISTRI executed, index = " << index);
+        if (!write_operand_value(dst, 32, result)) {
+            LOG(L"[!] Failed to write result operand in PCMPistri");
+            return;
+        }
+        g_regs.rcx.q = result;
+
+        LOG(L"[+] PCMPISTR: Comparing strings xmm" << dst.reg.value - ZYDIS_REGISTER_XMM0
+            << ", xmm" << src1.reg.value - ZYDIS_REGISTER_XMM0
+            << " with xmm" << src2.reg.value - ZYDIS_REGISTER_XMM0
+            << ", result: " << result
+            << ", updated rcx: " << result);
     }
-
     void emulate_jns(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
