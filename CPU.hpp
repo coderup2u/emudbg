@@ -6878,25 +6878,21 @@ private:
         LOG(L"[+] SETP => " << std::hex << static_cast<int>(value));
     }
     void emulate_pcmpistri(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0]; 
-        const auto& src1 = instr->operands[1]; 
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
         const auto& immediate = src2.imm.value.u;
 
         int result = 0;
 
-        std::wstring string1;
-        std::wstring string2;
 
-        if (!read_operand_value(src1, src1.size, string1)) {
-            LOG(L"[!] Failed to read first string operand in PCMPistri");
-            return;
-        }
+        uint8_t* xmm0 = g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0].xmm; 
+        uint8_t* xmm1 = g_regs.ymm[src1.reg.value - ZYDIS_REGISTER_XMM0].xmm; 
 
-        if (!read_operand_value(src2, src2.size, string2)) {
-            LOG(L"[!] Failed to read second string operand in PCMPistri");
-            return;
-        }
+
+        std::wstring string1(reinterpret_cast<wchar_t*>(xmm0), 16); 
+        std::wstring string2(reinterpret_cast<wchar_t*>(xmm1), 16); 
+
 
         if (immediate == 0) {
 
@@ -6911,14 +6907,18 @@ private:
             LOG(L"[!] Failed to write result operand in PCMPistri");
             return;
         }
+
+
         g_regs.rcx.q = result;
 
         LOG(L"[+] PCMPISTR: Comparing strings xmm" << dst.reg.value - ZYDIS_REGISTER_XMM0
             << ", xmm" << src1.reg.value - ZYDIS_REGISTER_XMM0
-            << " with xmm" << src2.reg.value - ZYDIS_REGISTER_XMM0
+            << " with 0x" << src2.imm.value.u
             << ", result: " << result
-            << ", updated rcx: " << result);
+            << ", updated rcx: " << g_regs.rcx.q);
     }
+
+
     void emulate_jns(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
