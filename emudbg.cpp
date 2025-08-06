@@ -269,7 +269,7 @@ int wmain(int argc, wchar_t* argv[]) {
                         LOG(L"[+] Emulation returned address: 0x" << std::hex << addr);
 
                         cpu.ApplyRegistersToContext();
-
+     
 
                         bp.remainingHits--;
                         if (bp.remainingHits > 0) {
@@ -291,7 +291,6 @@ int wmain(int argc, wchar_t* argv[]) {
                             breakpoints[addr].remainingHits++;
                         }
                     }
-
                     if (hThread) CloseHandle(hThread);
           
                 }
@@ -300,11 +299,9 @@ int wmain(int argc, wchar_t* argv[]) {
             case EXCEPTION_SINGLE_STEP: {
 
 
-                CONTEXT ctx = {};
-                ctx.ContextFlags = CONTEXT_FULL;
+
                 HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
                 RemoveHardwareBreakpointByAddress(hThread, exAddr);
-                GetThreadContext(hThread, &ctx);
                 auto it = cpuThreads.find(dbgEvent.dwThreadId);
                 if (it != cpuThreads.end()) {
                     CPU& cpu = it->second;

@@ -38,15 +38,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
-#define LOG_ENABLED 0
+#define LOG_ENABLED 1
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //------------------------------------------
 
 
@@ -1600,11 +1600,11 @@ public:
         return true;
     }
 
-
+    RegState g_regs;
 private:
     // ------------------- Register State -------------------
 
-    RegState g_regs;
+
     std::unordered_map<ZydisMnemonic, void (CPU::*)(const ZydisDisassembledInstruction*)> dispatch_table;
     std::unordered_map<ZydisRegister, void* > reg_lookup;
 
@@ -6481,7 +6481,7 @@ private:
         const auto& dst = instr->operands[0]; // GPR
         const auto& src = instr->operands[1]; // XMM/YMM
 
-        uint32_t src_size_bits = src.size; 
+        uint32_t src_size_bits = src.size;
 
         if (src_size_bits == 256) { // YMM
             __m256i val;
@@ -6489,16 +6489,7 @@ private:
                 LOG(L"[!] Failed to read source operand in VPMOVMSKB (YMM)");
                 return;
             }
-            uint8_t bytes[32];
-            _mm256_storeu_si256((__m256i*)bytes, val);
-            std::wstringstream ss;
-            ss << L"YMM raw:";
-            for (int i = 0; i < 32; i++) {
-                ss << L" "
-                    << std::hex << std::setw(2) << std::setfill(L'0')
-                    << (int)bytes[i];
-            }
-            LOG(ss.str());
+
             int mask = _mm256_movemask_epi8(val);
 
             if (!write_operand_value<uint32_t>(dst, 32, (uint32_t)mask)) {
@@ -6528,7 +6519,6 @@ private:
             LOG(L"[!] Unsupported register size in VPMOVMSKB: " << src_size_bits << " bits");
         }
     }
-
 
     void emulate_vmovdqu(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -7015,62 +7005,62 @@ private:
     // ----------------------- Break point helper ------------------
 
 #if DB_ENABLED
-    void CompareRFlags(const CONTEXT& ctx) {
+    void CompareRFlags(const RegState& regs) {
 
-        if (g_regs.rflags.flags.CF != ((ctx.EFlags >> 0) & 1)) {
+        if (g_regs.rflags.flags.CF != regs.rflags.flags.CF) {
             std::wcout << L"[!] CF mismatch: Emulated=" << g_regs.rflags.flags.CF
-                << L", Actual=" << ((ctx.EFlags >> 0) & 1) << std::endl;
+                << L", Actual=" << regs.rflags.flags.CF << std::endl;
             DumpRegisters();
             exit(0);
 
         }
 
-        if (g_regs.rflags.flags.PF != ((ctx.EFlags >> 2) & 1)) {
+        if (g_regs.rflags.flags.PF != regs.rflags.flags.PF) {
             std::wcout << L"[!] PF mismatch: Emulated=" << g_regs.rflags.flags.PF
-                << L", Actual=" << ((ctx.EFlags >> 2) & 1) << std::endl;
+                << L", Actual=" << regs.rflags.flags.PF << std::endl;
             DumpRegisters();
             exit(0);
         }
 
-        if (g_regs.rflags.flags.AF != ((ctx.EFlags >> 4) & 1)) {
+        if (g_regs.rflags.flags.AF != regs.rflags.flags.AF) {
             std::wcout << L"[!] AF mismatch: Emulated=" << g_regs.rflags.flags.AF
-                << L", Actual=" << ((ctx.EFlags >> 4) & 1) << std::endl;
+                << L", Actual=" << regs.rflags.flags.AF << std::endl;
             DumpRegisters();
             exit(0);
         }
 
-        if (g_regs.rflags.flags.ZF != ((ctx.EFlags >> 6) & 1)) {
+        if (g_regs.rflags.flags.ZF != regs.rflags.flags.ZF) {
             std::wcout << L"[!] ZF mismatch: Emulated=" << g_regs.rflags.flags.ZF
-                << L", Actual=" << ((ctx.EFlags >> 6) & 1) << std::endl;
+                << L", Actual=" << regs.rflags.flags.ZF << std::endl;
             DumpRegisters();
             exit(0);
         }
 
-        if (g_regs.rflags.flags.SF != ((ctx.EFlags >> 7) & 1)) {
+        if (g_regs.rflags.flags.SF != regs.rflags.flags.SF) {
             std::wcout << L"[!] SF mismatch: Emulated=" << g_regs.rflags.flags.SF
-                << L", Actual=" << ((ctx.EFlags >> 7) & 1) << std::endl;
+                << L", Actual=" << regs.rflags.flags.SF << std::endl;
             DumpRegisters();
             exit(0);
         }
 
 
-        if (g_regs.rflags.flags.IF != ((ctx.EFlags >> 9) & 1)) {
+        if (g_regs.rflags.flags.IF != regs.rflags.flags.IF) {
             std::wcout << L"[!] IF mismatch: Emulated=" << g_regs.rflags.flags.IF
-                << L", Actual=" << ((ctx.EFlags >> 9) & 1) << std::endl;
+                << L", Actual=" << regs.rflags.flags.IF << std::endl;
             DumpRegisters();
             exit(0);
         }
 
-        if (g_regs.rflags.flags.DF != ((ctx.EFlags >> 10) & 1)) {
+        if (g_regs.rflags.flags.DF != regs.rflags.flags.DF) {
             std::wcout << L"[!] DF mismatch: Emulated=" << g_regs.rflags.flags.DF
-                << L", Actual=" << ((ctx.EFlags >> 10) & 1) << std::endl;
+                << L", Actual=" << regs.rflags.flags.DF << std::endl;
             DumpRegisters();
             exit(0);
         }
 
-        if (g_regs.rflags.flags.OF != ((ctx.EFlags >> 11) & 1)) {
+        if (g_regs.rflags.flags.OF != regs.rflags.flags.OF) {
             std::wcout << L"[!] OF mismatch: Emulated=" << g_regs.rflags.flags.OF
-                << L", Actual=" << ((ctx.EFlags >> 11) & 1) << std::endl;
+                << L", Actual=" << regs.rflags.flags.OF << std::endl;
             DumpRegisters();
             exit(0);
         }
@@ -7079,146 +7069,158 @@ private:
 
 
     }
-    void CompareRegistersWithEmulation(CONTEXT& ctx) {
+    void CompareRegistersWithEmulation(const RegState& regs) {
 
-        if (g_regs.rip != ctx.Rip) {
+        if (g_regs.rip != regs.rip) {
             std::wcout << L"[!] RIP mismatch: Emulated=0x" << std::hex << g_regs.rip
-                << L", Actual=0x" << std::hex << ctx.Rip << std::endl;
+                << L", Actual=0x" << std::hex << regs.rip << std::endl;
             DumpRegisters();
             exit(0);
         }
 
 
-        if (g_regs.rsp.q != ctx.Rsp) {
+        if (g_regs.rsp.q != regs.rsp.q) {
             std::wcout << L"[!] RSP mismatch: Emulated=0x" << std::hex << g_regs.rsp.q
-                << L", Actual=0x" << std::hex << ctx.Rsp << std::endl;
+                << L", Actual=0x" << std::hex << regs.rsp.q << std::endl;
             DumpRegisters();
             exit(0);
         }
 
 
-        if (g_regs.rbp.q != ctx.Rbp) {
+        if (g_regs.rbp.q != regs.rbp.q) {
             std::wcout << L"[!] RBP mismatch: Emulated=0x" << std::hex << g_regs.rbp.q
-                << L", Actual=0x" << std::hex << ctx.Rbp << std::endl;
+                << L", Actual=0x" << std::hex << regs.rbp.q << std::endl;
             DumpRegisters();
             exit(0);
         }
 
-        if (g_regs.rax.q != ctx.Rax) {
+        if (g_regs.rax.q != regs.rax.q) {
             std::wcout << L"[!] RAX mismatch: Emulated=0x" << std::hex << g_regs.rax.q
-                << L", Actual=0x" << std::hex << ctx.Rax << std::endl;
+                << L", Actual=0x" << std::hex << regs.rax.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.rbx.q != ctx.Rbx) {
+        if (g_regs.rbx.q != regs.rbx.q) {
             std::wcout << L"[!] RBX mismatch: Emulated=0x" << std::hex << g_regs.rbx.q
-                << L", Actual=0x" << std::hex << ctx.Rbx << std::endl;
+                << L", Actual=0x" << std::hex << regs.rbx.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.rcx.q != ctx.Rcx) {
+        if (g_regs.rcx.q != regs.rcx.q) {
             std::wcout << L"[!] RCX mismatch: Emulated=0x" << std::hex << g_regs.rcx.q
-                << L", Actual=0x" << std::hex << ctx.Rcx << std::endl;
+                << L", Actual=0x" << std::hex << regs.rcx.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.rdx.q != ctx.Rdx) {
+        if (g_regs.rdx.q != regs.rdx.q) {
             std::wcout << L"[!] RDX mismatch: Emulated=0x" << std::hex << g_regs.rdx.q
-                << L", Actual=0x" << std::hex << ctx.Rdx << std::endl;
+                << L", Actual=0x" << std::hex << regs.rdx.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.rsi.q != ctx.Rsi) {
+        if (g_regs.rsi.q != regs.rsi.q) {
             std::wcout << L"[!] RSI mismatch: Emulated=0x" << std::hex << g_regs.rsi.q
-                << L", Actual=0x" << std::hex << ctx.Rsi << std::endl;
+                << L", Actual=0x" << std::hex << regs.rsi.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.rdi.q != ctx.Rdi) {
+        if (g_regs.rdi.q != regs.rdi.q) {
             std::wcout << L"[!] RDI mismatch: Emulated=0x" << std::hex << g_regs.rdi.q
-                << L", Actual=0x" << std::hex << ctx.Rdi << std::endl;
+                << L", Actual=0x" << std::hex << regs.rdi.q << std::endl;
             DumpRegisters();
             exit(0);
         }
 
-        if (g_regs.r8.q != ctx.R8) {
+        if (g_regs.r8.q != regs.r8.q) {
             std::wcout << L"[!] R8 mismatch: Emulated=0x" << std::hex << g_regs.r8.q
-                << L", Actual=0x" << std::hex << ctx.R8 << std::endl;
+                << L", Actual=0x" << std::hex << regs.r8.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.r9.q != ctx.R9) {
+        if (g_regs.r9.q != regs.r9.q) {
             std::wcout << L"[!] R9 mismatch: Emulated=0x" << std::hex << g_regs.r9.q
-                << L", Actual=0x" << std::hex << ctx.R9 << std::endl;
+                << L", Actual=0x" << std::hex << regs.r9.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.r10.q != ctx.R10) {
+        if (g_regs.r10.q != regs.r10.q) {
             std::wcout << L"[!] R10 mismatch: Emulated=0x" << std::hex << g_regs.r10.q
-                << L", Actual=0x" << std::hex << ctx.R10 << std::endl;
+                << L", Actual=0x" << std::hex << regs.r10.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.r11.q != ctx.R11) {
+        if (g_regs.r11.q != regs.r11.q) {
             std::wcout << L"[!] R11 mismatch: Emulated=0x" << std::hex << g_regs.r11.q
-                << L", Actual=0x" << std::hex << ctx.R11 << std::endl;
+                << L", Actual=0x" << std::hex << regs.r11.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.r12.q != ctx.R12) {
+        if (g_regs.r12.q != regs.r12.q) {
             std::wcout << L"[!] R12 mismatch: Emulated=0x" << std::hex << g_regs.r12.q
-                << L", Actual=0x" << std::hex << ctx.R12 << std::endl;
+                << L", Actual=0x" << std::hex << regs.r12.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.r13.q != ctx.R13) {
+        if (g_regs.r13.q != regs.r13.q) {
             std::wcout << L"[!] R13 mismatch: Emulated=0x" << std::hex << g_regs.r13.q
-                << L", Actual=0x" << std::hex << ctx.R13 << std::endl;
+                << L", Actual=0x" << std::hex << regs.r13.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.r14.q != ctx.R14) {
+        if (g_regs.r14.q != regs.r14.q) {
             std::wcout << L"[!] R14 mismatch: Emulated=0x" << std::hex << g_regs.r14.q
-                << L", Actual=0x" << std::hex << ctx.R14 << std::endl;
+                << L", Actual=0x" << std::hex << regs.r14.q << std::endl;
             DumpRegisters();
             exit(0);
         }
-        if (g_regs.r15.q != ctx.R15) {
+        if (g_regs.r15.q != regs.r15.q) {
             std::wcout << L"[!] R15 mismatch: Emulated=0x" << std::hex << g_regs.r15.q
-                << L", Actual=0x" << std::hex << ctx.R15 << std::endl;
+                << L", Actual=0x" << std::hex << regs.r15.q << std::endl;
             DumpRegisters();
             exit(0);
         }
 
 
-        if (g_regs.rflags.value != ctx.EFlags) {
-            CompareRFlags(ctx);
+        if (g_regs.rflags.value != regs.rflags.value) {
+            CompareRFlags(regs);
         }
 
 
         for (int i = 0; i < 16; i++) {
-            if (memcmp(g_regs.ymm[i].xmm, &ctx.Xmm0 + i, 16) != 0) {
-                std::wcout << L"[!] XMM" << i << L" mismatch" << std::endl;
+            unsigned char g_ymm_bytes[32];
+            unsigned char ctx_ymm_bytes[32];
 
-                std::wcout << L"g_regs.ymm[" << i << L"].xmm: ";
-                for (int j = 0; j < 16; j++) {
-                    std::wcout << std::hex << std::setw(2) << std::setfill(L'0') << (int)((unsigned char*)g_regs.ymm[i].xmm)[j] << L" ";
+            memcpy(g_ymm_bytes, g_regs.ymm[i].xmm, 16);
+            memcpy(g_ymm_bytes + 16, g_regs.ymm[i].ymmh, 16);
+
+            memcpy(ctx_ymm_bytes, regs.ymm[i].xmm, 16);
+            memcpy(ctx_ymm_bytes + 16, regs.ymm[i].ymmh, 16);
+
+            if (memcmp(g_ymm_bytes, ctx_ymm_bytes, 32) != 0) {
+                std::wcout << L"[!] YMM" << i << L" mismatch" << std::endl;
+
+                std::wcout << L"g_regs.ymm[" << i << L"]: ";
+                for (int j = 0; j < 32; j++) {
+                    std::wcout << std::hex << std::setw(2) << std::setfill(L'0')
+                        << (int)g_ymm_bytes[j] << L" ";
                 }
                 std::wcout << std::endl;
 
-                std::wcout << L"ctx.Xmm" << i << L": ";
-                unsigned char* ctx_ptr = (unsigned char*)(&ctx.Xmm0) + i * 16;
-                for (int j = 0; j < 16; j++) {
-                    std::wcout << std::hex << std::setw(2) << std::setfill(L'0') << (int)ctx_ptr[j] << L" ";
+   
+                std::wcout << L"regs.ymm[" << i << L"]: ";
+                for (int j = 0; j < 32; j++) {
+                    std::wcout << std::hex << std::setw(2) << std::setfill(L'0')
+                        << (int)ctx_ymm_bytes[j] << L" ";
                 }
                 std::wcout << std::endl;
+
                 DumpRegisters();
                 exit(0);
             }
         }
+
     }
     void SingleStepAndCompare(HANDLE hProcess, HANDLE hThread) {
-        // Save current context
         CONTEXT ctx = { 0 };
         ctx.ContextFlags = CONTEXT_FULL;
 
@@ -7227,15 +7229,13 @@ private:
             return;
         }
 
-        // Set Trap Flag for single step
-        ctx.EFlags |= 0x100;
+        ctx.EFlags |= 0x100; // Trap Flag
 
         if (!SetThreadContext(hThread, &ctx)) {
             std::wcout << L"[!] Failed to set thread context with Trap Flag" << std::endl;
             return;
         }
 
-        // Continue to let single step exception happen
         ContinueDebugEvent(pi.dwProcessId, GetThreadId(hThread), DBG_CONTINUE);
 
         DEBUG_EVENT dbgEvent;
@@ -7251,65 +7251,124 @@ private:
                 auto& er = dbgEvent.u.Exception.ExceptionRecord;
 
                 if (er.ExceptionCode == EXCEPTION_SINGLE_STEP) {
-                    CONTEXT ctxAfter = { 0 };
-                    ctxAfter.ContextFlags = CONTEXT_FULL;
 
-                    if (GetThreadContext(hThread, &ctxAfter)) {
-                        if (is_cpuid) {
-                            g_regs.rax.q = ctxAfter.Rax;
-                            g_regs.rbx.q = ctxAfter.Rbx;
-                            g_regs.rcx.q = ctxAfter.Rcx;
-                            g_regs.rdx.q = ctxAfter.Rdx;
+                    DWORD ctxSize = 0;
+                    if (!pfnInitializeContext(NULL, CONTEXT_ALL | CONTEXT_XSTATE, NULL, &ctxSize) &&
+                        GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+                    {
+                        LOG(L"[-] InitializeContext query size failed");
+                        break;
+                    }
+
+                    void* buf = malloc(ctxSize);
+                    if (!buf) {
+                        LOG(L"[-] malloc failed");
+                        break;
+                    }
+
+                    PCONTEXT pCtx = NULL;
+                    if (!pfnInitializeContext(buf, CONTEXT_ALL | CONTEXT_XSTATE, &pCtx, &ctxSize)) {
+                        LOG(L"[-] InitializeContext failed");
+                        free(buf);
+                        break;
+                    }
+
+                    if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_AVX)) {
+                        LOG(L"[-] SetXStateFeaturesMask failed");
+                        free(buf);
+                        break;
+                    }
+
+                    if (!GetThreadContext(hThread, pCtx)) {
+                        LOG(L"[-] GetThreadContext failed");
+                        free(buf);
+                        break;
+                    }
+
+                    RegState reg;
+                    reg.rip = pCtx->Rip;
+                    reg.rax.q = pCtx->Rax;
+                    reg.rbx.q = pCtx->Rbx;
+                    reg.rcx.q = pCtx->Rcx;
+                    reg.rdx.q = pCtx->Rdx;
+                    reg.rsi.q = pCtx->Rsi;
+                    reg.rdi.q = pCtx->Rdi;
+                    reg.rbp.q = pCtx->Rbp;
+                    reg.rsp.q = pCtx->Rsp;
+                    reg.r8.q = pCtx->R8;
+                    reg.r9.q = pCtx->R9;
+                    reg.r10.q = pCtx->R10;
+                    reg.r11.q = pCtx->R11;
+                    reg.r12.q = pCtx->R12;
+                    reg.r13.q = pCtx->R13;
+                    reg.r14.q = pCtx->R14;
+                    reg.r15.q = pCtx->R15;
+                    reg.rflags.value = pCtx->EFlags;
+
+                    DWORD featureLength = 0;
+                    PM128A pXmm = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
+                    PM128A pYmmHigh = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_AVX, NULL);
+
+                    if (pXmm && pYmmHigh) {
+                        for (int i = 0; i < 16; i++) {
+                            memcpy(reg.ymm[i].xmm, &pXmm[i], 16);
+                            memcpy(reg.ymm[i].ymmh, &pYmmHigh[i], 16);
                         }
-                        else if (is_rdtsc) {
-                            g_regs.rax.q = ctxAfter.Rax;
-                            g_regs.rdx.q = ctxAfter.Rdx;
-                        }
-                        else if (is_OVERFLOW_FLAG_SKIP) {
-                            LOG("SKIP OF");
-                            g_regs.rflags.flags.OF = ((ctxAfter.EFlags >> 11) & 1);
-                            CompareRegistersWithEmulation(ctxAfter);
-                        }
-                        else {
-                            CompareRegistersWithEmulation(ctxAfter);
+                    }
 
-                            if (my_mange.is_write) {
-                                char readBuffer[1024] = { 0 }; // adjust size if needed
-                                if (my_mange.size <= sizeof(readBuffer)) {
-                                    if (ReadMemory(my_mange.address, readBuffer, my_mange.size)) {
-                                        if (memcmp(readBuffer, my_mange.buffer, my_mange.size) != 0) {
+                    free(buf);
 
-                                            // log readBuffer
-                                            LOG(L"readBuffer:");
-                                            for (size_t i = 0; i < my_mange.size; ++i) {
-                                                LOG(std::hex << std::setw(2) << std::setfill(L'0') << (static_cast<unsigned char>(readBuffer[i])) << L" ");
-                                            }
-                                            std::wcout << std::endl;
 
-                                            // log my_mange.buffer
-                                            LOG(L"my_mange.buffer:");
-                                            const char* buf = static_cast<const char*>(my_mange.buffer);
-                                            for (size_t i = 0; i < my_mange.size; ++i) {
-                                                LOG(std::hex << std::setw(2) << std::setfill(L'0') << (static_cast<unsigned char>(buf[i])) << L" ");
-                                            }
-                                            std::wcout << std::endl;
-                                            DumpRegisters();
-                                            exit(0);
+                    if (is_cpuid) {
+                        g_regs.rax.q = reg.rax.q;
+                        g_regs.rbx.q = reg.rbx.q;
+                        g_regs.rcx.q = reg.rcx.q;
+                        g_regs.rdx.q = reg.rdx.q;
+                    }
+                    else if (is_rdtsc) {
+                        g_regs.rax.q = reg.rax.q;
+                        g_regs.rdx.q = reg.rdx.q;
+                    }
+                    else if (is_OVERFLOW_FLAG_SKIP) {
+                        LOG("SKIP OF");
+                        g_regs.rflags.flags.OF = reg.rflags.flags.OF;
+                        CompareRegistersWithEmulation(reg);
+                    }
+                    else {
+                        CompareRegistersWithEmulation(reg);
+
+                        if (my_mange.is_write) {
+                            char readBuffer[1024] = { 0 }; // adjust size if needed
+                            if (my_mange.size <= sizeof(readBuffer)) {
+                                if (ReadMemory(my_mange.address, readBuffer, my_mange.size)) {
+                                    if (memcmp(readBuffer, my_mange.buffer, my_mange.size) != 0) {
+
+                                        // log readBuffer
+                                        LOG(L"readBuffer:");
+                                        for (size_t i = 0; i < my_mange.size; ++i) {
+                                            LOG(std::hex << std::setw(2) << std::setfill(L'0') << (static_cast<unsigned char>(readBuffer[i])) << L" ");
                                         }
+                                        std::wcout << std::endl;
+
+                                        // log my_mange.buffer
+                                        LOG(L"my_mange.buffer:");
+                                        const char* buf = static_cast<const char*>(my_mange.buffer);
+                                        for (size_t i = 0; i < my_mange.size; ++i) {
+                                            LOG(std::hex << std::setw(2) << std::setfill(L'0') << (static_cast<unsigned char>(buf[i])) << L" ");
+                                        }
+                                        std::wcout << std::endl;
+                                        DumpRegisters();
+                                        exit(0);
                                     }
-                                    else {
-                                        LOG(L"WriteMemory LOG failed to read back from 0x" << std::hex << my_mange.address);
-                                    }
+                                }
+                                else {
+                                    LOG(L"WriteMemory LOG failed to read back from 0x" << std::hex << my_mange.address);
                                 }
                             }
                         }
-
-                    }
-                    else {
-                        std::wcout << L"[!] Failed to get thread context after single step" << std::endl;
                     }
 
-                    break; // Single step done, exit
+                    break; 
                 }
             }
             else {
@@ -7319,6 +7378,7 @@ private:
             ContinueDebugEvent(dbgEvent.dwProcessId, dbgEvent.dwThreadId, continueStatus);
         }
     }
+
 
 #endif DB_ENABLED
 
