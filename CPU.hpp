@@ -35,15 +35,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
-#define LOG_ENABLED 1
+#define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 1
+#define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //------------------------------------------
 
 
@@ -6877,47 +6877,36 @@ private:
 
         LOG(L"[+] SETP => " << std::hex << static_cast<int>(value));
     }
+
     void emulate_pcmpistri(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
-        const auto& src1 = instr->operands[1];
-        const auto& src2 = instr->operands[2];
-        const auto& immediate = src2.imm.value.u;
+        const auto& src = instr->operands[1];
+        const uint8_t imm8 = static_cast<uint8_t>(instr->operands[2].imm.value.u);
 
-        int result = 0;
-
-
-        uint8_t* xmm0 = g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0].xmm; 
-        uint8_t* xmm1 = g_regs.ymm[src1.reg.value - ZYDIS_REGISTER_XMM0].xmm; 
-
-
-        std::wstring string1(reinterpret_cast<wchar_t*>(xmm0), 16); 
-        std::wstring string2(reinterpret_cast<wchar_t*>(xmm1), 16); 
-
-
-        if (immediate == 0) {
-
-            result = (string1 == string2) ? 1 : 0;
-        }
-        else if (immediate == 1) {
-
-            result = (string1 != string2) ? 1 : 0;
+        if (dst.size != 128 || src.size != 128) {
+            LOG(L"[!] PCMPISTRI only supports 128-bit XMM operands");
+            return;
         }
 
-        if (!write_operand_value(dst, 32, result)) {
-            LOG(L"[!] Failed to write result operand in PCMPistri");
+        __m128i xmm_src_val, xmm_dst_val;
+        if (!read_operand_value<__m128i>(src, 128, xmm_src_val) ||
+            !read_operand_value<__m128i>(dst, 128, xmm_dst_val)) {
+            LOG(L"[!] Failed to read operands");
             return;
         }
 
 
+        int result = _mm_cmpistri(xmm_dst_val, xmm_src_val, 0xD);
+
         g_regs.rcx.q = result;
 
-        LOG(L"[+] PCMPISTR: Comparing strings xmm" << dst.reg.value - ZYDIS_REGISTER_XMM0
-            << ", xmm" << src1.reg.value - ZYDIS_REGISTER_XMM0
-            << " with 0x" << src2.imm.value.u
-            << ", result: " << result
-            << ", updated rcx: " << g_regs.rcx.q);
+        g_regs.rflags.flags.ZF = (result == 0) ? 1 : 0;
+        g_regs.rflags.flags.CF = (result == 0) ? 1 : 0;
+        g_regs.rflags.flags.SF = 0; 
+        g_regs.rflags.flags.OF = 0;
+        g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result));
+        g_regs.rflags.flags.AF = 0;
     }
-
 
     void emulate_jns(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
@@ -7182,6 +7171,7 @@ private:
                 << L", Actual=0x" << std::hex << regs.rcx.q << std::endl;
             DumpRegisters();
             exit(0);
+
         }
         if (g_regs.rdx.q != regs.rdx.q) {
             std::wcout << L"[!] RDX mismatch: Emulated=0x" << std::hex << g_regs.rdx.q
