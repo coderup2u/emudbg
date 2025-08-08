@@ -35,7 +35,7 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -43,7 +43,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //------------------------------------------
 
 
@@ -1682,6 +1682,168 @@ private:
         result.low = _umul128(a, b, &result.high);
         return result;
     }
+
+
+    struct PcmpistriResult {
+        int idx;                   // index found (or elem_count if not found)
+        std::vector<uint8_t> mask;     // mask after polarity applied (IntRes2)
+        std::vector<uint8_t> mask_raw; // mask before polarity (IntRes1)
+    };
+
+    // extract elements from __m128i (sign-extended to int64_t)
+    static void extract_elements(const __m128i& v, int element_bytes, bool signed_ops, std::vector<int64_t>& out) {
+        out.clear();
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
+        if (element_bytes == 1) {
+            for (int i = 0; i < 16; i++) {
+                if (signed_ops) out.push_back((int8_t)p[i]);
+                else out.push_back((uint8_t)p[i]);
+            }
+        }
+        else {
+            for (int i = 0; i < 8; i++) {
+                uint16_t val = uint16_t(p[2 * i]) | (uint16_t(p[2 * i + 1]) << 8);
+                if (signed_ops) out.push_back((int16_t)val);
+                else out.push_back((uint16_t)val);
+            }
+        }
+    }
+
+    // find implicit length (index of first zero element)
+    static int implicit_length(const std::vector<int64_t>& elems, int elem_count) {
+        for (size_t i = 0; i < elems.size(); ++i) {
+            if (elems[i] == 0) {
+                if (i == 0) return elem_count; 
+                return (int)i;              
+            }
+        }
+        return (int)elems.size();
+    }
+    // check if a falls into any (low,high) range pairs in b
+    static bool check_ranges(int64_t a, const std::vector<int64_t>& b, bool signed_ops) {
+        size_t n = b.size();
+        for (size_t i = 0; i + 1 < n; i += 2) {
+            int64_t lo = b[i];
+            int64_t hi = b[i + 1];
+            if (!signed_ops) {
+                uint64_t ua = (uint64_t)a, ulo = (uint64_t)lo, uhi = (uint64_t)hi;
+                if (ulo <= ua && ua <= uhi) return true;
+            }
+            else {
+                if (lo <= a && a <= hi) return true;
+            }
+        }
+        return false;
+    }
+
+    // ordered search: set mask if B is subsequence in A at some position
+    static int do_ordered_search_and_set_mask(const std::vector<int64_t>& A, int lenA,
+        const std::vector<int64_t>& B, int lenB,
+        std::vector<uint8_t>& mask,
+        bool signed_ops) {
+        if (lenB == 0 || lenB > lenA) return 0;
+        for (int start = 0; start <= lenA - lenB; ++start) {
+            bool ok = true;
+            for (int j = 0; j < lenB; ++j) {
+                if (signed_ops) {
+                    if (A[start + j] != B[j]) { ok = false; break; }
+                }
+                else {
+                    if ((uint64_t)A[start + j] != (uint64_t)B[j]) { ok = false; break; }
+                }
+            }
+            if (ok) {
+                mask[start] = 1;
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    // main PCMPISTRI logic
+    static PcmpistriResult emulate_pcmpistri_logic(const __m128i& va, const __m128i& vb, uint8_t imm8) {
+        PcmpistriResult out;
+        int mode = imm8;
+        int unit = mode & 0x3; // element size & signedness
+        bool signed_ops = (unit == _SIDD_SBYTE_OPS || unit == _SIDD_SWORD_OPS);
+        int elem_bytes = (unit == _SIDD_UBYTE_OPS || unit == _SIDD_SBYTE_OPS) ? 1 : 2;
+        int elem_count = (elem_bytes == 1) ? 16 : 8;
+
+        int cmp_mode = mode & 0x0C;
+        int polarity = mode & 0x30;
+        bool most_significant = ((mode & _SIDD_MOST_SIGNIFICANT) != 0);
+
+        std::vector<int64_t> A, B;
+        extract_elements(va, elem_bytes, signed_ops, A);
+        extract_elements(vb, elem_bytes, signed_ops, B);
+
+        int lenA = implicit_length(A, elem_count);
+        int lenB = implicit_length(B, elem_count);
+
+        std::vector<uint8_t> mask_raw(elem_count, 0);
+        std::vector<uint8_t> mask(elem_count, 0);
+
+        // Compute mask_raw per cmp_mode
+        if (cmp_mode == _SIDD_CMP_EQUAL_ANY) {
+            for (int i = 0; i < lenA; ++i) {
+                bool any = false;
+                for (int j = 0; j < lenB; ++j) {
+                    if (!signed_ops) {
+                        if ((uint64_t)A[i] == (uint64_t)B[j]) { any = true; break; }
+                    }
+                    else {
+                        if (A[i] == B[j]) { any = true; break; }
+                    }
+                }
+                mask_raw[i] = any ? 1 : 0;
+            }
+        }
+        else if (cmp_mode == _SIDD_CMP_RANGES) {
+            for (int i = 0; i < lenA; ++i) {
+                mask_raw[i] = check_ranges(A[i], B, signed_ops) ? 1 : 0;
+            }
+        }
+        else if (cmp_mode == _SIDD_CMP_EQUAL_EACH) {
+            int upto = min(lenA, lenB);
+            for (int i = 0; i < upto; ++i) {
+                if (!signed_ops) mask_raw[i] = ((uint64_t)A[i] == (uint64_t)B[i]) ? 1 : 0;
+                else mask_raw[i] = (A[i] == B[i]) ? 1 : 0;
+            }
+        }
+        else if (cmp_mode == _SIDD_CMP_EQUAL_ORDERED) {
+            do_ordered_search_and_set_mask(A, lenA, B, lenB, mask_raw, signed_ops);
+        }
+
+        // Apply polarity
+        if (polarity == _SIDD_NEGATIVE_POLARITY || polarity == _SIDD_MASKED_NEGATIVE_POLARITY) {
+            for (int i = 0; i < elem_count; ++i) mask[i] = mask_raw[i] ? 0 : 1;
+        }
+        else {
+            for (int i = 0; i < elem_count; ++i) mask[i] = mask_raw[i];
+        }
+        if (polarity == _SIDD_MASKED_POSITIVE_POLARITY || polarity == _SIDD_MASKED_NEGATIVE_POLARITY) {
+            for (int i = lenA; i < elem_count; ++i) mask[i] = 0;
+        }
+
+        // Find index (LSB or MSB)
+        int found_index = -1;
+        if (!most_significant) {
+            for (int i = 0; i < elem_count; ++i) {
+                if (mask[i]) { found_index = i; break; }
+            }
+        }
+        else {
+            for (int i = elem_count - 1; i >= 0; --i) {
+                if (mask[i]) { found_index = i; break; }
+            }
+        }
+
+        out.idx = (found_index == -1) ? elem_count : found_index;
+        out.mask = mask;
+        out.mask_raw = mask_raw;
+        return out;
+    }
+
     // ------------------- Internal State -------------------
     ZydisDecodedInstruction instr;
 
@@ -1823,6 +1985,10 @@ private:
         return true;
 #endif
         bool result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size, &bytesWritten) && bytesWritten == size;
+        if (!result) {
+            DWORD err = GetLastError();
+            printf("WriteProcessMemory failed with error: %lu\n", err);
+        }
 #if LOG_ENABLED
         if (result) {
             // Read back the written data
@@ -6878,35 +7044,94 @@ private:
         LOG(L"[+] SETP => " << std::hex << static_cast<int>(value));
     }
 
-    void emulate_pcmpistri(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];
-        const auto& src = instr->operands[1];
-        const uint8_t imm8 = static_cast<uint8_t>(instr->operands[2].imm.value.u);
 
-        if (dst.size != 128 || src.size != 128) {
-            LOG(L"[!] PCMPISTRI only supports 128-bit XMM operands");
-            return;
-        }
-
-        __m128i xmm_src_val, xmm_dst_val;
-        if (!read_operand_value<__m128i>(src, 128, xmm_src_val) ||
-            !read_operand_value<__m128i>(dst, 128, xmm_dst_val)) {
-            LOG(L"[!] Failed to read operands");
-            return;
-        }
-
-
-        int result = _mm_cmpistri(xmm_dst_val, xmm_src_val, 0xD);
-
-        g_regs.rcx.q = result;
-
-        g_regs.rflags.flags.ZF = (result == 0) ? 1 : 0;
-        g_regs.rflags.flags.CF = (result == 0) ? 1 : 0;
-        g_regs.rflags.flags.SF = 0; 
-        g_regs.rflags.flags.OF = 0;
-        g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result));
-        g_regs.rflags.flags.AF = 0;
+  
+    static inline int element_count_for_mode(int mode) {
+        int op = mode & 0x3;
+        return (op == _SIDD_UBYTE_OPS || op == _SIDD_SBYTE_OPS) ? 16 : 8;
     }
+
+    static inline int element_size_for_mode(int mode) {
+        int op = mode & 0x3;
+        return (op == _SIDD_UBYTE_OPS || op == _SIDD_SBYTE_OPS) ? 1 : 2;
+    }
+
+    static inline bool cmp_elements(int64_t a, int64_t b, int mode_is_signed, int cmp_kind) {
+        // cmp_kind: 0=EQUAL_ANY/EQUAL (used in pairwise), 1=RANGES (handled externally),
+        // 2=EQUAL_EACH (same as 0) ; signature kept simple
+        if (mode_is_signed) return (a == b);
+        else return ((uint64_t)a == (uint64_t)b);
+    }
+
+    void emulate_pcmpistri(const ZydisDisassembledInstruction* instr) {
+        const auto& src1 = instr->operands[0];
+        const auto& src2 = instr->operands[1];
+
+        if (!(instr->info.operand_count >= 3 && instr->operands[2].type == ZYDIS_OPERAND_TYPE_IMMEDIATE)) {
+            LOG(L"[!] PCMPISTRI: missing IMM8 operand");
+            return;
+        }
+        uint8_t imm8 = (uint8_t)instr->operands[2].imm.value.u;
+
+        __m128i a, b;
+        if (!read_operand_value(src1, 128, a)) { LOG(L"[!] Failed to read first operand in PCMPISTRI"); return; }
+        if (!read_operand_value(src2, 128, b)) { LOG(L"[!] Failed to read second operand in PCMPISTRI"); return; }
+
+        PcmpistriResult res = emulate_pcmpistri_logic(a, b, imm8);
+
+        // elem_count (16 for bytes, 8 for words)
+        const int elem_bytes = ((imm8 & 0x3) == _SIDD_UBYTE_OPS || (imm8 & 0x3) == _SIDD_SBYTE_OPS) ? 1 : 2;
+        const int elem_count =  instr->operands[2].size;
+
+        g_regs.rcx.q = res.idx;
+
+        // Build IntRes2 bitmask from mask vector (mask AFTER polarity)
+        uint32_t IntRes2 = 0;
+        for (size_t i = 0; i < res.mask.size() && i < 32; ++i) {
+            if (res.mask[i]) IntRes2 |= (1u << i);
+        }
+
+        // Derive values for EAX and EDX used in flag formulas:
+        int edx_val = res.idx;                      // index result (as we used for ECX)
+        int eax_val = elem_count - __popcnt(IntRes2);
+
+        // --- FLAGS per specification you gave ---
+        // CF – Reset if IntRes2 is equal to zero, set otherwise
+        g_regs.rflags.flags.CF = (IntRes2 != 0) ? 1 : 0;
+
+        // ZF – Set if absolute-value of EDX is < elem_count, reset otherwise
+        g_regs.rflags.flags.ZF = (std::abs(edx_val) < elem_count) ? 1 : 0;
+
+        // SFlag – Set if absolute-value of EAX is < elem_count, reset otherwise
+        g_regs.rflags.flags.SF = (std::abs(eax_val) < elem_count) ? 1 : 0;
+
+        // OFlag – IntRes2[0]
+        g_regs.rflags.flags.OF = (IntRes2 & 1u) ? 1 : 0;
+
+        // AFlag – Reset
+        g_regs.rflags.flags.AF = 0;
+
+        // PFlag – Reset
+        g_regs.rflags.flags.PF = 0;
+        std::wstringstream ss;
+        alignas(16) uint8_t src1_bytes[16];
+        alignas(16) uint8_t src2_bytes[16];
+        _mm_store_si128((__m128i*)src1_bytes, a);
+        _mm_store_si128((__m128i*)src2_bytes, b);
+
+        ss << L"PCMPISTRI src 1: ";
+        for (int i = 0; i < 16; ++i) {
+            ss << std::hex << std::setfill(L'0') << std::setw(2) << static_cast<int>(src1_bytes[i]) << L" ";
+        }
+        ss << L"| src 2: ";
+        for (int i = 0; i < 16; ++i) {
+            ss << std::hex << std::setfill(L'0') << std::setw(2) << static_cast<int>(src2_bytes[i]) << L" ";
+        }
+        ss << L"| imm8=0x" << std::hex << static_cast<int>(imm8);
+        LOG(ss.str().c_str());
+        LOG(L"[+] PCMPISTRI executed (imm8=0x"<< imm8 <<") -> idx="<< res.idx<<", ZF="<< g_regs.rflags.flags.ZF <<", CF="<< g_regs.rflags.flags.CF);
+    }
+
 
     void emulate_jns(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
