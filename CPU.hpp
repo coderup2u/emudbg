@@ -1905,9 +1905,8 @@ private:
                 "[TEB] Reading ("<< description.c_str()  <<") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
         }
 
-        // PEB
-
-
+ 
+       // PEB
         if (g_regs.peb_address) {
             if (address >= g_regs.peb_address && address < g_regs.peb_address + 0x1000) {
                 uint64_t offset = address - g_regs.peb_address;
@@ -1928,31 +1927,38 @@ private:
                     "[PEB] Reading (" << description.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
             }
         }
+
         if (IsInEmulationRange(address)) {
             LOG_analyze(BRIGHT_WHITE,
                 "[+] READ FROM executable memory detected | Target: 0x" << std::hex << address <<
                 " | RIP: 0x" << std::hex << g_regs.rip
             );
         }
+
         // NTDLL Image Data Directory
-        if (ntdllBase && address >= ntdllBase && address < ntdllBase + 0x100000) {
+
+        if (address >= ntdllBase && address < ntdllBase + 0x1000) {  
             std::string description = "Unknown (NTDLL)";
 
             for (auto it = ntdll_directory_offsets.begin(); it != ntdll_directory_offsets.end(); ++it) {
-                uint64_t vaStart = ntdllBase + it->first;  
+                uint64_t vaStart = ntdllBase + it->first;
                 std::string name = it->second;
 
                 auto next = std::next(it);
-                uint64_t vaEnd = (next != ntdll_directory_offsets.end())
-                    ? ntdllBase + next->first
-                    : (ntdllBase + 0x100000);
+                uint64_t nextOffset = (next != ntdll_directory_offsets.end()) ? next->first : (it->first + 0x40);
+                uint64_t vaEnd = ntdllBase + nextOffset;
 
                 if (address >= vaStart && address < vaEnd) {
                     uint64_t offset = address - vaStart;
-                    if (offset == 0)
+                    if (offset == 0) {
                         description = name;
-                    else
+                    }
+                    else if (offset < 0x20) { 
                         description = name + " + 0x" + std::to_string(offset);
+                    }
+                    else {
+                        description = "Unknown";
+                    }
                     break;
                 }
             }
