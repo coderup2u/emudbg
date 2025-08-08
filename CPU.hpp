@@ -1031,6 +1031,16 @@ public:
             { ZYDIS_MNEMONIC_VPCMPEQW, &CPU::emulate_vpcmpeqw },
             { ZYDIS_MNEMONIC_VPMOVMSKB, &CPU::emulate_vpmovmskb },
             { ZYDIS_MNEMONIC_PCMPISTRI, &CPU::emulate_pcmpistri },
+            { ZYDIS_MNEMONIC_BSF, &CPU::emulate_bsf },
+            { ZYDIS_MNEMONIC_CMPXCHG16B, &CPU::emulate_cmpxchg16b },
+            { ZYDIS_MNEMONIC_UNPCKHPD, &CPU::emulate_unpckhpd },
+            { ZYDIS_MNEMONIC_BTC, &CPU::emulate_btc },
+            { ZYDIS_MNEMONIC_VPCMPEQB, &CPU::emulate_vpcmpeqb },
+            { ZYDIS_MNEMONIC_PSHUFLW, &CPU::emulate_pshuflw },
+            { ZYDIS_MNEMONIC_PCMPEQB, &CPU::emulate_pcmpeqb },
+            { ZYDIS_MNEMONIC_PSHUFD, &CPU::emulate_pshufd },
+            { ZYDIS_MNEMONIC_POR, &CPU::emulate_por },
+            { ZYDIS_MNEMONIC_PMOVMSKB, &CPU::emulate_pmovmskb },
             
         };
 
@@ -3027,6 +3037,106 @@ private:
 
         LOG(L"[+] VPCMPEQW executed");
     }
+    void emulate_vpcmpeqb(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size; 
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpcmpeqb: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value<__m128i>(src1, width, v1) ||
+                !read_operand_value<__m128i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in vpcmpeqb (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_cmpeq_epi8(v1, v2); 
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpcmpeqb (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v1, v2;
+            if (!read_operand_value<__m256i>(src1, width, v1) ||
+                !read_operand_value<__m256i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in vpcmpeqb (256-bit)");
+                return;
+            }
+
+#if defined(__AVX2__)
+            __m256i result = _mm256_cmpeq_epi8(v1, v2); 
+#else
+            __m128i lo = _mm_cmpeq_epi8(_mm256_castsi256_si128(v1),
+                _mm256_castsi256_si128(v2));
+            __m128i hi = _mm_cmpeq_epi8(_mm256_extracti128_si256(v1, 1),
+                _mm256_extracti128_si256(v2, 1));
+            __m256i result = _mm256_set_m128i(hi, lo);
+#endif
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpcmpeqb (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPCMPEQB executed");
+    }
+    void emulate_por(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported operand size for POR: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i vdst, vsrc;
+            if (!read_operand_value<__m128i>(dst, width, vdst) || !read_operand_value<__m128i>(src, width, vsrc)) {
+                LOG(L"[!] Failed to read operands for POR (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_or_si128(vdst, vsrc);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result for POR (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i vdst, vsrc;
+            if (!read_operand_value<__m256i>(dst, width, vdst) || !read_operand_value<__m256i>(src, width, vsrc)) {
+                LOG(L"[!] Failed to read operands for POR (256-bit)");
+                return;
+            }
+
+#if defined(__AVX2__)
+            __m256i result = _mm256_or_si256(vdst, vsrc);
+#else
+            // fallback if AVX2 not available: operate on halves
+            __m128i lo = _mm_or_si128(_mm256_castsi256_si128(vdst), _mm256_castsi256_si128(vsrc));
+            __m128i hi = _mm_or_si128(_mm256_extracti128_si256(vdst, 1), _mm256_extracti128_si256(vsrc, 1));
+            __m256i result = _mm256_set_m128i(hi, lo);
+#endif
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result for POR (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] POR executed");
+    }
 
     void emulate_xadd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -3073,6 +3183,45 @@ private:
         }
 
         LOG(L"[+] SETO => " << std::hex << static_cast<int>(value));
+    }
+    void emulate_pshufd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const auto& imm = instr->operands[2];
+
+        if (dst.size != 128) {
+            LOG(L"[!] Unsupported operand size for PSHUFD: " << dst.size);
+            return;
+        }
+
+        __m128i src_val;
+        if (!read_operand_value<__m128i>(src, 128, src_val)) {
+            LOG(L"[!] Failed to read source operand for PSHUFD");
+            return;
+        }
+
+        uint8_t shuffle_imm = static_cast<uint8_t>(imm.imm.value.u & 0xFF);
+
+
+        alignas(16) uint32_t dwords[4];
+        _mm_store_si128((__m128i*)dwords, src_val);
+
+        uint32_t shuffled[4];
+
+
+        for (int i = 0; i < 4; ++i) {
+            uint8_t idx = (shuffle_imm >> (i * 2)) & 0x3;
+            shuffled[i] = dwords[idx];
+        }
+
+        __m128i result = _mm_load_si128((__m128i*)shuffled);
+
+        if (!write_operand_value<__m128i>(dst, 128, result)) {
+            LOG(L"[!] Failed to write result for PSHUFD");
+            return;
+        }
+
+        LOG(L"[+] PSHUFD executed");
     }
 
     void emulate_cmovnle(const ZydisDisassembledInstruction* instr) {
@@ -3152,6 +3301,100 @@ private:
         }
 
         LOG(L"[+] VPXOR executed successfully");
+    }
+    void emulate_pcmpeqb(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported operand width in PCMPEQB: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value<__m128i>(src1, width, v1) || !read_operand_value<__m128i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in PCMPEQB (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_cmpeq_epi8(v1, v2);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in PCMPEQB (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v1, v2;
+            if (!read_operand_value<__m256i>(src1, width, v1) || !read_operand_value<__m256i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in PCMPEQB (256-bit)");
+                return;
+            }
+
+#if defined(__AVX2__)
+            __m256i result = _mm256_cmpeq_epi8(v1, v2);
+#else
+     
+            __m128i lo = _mm_cmpeq_epi8(_mm256_castsi256_si128(v1), _mm256_castsi256_si128(v2));
+            __m128i hi = _mm_cmpeq_epi8(_mm256_extracti128_si256(v1, 1), _mm256_extracti128_si256(v2, 1));
+            __m256i result = _mm256_set_m128i(hi, lo);
+#endif
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in PCMPEQB (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] PCMPEQB executed");
+    }
+
+    void emulate_pshuflw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const auto& imm = instr->operands[2];
+
+        if (dst.size != 128) {
+            LOG(L"[!] Unsupported operand size for PSHUFLW: " << dst.size);
+            return;
+        }
+
+        __m128i src_val;
+        if (!read_operand_value<__m128i>(src, 128, src_val)) {
+            LOG(L"[!] Failed to read source operand for PSHUFLW");
+            return;
+        }
+
+        uint8_t shuffle_imm = static_cast<uint8_t>(imm.imm.value.u & 0xFF);
+
+
+        alignas(16) uint16_t words[8];
+        _mm_store_si128((__m128i*)words, src_val);
+
+        uint16_t shuffled_words[8];
+
+
+        for (int i = 0; i < 4; ++i) {
+
+            uint8_t idx = (shuffle_imm >> (i * 2)) & 0x3;
+            shuffled_words[i] = words[idx];
+        }
+
+        for (int i = 4; i < 8; ++i) {
+            shuffled_words[i] = words[i];
+        }
+
+        __m128i result = _mm_load_si128((__m128i*)shuffled_words);
+
+        if (!write_operand_value<__m128i>(dst, 128, result)) {
+            LOG(L"[!] Failed to write result for PSHUFLW");
+            return;
+        }
+
+        LOG(L"[+] PSHUFLW executed");
     }
 
 
@@ -4112,6 +4355,41 @@ private:
 
         LOG(L"[+] BTS => CF = " << g_regs.rflags.flags.CF << L", Result: 0x" << std::hex << bit_base);
     }
+    void emulate_btc(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const uint32_t width = instr->info.operand_width;
+
+        uint64_t bit_base = 0;
+        if (!read_operand_value(dst, width, bit_base)) {
+            LOG(L"[!] Failed to read operand for BTC");
+            return;
+        }
+
+        uint64_t shift = 0;
+        if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+            shift = get_register_value<uint64_t>(src.reg.value);
+        }
+        else {
+            shift = src.imm.value.u;
+        }
+
+        uint32_t bit_limit = width;
+        shift %= bit_limit;
+
+        g_regs.rflags.flags.CF = (bit_base >> shift) & 1;
+
+
+        bit_base ^= (1ULL << shift);
+
+        if (!write_operand_value(dst, width, bit_base)) {
+            LOG(L"[!] Failed to write back result in BTC");
+            return;
+        }
+
+        LOG(L"[+] BTC => CF = " << g_regs.rflags.flags.CF
+            << L", Result: 0x" << std::hex << bit_base);
+    }
 
     void emulate_bt(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -4172,6 +4450,41 @@ private:
         }
 
         LOG(L"[+] BTR => CF = " << g_regs.rflags.flags.CF << L", Result: 0x" << std::hex << bit_base);
+    }
+    void emulate_bsf(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const uint32_t width = instr->info.operand_width;
+
+        uint64_t src_val = 0;
+        if (!read_operand_value(src, width, src_val)) {
+            LOG(L"[!] Failed to read operand for BSF");
+            return;
+        }
+
+        if (src_val == 0) {
+
+            g_regs.rflags.flags.ZF = 1;
+            LOG(L"[+] BSF => src=0, ZF=1");
+            return;
+        }
+
+        g_regs.rflags.flags.ZF = 0;
+
+        uint64_t index = 0;
+        while (((src_val >> index) & 1ULL) == 0ULL) {
+            index++;
+        }
+
+
+        if (!write_operand_value(dst, width, index)) {
+            LOG(L"[!] Failed to write operand for BSF");
+            return;
+        }
+
+        LOG(L"[+] BSF => src=0x" << std::hex << src_val
+            << L", index=" << std::dec << index
+            << L", ZF=" << g_regs.rflags.flags.ZF);
     }
 
     void emulate_div(const ZydisDisassembledInstruction* instr) {
@@ -5164,7 +5477,89 @@ private:
 
         LOG(L"[+] MOVSS executed");
     }
+    void emulate_unpckhpd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
 
+        __m128i dst_val, src_val;
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operands for UNPCKHPD");
+            return;
+        }
+
+        alignas(16) uint64_t dst_qword[2];
+        alignas(16) uint64_t src_qword[2];
+        alignas(16) uint64_t result_qword[2];
+
+        _mm_store_si128((__m128i*)dst_qword, dst_val);
+        _mm_store_si128((__m128i*)src_qword, src_val);
+
+
+        result_qword[0] = dst_qword[1]; // High 64 bits of dst
+        result_qword[1] = src_qword[1]; // High 64 bits of src
+
+        __m128i result = _mm_load_si128((__m128i*)result_qword);
+        if (!write_operand_value(dst, 128, result)) {
+            LOG(L"[!] Failed to write result for UNPCKHPD");
+            return;
+        }
+
+        LOG(L"[+] UNPCKHPD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
+            << L" => High parts combined");
+    }
+
+    void emulate_cmpxchg16b(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0]; 
+        if (dst.type != ZYDIS_OPERAND_TYPE_MEMORY) {
+            LOG(L"[!] CMPXCHG16B requires memory operand");
+            return;
+        }
+
+   
+        __m128i mem_val;
+        if (!read_operand_value(dst, 128, mem_val)) {
+            LOG(L"[!] Failed to read 128-bit memory for CMPXCHG16B");
+            return;
+        }
+
+        alignas(16) uint64_t mem_qword[2];
+        _mm_store_si128((__m128i*)mem_qword, mem_val);
+
+
+        uint64_t mem_low = mem_qword[0]; 
+        uint64_t mem_high = mem_qword[1]; 
+
+
+        uint64_t cmp_low = g_regs.rax.q;
+        uint64_t cmp_high = g_regs.rdx.q;
+
+        bool equal = (mem_low == cmp_low) && (mem_high == cmp_high);
+
+        if (equal) {
+
+            mem_qword[0] = g_regs.rbx.q; // Low
+            mem_qword[1] = g_regs.rcx.q; // High
+
+            __m128i new_val = _mm_load_si128((__m128i*)mem_qword);
+            if (!write_operand_value(dst, 128, new_val)) {
+                LOG(L"[!] Failed to write 128-bit value for CMPXCHG16B");
+                return;
+            }
+        }
+        else {
+
+            g_regs.rax.q = mem_low;
+            g_regs.rdx.q = mem_high;
+        }
+
+        g_regs.rflags.flags.ZF = equal;
+
+        LOG(L"[+] CMPXCHG16B => ZF=" << (equal ? "1" : "0")
+            << L", mem_low=0x" << std::hex << mem_low
+            << L", mem_high=0x" << std::hex << mem_high);
+    }
 
     void emulate_shrd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -6752,6 +7147,48 @@ private:
         }
         else {
             LOG(L"[!] Unsupported register size in VPMOVMSKB: " << src_size_bits << " bits");
+        }
+    }
+    void emulate_pmovmskb(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0]; 
+        const auto& src = instr->operands[1];
+
+        uint32_t src_size_bits = src.size;
+
+        if (src_size_bits == 256) { // YMM
+            __m256i val;
+            if (!read_operand_value<__m256i>(src, src_size_bits, val)) {
+                LOG(L"[!] Failed to read source operand in PMOVMSKB (YMM)");
+                return;
+            }
+
+            int mask = _mm256_movemask_epi8(val);
+
+            if (!write_operand_value<uint32_t>(dst, 32, (uint32_t)mask)) {
+                LOG(L"[!] Failed to write destination operand in PMOVMSKB (YMM)");
+                return;
+            }
+
+            LOG(L"[+] PMOVMSKB (YMM) executed, mask=0x" << std::hex << mask);
+        }
+        else if (src_size_bits == 128) { // XMM
+            __m128i val;
+            if (!read_operand_value<__m128i>(src, src_size_bits, val)) {
+                LOG(L"[!] Failed to read source operand in PMOVMSKB (XMM)");
+                return;
+            }
+
+            int mask = _mm_movemask_epi8(val);
+
+            if (!write_operand_value<uint32_t>(dst, 32, (uint32_t)mask)) {
+                LOG(L"[!] Failed to write destination operand in PMOVMSKB (XMM)");
+                return;
+            }
+
+            LOG(L"[+] PMOVMSKB (XMM) executed, mask=0x" << std::hex << mask);
+        }
+        else {
+            LOG(L"[!] Unsupported source size in PMOVMSKB: " << src_size_bits << " bits");
         }
     }
 
