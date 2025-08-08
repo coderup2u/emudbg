@@ -1960,18 +1960,18 @@ private:
         SIZE_T bytesRead;
         return ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, size, &bytesRead) && bytesRead == size;
     }
-
     bool WriteMemory(uint64_t address, const void* buffer, SIZE_T size) {
         SIZE_T bytesWritten;
-#if analyze_ENABLED
 
+#if analyze_ENABLED
         if (IsInEmulationRange(address)) {
             LOG_analyze(GREEN,
                 "[+] Write to executable memory detected | Target: 0x" << std::hex << address <<
                 " | RIP: 0x" << std::hex << g_regs.rip
             );
         }
-#endif 
+#endif
+
 #if DB_ENABLED
         my_mange.address = address;
         my_mange.size = size;
@@ -1984,27 +1984,70 @@ private:
         }
         return true;
 #endif
-        bool result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size, &bytesWritten) && bytesWritten == size;
+
+        bool result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size, &bytesWritten) &&
+            bytesWritten == size;
+
         if (!result) {
             DWORD err = GetLastError();
-            printf("WriteProcessMemory failed with error: %lu\n", err);
+            LOG("WriteProcessMemory failed with error:"<< err);
+
+            if (err == ERROR_PARTIAL_COPY || err == ERROR_NOACCESS) {
+                // --- Step 1: Check current memory content ---
+                std::vector<BYTE> current(size);
+                SIZE_T bytesRead;
+                if (ReadProcessMemory(pi.hProcess, (LPCVOID)address, current.data(), size, &bytesRead) &&
+                    bytesRead == size) {
+                    if (memcmp(current.data(), buffer, size) == 0) {
+                        printf("[+] Memory already contains desired value.\n");
+                        return true;
+                    }
+                }
+
+                // --- Step 2: Get page info ---
+                MEMORY_BASIC_INFORMATION mbi;
+                if (!VirtualQueryEx(pi.hProcess, (LPCVOID)address, &mbi, sizeof(mbi))) {
+                    printf("VirtualQueryEx failed with error: %lu\n", GetLastError());
+                    return false;
+                }
+
+                if (mbi.State != MEM_COMMIT) {
+                    // Allocate/commit memory if it's not committed
+                    if (!VirtualAllocEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, MEM_COMMIT, PAGE_READWRITE)) {
+                        printf("VirtualAllocEx failed with error: %lu\n", GetLastError());
+                        return false;
+                    }
+                }
+
+                // --- Step 3: Change protection ---
+                DWORD oldProtect;
+                if (!VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, PAGE_READWRITE, &oldProtect)) {
+                    printf("VirtualProtectEx failed with error: %lu\n", GetLastError());
+                    return false;
+                }
+
+                // --- Step 4: Try writing again ---
+                result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size, &bytesWritten) &&
+                    bytesWritten == size;
+
+                // --- Step 5: Restore protection ---
+                DWORD tmp;
+                VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, oldProtect, &tmp);
+            }
         }
+
 #if LOG_ENABLED
         if (result) {
-            // Read back the written data
-            char readBuffer[1024] = { 0 }; // adjust size if needed
+            char readBuffer[1024] = { 0 };
             if (size <= sizeof(readBuffer)) {
                 if (ReadMemory(address, readBuffer, size)) {
-                    // LOG the read back value in hex
                     LOG("WriteMemory LOG at 0x" << std::hex << address);
                     for (SIZE_T i = 0; i < size; i++)
                         printf("%02X ", (unsigned char)readBuffer[i]);
                     printf("\n");
-
                 }
                 else {
                     LOG("WriteMemory LOG failed to read back from 0x" << std::hex << address);
-
                 }
             }
             else {
@@ -2012,6 +2055,7 @@ private:
             }
         }
 #endif
+
         return result;
     }
 
