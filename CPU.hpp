@@ -35,15 +35,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
-#define LOG_ENABLED 1
+#define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 1
+#define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //------------------------------------------
 
 
@@ -4482,7 +4482,7 @@ private:
             index++;
         }
 
-
+        g_regs.rflags.flags.PF = !parity(index);
         if (!write_operand_value(dst, width, index)) {
             LOG(L"[!] Failed to write operand for BSF");
             return;
@@ -6264,12 +6264,12 @@ private:
         uint32_t width = instr->info.operand_width;
         uint64_t val = 0;
         uint8_t shift = 0;
- 
+
         if (!read_operand_value(dst, width, val)) {
             LOG(L"[!] Failed to read destination operand in SHL");
             return;
         }
-               LOG(val);
+
         if (src.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
             shift = static_cast<uint8_t>(src.imm.value.u & 0x3F); // up to 63
         }
@@ -6287,39 +6287,24 @@ private:
         }
 
         if (shift == 0) {
-            // Shift = 0: flags mostly unchanged except these:
-            g_regs.rflags.flags.ZF = (val == 0);
-            g_regs.rflags.flags.SF = (val >> (width - 1)) & 1;
-            g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(val));
-            // CF and OF unchanged per Intel docs
             return;
         }
 
         uint64_t old_val = val;
-
-        // Perform shift
         uint64_t result = val << shift;
 
-        // Mask result according to operand width
         if (width < 64) {
             result &= (1ULL << width) - 1;
         }
 
-
-
-        // Set OF according to Intel:
-        // For SHL, OF is defined only for shift=1 as XOR of MSB before and after shift
-// Set CF: bit shifted out of MSB
-        bool cf = 0;
-        if (shift > 0 && shift <= width) {
-            cf = (old_val >> (width - shift)) & 1;
-            g_regs.rflags.flags.CF = cf;
+        if (shift <= width) {
+            g_regs.rflags.flags.CF = (old_val >> (width - shift)) & 1;
         }
         else {
             g_regs.rflags.flags.CF = 0;
         }
 
-        // Special handling for shift operations
+    
         if (shift == 1) {
             bool msb_before = (old_val >> (width - 1)) & 1;
             bool msb_after = (result >> (width - 1)) & 1;
@@ -6330,17 +6315,21 @@ private:
             is_OVERFLOW_FLAG_SKIP = 1;
 #endif
         }
-        // Write back result
+
+ 
+        g_regs.rflags.flags.ZF = (result == 0);
+        g_regs.rflags.flags.SF = (result >> (width - 1)) & 1;
+
+        uint8_t low_byte = static_cast<uint8_t>(result & 0xFF);
+        g_regs.rflags.flags.PF = !parity(low_byte); 
+
+        g_regs.rflags.flags.AF = 0; 
+
+
         if (!write_operand_value(dst, width, result)) {
             LOG(L"[!] Failed to write destination operand in SHL");
             return;
         }
-
-        // Update other flags
-        g_regs.rflags.flags.ZF = (result == 0);
-        g_regs.rflags.flags.SF = (result >> (width - 1)) & 1; // set sign flag to MSB of result
-        g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result));
-        g_regs.rflags.flags.AF = 0; // undefined for SHL/SHR, usually cleared
 
         LOG(L"[+] SHL => 0x" << std::hex << result);
     }
