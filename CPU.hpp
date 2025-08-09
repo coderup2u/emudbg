@@ -35,15 +35,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
-#define LOG_ENABLED 0
+#define LOG_ENABLED 1
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //------------------------------------------
 
 
@@ -6514,32 +6514,36 @@ private:
         const auto& src = instr->operands[1];
         uint32_t width = 64;
 
+
         if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
-            // movsd xmm, qword ptr [mem]
             uint64_t mem_val = 0;
             if (!read_operand_value(src, width, mem_val)) {
                 LOG(L"[!] Failed to read 64-bit value from memory in MOVSD");
                 return;
             }
 
-            __m128 old_val;
-            if (!read_operand_value<__m128>(dst, 128, old_val)) {
-                LOG(L"[!] Failed to read XMM register value");
+
+            __m256 ymm_val;
+            if (!read_operand_value<__m256>(dst, 256, ymm_val)) {
+                LOG(L"[!] Failed to read YMM register value");
                 return;
             }
 
-            uint64_t* p = reinterpret_cast<uint64_t*>(&old_val);
+            uint64_t* p = reinterpret_cast<uint64_t*>(&ymm_val);
             p[0] = mem_val;
+            p[1] = 0;      
 
-            if (!write_operand_value<__m128>(dst, 128, old_val)) {
-                LOG(L"[!] Failed to write new value to XMM register");
+
+            if (!write_operand_value<__m256>(dst, 256, ymm_val)) {
+                LOG(L"[!] Failed to write new value to YMM register");
                 return;
             }
 
             LOG(L"[+] MOVSD xmm, qword ptr [mem] executed");
         }
+
+
         else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-            // movsd qword ptr [mem], xmm
             __m128 xmm_val;
             if (!read_operand_value<__m128>(src, 128, xmm_val)) {
                 LOG(L"[!] Failed to read XMM register value");
@@ -6556,36 +6560,40 @@ private:
 
             LOG(L"[+] MOVSD qword ptr [mem], xmm executed");
         }
+
         else if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-            // movsd xmm1, xmm2
-            __m128 src_val;
-            if (!read_operand_value<__m128>(src, 128, src_val)) {
+
+            __m256 ymm_dst;
+            if (!read_operand_value<__m256>(dst, 256, ymm_dst)) {
+                LOG(L"[!] Failed to read destination YMM register value");
+                return;
+            }
+
+            __m128 xmm_src;
+            if (!read_operand_value<__m128>(src, 128, xmm_src)) {
                 LOG(L"[!] Failed to read source XMM register value");
                 return;
             }
 
-            __m128 dst_val;
-            if (!read_operand_value<__m128>(dst, 128, dst_val)) {
-                LOG(L"[!] Failed to read destination XMM register value");
-                return;
-            }
+            uint64_t* p_dst = reinterpret_cast<uint64_t*>(&ymm_dst);
+            uint64_t* p_src = reinterpret_cast<uint64_t*>(&xmm_src);
 
-            // move lower 64 bits
-            uint64_t* p_dst = reinterpret_cast<uint64_t*>(&dst_val);
-            uint64_t* p_src = reinterpret_cast<uint64_t*>(&src_val);
-            p_dst[0] = p_src[0];
+            p_dst[0] = p_src[0]; 
 
-            if (!write_operand_value<__m128>(dst, 128, dst_val)) {
-                LOG(L"[!] Failed to write destination XMM register value");
+
+            if (!write_operand_value<__m256>(dst, 256, ymm_dst)) {
+                LOG(L"[!] Failed to write destination YMM register value");
                 return;
             }
 
             LOG(L"[+] MOVSD xmm, xmm executed");
         }
+
         else {
             LOG(L"[!] Unsupported MOVSD operand combination");
         }
     }
+
 
     void emulate_psrldq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
