@@ -35,15 +35,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
-#define LOG_ENABLED 0
+#define LOG_ENABLED 1
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //------------------------------------------
 
 
@@ -7562,69 +7562,55 @@ private:
         const auto& src1 = instr->operands[0];
         const auto& src2 = instr->operands[1];
 
-        if (!(instr->info.operand_count >= 3 && instr->operands[2].type == ZYDIS_OPERAND_TYPE_IMMEDIATE)) {
+        if (!(instr->info.operand_count >= 3 &&
+            instr->operands[2].type == ZYDIS_OPERAND_TYPE_IMMEDIATE)) {
             LOG(L"[!] PCMPISTRI: missing IMM8 operand");
             return;
         }
         uint8_t imm8 = (uint8_t)instr->operands[2].imm.value.u;
 
         __m128i a, b;
-        if (!read_operand_value(src1, 128, a)) { LOG(L"[!] Failed to read first operand in PCMPISTRI"); return; }
-        if (!read_operand_value(src2, 128, b)) { LOG(L"[!] Failed to read second operand in PCMPISTRI"); return; }
+        if (!read_operand_value(src1, 128, a)) { LOG(L"[!] Failed to read first operand"); return; }
+        if (!read_operand_value(src2, 128, b)) { LOG(L"[!] Failed to read second operand"); return; }
 
         PcmpistriResult res = emulate_pcmpistri_logic(a, b, imm8);
 
-        // elem_count (16 for bytes, 8 for words)
-        const int elem_bytes = ((imm8 & 0x3) == _SIDD_UBYTE_OPS || (imm8 & 0x3) == _SIDD_SBYTE_OPS) ? 1 : 2;
-        const int elem_count =  instr->operands[2].size;
+
+        const int elem_bytes = ((imm8 & 0x3) == _SIDD_UBYTE_OPS ||
+            (imm8 & 0x3) == _SIDD_SBYTE_OPS) ? 1 : 2;
+        const int elem_count = (elem_bytes == 1) ? 16 : 8;
 
         g_regs.rcx.q = res.idx;
 
-        // Build IntRes2 bitmask from mask vector (mask AFTER polarity)
         uint32_t IntRes2 = 0;
-        for (size_t i = 0; i < res.mask.size() && i < 32; ++i) {
+        for (size_t i = 0; i < res.mask.size() && i < 32; ++i)
             if (res.mask[i]) IntRes2 |= (1u << i);
-        }
 
-        // Derive values for EAX and EDX used in flag formulas:
-        int edx_val = res.idx;                      // index result (as we used for ECX)
-        int eax_val = elem_count - __popcnt(IntRes2);
-
-        // --- FLAGS per specification you gave ---
-        // CF – Reset if IntRes2 is equal to zero, set otherwise
-        g_regs.rflags.flags.CF = (IntRes2 != 0) ? 1 : 0;
-
-        // ZF – Set if absolute-value of EDX is < elem_count, reset otherwise
-        g_regs.rflags.flags.ZF = (std::abs(edx_val) < elem_count) ? 1 : 0;
-
-        // SFlag – Set if absolute-value of EAX is < elem_count, reset otherwise
-        g_regs.rflags.flags.SF = (std::abs(eax_val) < elem_count) ? 1 : 0;
-
-        // OFlag – IntRes2[0]
-        g_regs.rflags.flags.OF = (IntRes2 & 1u) ? 1 : 0;
-
-        // AFlag – Reset
+        g_regs.rflags.flags.CF = (IntRes2 != 0);       
+        g_regs.rflags.flags.OF = (IntRes2 & 1u) != 0; 
         g_regs.rflags.flags.AF = 0;
-
-        // PFlag – Reset
         g_regs.rflags.flags.PF = 0;
-        std::wstringstream ss;
-        alignas(16) uint8_t src1_bytes[16];
-        alignas(16) uint8_t src2_bytes[16];
-        _mm_store_si128((__m128i*)src1_bytes, a);
-        _mm_store_si128((__m128i*)src2_bytes, b);
 
-        ss << L"PCMPISTRI src 1: ";
-        for (int i = 0; i < 16; ++i) {
-            ss << std::hex << std::setfill(L'0') << std::setw(2) << static_cast<int>(src1_bytes[i]) << L" ";
+        int eax_val = elem_count - __popcnt(IntRes2);
+        g_regs.rflags.flags.SF = (abs(eax_val) < elem_count);
+
+        {
+            std::vector<int64_t> elemsB;
+            extract_elements(b, elem_bytes,
+                ((imm8 & 0x3) == _SIDD_SBYTE_OPS ||
+                    (imm8 & 0x3) == _SIDD_SWORD_OPS),
+                elemsB);
+            bool hasZero = false;
+            for (auto v : elemsB) {
+                if (v == 0) { hasZero = true; break; }
+            }
+            g_regs.rflags.flags.ZF = hasZero ? 1 : 0;
         }
-        ss << L"| src 2: ";
-        for (int i = 0; i < 16; ++i) {
-            ss << std::hex << std::setfill(L'0') << std::setw(2) << static_cast<int>(src2_bytes[i]) << L" ";
-        }
-        ss << L"| imm8=0x" << std::hex << static_cast<int>(imm8);
-        LOG(ss.str().c_str());
-        LOG(L"[+] PCMPISTRI executed (imm8=0x"<< imm8 <<") -> idx="<< res.idx<<", ZF="<< g_regs.rflags.flags.ZF <<", CF="<< g_regs.rflags.flags.CF);
+
+   
+        LOG(L"[+] PCMPISTRI executed -> idx=" << res.idx
+            << ", ZF=" << g_regs.rflags.flags.ZF
+            << ", CF=" << g_regs.rflags.flags.CF);
     }
 
 
