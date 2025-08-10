@@ -2799,133 +2799,107 @@ private:
 
     void emulate_imul(const ZydisDisassembledInstruction* instr) {
         const auto& ops = instr->operands;
-        int operand_count = instr->info.operand_count_visible;
-        int width = instr->info.operand_width;
+        int op_count = instr->info.operand_count_visible;
+        unsigned width = instr->info.operand_width;
 
         int64_t val1 = 0, val2 = 0, imm = 0;
-        uint128_t result128 = { 0, 0 };
+        uint128_t full_res = { 0,0 };
         int64_t result64 = 0;
 
-        if (operand_count == 1) {
-            val1 = read_signed_operand(ops[0], width);
-            // val2 = RAX (implicit)
+        auto read_acc = [&]() -> int64_t {
             switch (width) {
-            case 8:  val2 = static_cast<int8_t>(g_regs.rax.l); break;
-            case 16: val2 = static_cast<int16_t>(g_regs.rax.w); break;
-            case 32: val2 = static_cast<int32_t>(g_regs.rax.d); break;
-            case 64: val2 = static_cast<int64_t>(g_regs.rax.q); break;
+            case 8:  return static_cast<int8_t>(g_regs.rax.l);
+            case 16: return static_cast<int16_t>(g_regs.rax.w);
+            case 32: return static_cast<int32_t>(g_regs.rax.d);
+            case 64: return static_cast<int64_t>(g_regs.rax.q);
+            default: assert(false); return 0;
             }
+            };
 
-            result128 = mul_64x64_to_128(val1, val2);
-
+        auto write_rdx_rax = [&](uint128_t res) {
             switch (width) {
             case 8:
-                g_regs.rax.w = static_cast<uint16_t>(result128.low);
+                g_regs.rax.w = static_cast<uint16_t>(res.low & 0xFFFF);
                 break;
             case 16:
-                g_regs.rax.w = static_cast<uint16_t>(result128.low);
-                g_regs.rdx.w = static_cast<uint16_t>(result128.high);
+                g_regs.rax.w = static_cast<uint16_t>(res.low & 0xFFFF);
+                g_regs.rdx.w = static_cast<uint16_t>(res.high & 0xFFFF);
                 break;
             case 32:
-                g_regs.rax.d = static_cast<uint32_t>(result128.low);
-                g_regs.rdx.d = static_cast<uint32_t>(result128.high);
+                g_regs.rax.d = static_cast<uint32_t>(res.low & 0xFFFFFFFF);
+                g_regs.rdx.d = static_cast<uint32_t>(res.high & 0xFFFFFFFF);
                 break;
             case 64:
-                g_regs.rax.q = result128.low;
-                g_regs.rdx.q = result128.high;
+                g_regs.rax.q = res.low;
+                g_regs.rdx.q = res.high;
                 break;
             }
-            LOG(L"[+] IMUL (1 operand, " << width << L"bit): RDX:RAX = 0x" << std::hex << result128.high << L":" << result128.low);
+            };
+
+        if (op_count == 1) {
+            val2 = read_signed_operand(ops[0], width);
+            val1 = read_acc();
+            full_res = mul_64x64_to_128(val1, val2);
+            write_rdx_rax(full_res);
+            LOG(L"[+] IMUL (1 operand) result low=0x" << std::hex << full_res.low << L" high=0x" << full_res.high);
         }
-        else if (operand_count == 2) {
+        else if (op_count == 2) {
             val1 = read_signed_operand(ops[0], width);
             val2 = read_signed_operand(ops[1], width);
             result64 = val1 * val2;
-
             write_operand_value(ops[0], width, static_cast<uint64_t>(result64));
-            LOG(L"[+] IMUL (2 operands): RESULT = 0x" << std::hex << result64);
+            LOG(L"[+] IMUL (2 operands) result=0x" << std::hex << result64);
         }
-        else if (operand_count == 3) {
+        else if (op_count == 3) {
             val1 = read_signed_operand(ops[1], width);
             imm = read_signed_operand(ops[2], width);
             result64 = val1 * imm;
-
             write_operand_value(ops[0], width, static_cast<uint64_t>(result64));
-            LOG(L"[+] IMUL (3 operands): RESULT = 0x" << std::hex << result64);
+            LOG(L"[+] IMUL (3 operands) result=0x" << std::hex << result64);
         }
         else {
-            LOG(L"[!] Unsupported IMUL operand count: " << operand_count);
+            LOG(L"[!] Unsupported IMUL operand count: " << op_count);
             return;
         }
 
-        // Update flags
+
+
         bool overflow = false;
         bool carry = false;
 
-        if (operand_count == 1) {
+        if (op_count == 1) {
+
+            uint64_t low_mask = (1ULL << (width * 8)) - 1;
+            int64_t low_val = 0;
 
             switch (width) {
-            case 8: {
-                int8_t low = static_cast<int8_t>(result128.low & 0xFF);
-                int8_t sign_extended = static_cast<int8_t>(result128.low & 0xFF);
-                int16_t full = static_cast<int16_t>(result128.low);
-                overflow = carry = (full != sign_extended);
-                break;
+            case 8:  low_val = static_cast<int8_t>(full_res.low & 0xFF); break;
+            case 16: low_val = static_cast<int16_t>(full_res.low & 0xFFFF); break;
+            case 32: low_val = static_cast<int32_t>(full_res.low & 0xFFFFFFFF); break;
+            case 64: low_val = static_cast<int64_t>(full_res.low); break;
             }
-            case 16: {
-                int16_t low = static_cast<int16_t>(result128.low & 0xFFFF);
-                int32_t sign_extended = static_cast<int32_t>(low);
-                int32_t full = static_cast<int32_t>(result128.low);
-                overflow = carry = (full != sign_extended);
-                break;
-            }
-            case 32: {
-                int32_t low = static_cast<int32_t>(result128.low & 0xFFFFFFFF);
-                int64_t sign_extended = static_cast<int64_t>(low);
-                int64_t full = static_cast<int64_t>(result128.low);
-                overflow = carry = (full != sign_extended);
-                break;
-            }
-            case 64: {
-                int64_t low = static_cast<int64_t>(result128.low);
-                overflow = carry = (result128.high != (low < 0 ? ~0ULL : 0ULL));
-                break;
-            }
-            }
-        }
 
+            int64_t sign_extended = low_val; 
+            int64_t expected_high = (sign_extended < 0) ? -1 : 0;
+
+            overflow = carry = (static_cast<int64_t>(full_res.high) != expected_high);
+        }
         else {
-            int64_t wide_result = 0;
-            if (operand_count == 2) {
-                val1 = read_signed_operand(ops[0], width);
-                val2 = read_signed_operand(ops[1], width);
-                wide_result = val1 * val2;
-            }
-            else if (operand_count == 3) {
-                val1 = read_signed_operand(ops[1], width);
-                imm = read_signed_operand(ops[2], width);
-                wide_result = val1 * imm;
-            }
+
+            int64_t wide_res = (op_count == 2) ? (val1 * val2) : (val1 * imm);
 
             switch (width) {
-            case 8:
-                overflow = carry = (wide_result != (int64_t)(int8_t)wide_result);
-                break;
-            case 16:
-                overflow = carry = (wide_result != (int64_t)(int16_t)wide_result);
-                break;
-            case 32:
-                overflow = carry = (wide_result != (int64_t)(int32_t)wide_result);
-                break;
-            case 64:
-                overflow = carry = false; // 64-bit overflow detection complex; assume no overflow
-                break;
+            case 8:  overflow = carry = (wide_res != static_cast<int8_t>(wide_res)); break;
+            case 16: overflow = carry = (wide_res != static_cast<int16_t>(wide_res)); break;
+            case 32: overflow = carry = (wide_res != static_cast<int32_t>(wide_res)); break;
+            case 64: overflow = carry = false; break; 
             }
         }
 
-        uint64_t check_val = (operand_count == 1) ? (result128.low & ((1ULL << (width * 8)) - 1)) : (static_cast<uint64_t>(result64) & ((1ULL << (width * 8)) - 1));
-        g_regs.rflags.flags.ZF = (operand_count == 1) ? (result128.low == 0) : 0;
-
+        g_regs.rflags.flags.CF = carry;
+        g_regs.rflags.flags.OF = overflow;
+        g_regs.rflags.flags.AF = 0;
+        g_regs.rflags.flags.PF = !parity( result64 & 0xFF);
         switch (width) {
         case 8:
             g_regs.rflags.flags.SF = ((int8_t)result64 < 0);
@@ -2940,11 +2914,8 @@ private:
             g_regs.rflags.flags.SF = ((int64_t)result64 < 0);
             break;
         }
+        g_regs.rflags.flags.ZF = 0;
 
-        g_regs.rflags.flags.OF = overflow;
-        g_regs.rflags.flags.CF = carry;
-        g_regs.rflags.flags.AF = 0;
-        g_regs.rflags.flags.PF = !parity((operand_count == 1 ? result128.low : result64) & 0xFF);
 
     }
 
