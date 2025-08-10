@@ -864,7 +864,7 @@ public:
 
 #if DB_ENABLED
     memory_mange my_mange;
-    bool is_cpuid, is_OVERFLOW_FLAG_SKIP, is_rdtsc;
+    bool is_cpuid, is_OVERFLOW_FLAG_SKIP, is_Auxiliary_Carry_FLAG_SKIP, is_Sign_FLAG_SKIP, is_rdtsc;
 #endif
 
 
@@ -1112,6 +1112,8 @@ public:
                 is_cpuid = 0;
                 is_rdtsc = 0;
                 is_OVERFLOW_FLAG_SKIP = 0;
+                is_Auxiliary_Carry_FLAG_SKIP = 0;
+                is_Sign_FLAG_SKIP = 0;
                 my_mange.is_write = 0;
                 g_regs.rflags.flags.TF = 1;
 #endif
@@ -6602,7 +6604,9 @@ private:
             LOG(L"[!] Failed to read destination operand");
             return;
         }
-
+#if DB_ENABLED
+        is_Auxiliary_Carry_FLAG_SKIP = 1;
+#endif
         int64_t val = 0;
         switch (width) {
         case 8:  val = static_cast<int8_t>(raw_val); break;
@@ -8053,6 +8057,15 @@ private:
 
                     free(buf);
 
+                    if (is_OVERFLOW_FLAG_SKIP) {
+                        g_regs.rflags.flags.OF = reg.rflags.flags.OF;
+                    }
+                    if (is_Auxiliary_Carry_FLAG_SKIP) {
+                        g_regs.rflags.flags.AF = reg.rflags.flags.AF;
+                    }
+                    if (is_Sign_FLAG_SKIP) {
+                        g_regs.rflags.flags.SF = reg.rflags.flags.SF;
+                    }
 
                     if (is_cpuid) {
                         g_regs.rax.q = reg.rax.q;
@@ -8063,11 +8076,6 @@ private:
                     else if (is_rdtsc) {
                         g_regs.rax.q = reg.rax.q;
                         g_regs.rdx.q = reg.rdx.q;
-                    }
-                    else if (is_OVERFLOW_FLAG_SKIP) {
-                        LOG("SKIP OF");
-                        g_regs.rflags.flags.OF = reg.rflags.flags.OF;
-                        CompareRegistersWithEmulation(reg);
                     }
                     else {
                         CompareRegistersWithEmulation(reg);
