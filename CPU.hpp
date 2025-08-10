@@ -35,15 +35,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
-#define LOG_ENABLED 0
+#define LOG_ENABLED 1
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //------------------------------------------
 
 
@@ -7093,6 +7093,12 @@ private:
 
             int mask = _mm256_movemask_epi8(val);
 
+            if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+   
+                set_register_value<uint64_t>(dst.reg.value, 0);
+            }
+
+
             if (!write_operand_value<uint32_t>(dst, 32, (uint32_t)mask)) {
                 LOG(L"[!] Failed to write destination operand in VPMOVMSKB (YMM)");
                 return;
@@ -7109,6 +7115,10 @@ private:
 
             int mask = _mm_movemask_epi8(val);
 
+            if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+                set_register_value<uint64_t>(dst.reg.value, 0);
+            }
+
             if (!write_operand_value<uint32_t>(dst, 32, (uint32_t)mask)) {
                 LOG(L"[!] Failed to write destination operand in VPMOVMSKB (XMM)");
                 return;
@@ -7120,6 +7130,7 @@ private:
             LOG(L"[!] Unsupported register size in VPMOVMSKB: " << src_size_bits << " bits");
         }
     }
+
     void emulate_pmovmskb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0]; 
         const auto& src = instr->operands[1];
