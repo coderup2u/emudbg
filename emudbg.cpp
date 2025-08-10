@@ -250,7 +250,7 @@ int wmain(int argc, wchar_t* argv[]) {
                 if (bpType == BreakpointType::Software && breakpoints.count(exAddr)) {
                     auto& bp = breakpoints[exAddr];
                     RemoveBreakpoint(pi.hProcess, exAddr, bp.originalByte);
-
+                    bp.remainingHits--;
                     CONTEXT ctx = { 0 };
                     ctx.ContextFlags = CONTEXT_FULL ;
                     HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
@@ -313,9 +313,16 @@ int wmain(int argc, wchar_t* argv[]) {
 
                     cpu.ApplyRegistersToContext();
 
-                    if (SetHardwareBreakpointAuto(hThread, addr)) {
-                        LOG(L"[+] Breakpoint set at new address: 0x" << std::hex << addr);
-                    }
+                    if (bpType == BreakpointType::Hardware)
+                        if (SetHardwareBreakpointAuto(hThread, addr)) {
+                            LOG(L"[+] Breakpoint set at new address: 0x" << std::hex << addr);
+                        }
+                        else {
+                            BYTE orig;
+                            if (breakpoints.find(addr) == breakpoints.end()) {
+                                if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
+                            }
+                        }
                 }
 
                 if (hThread) CloseHandle(hThread);
