@@ -6604,9 +6604,7 @@ private:
             LOG(L"[!] Failed to read destination operand");
             return;
         }
-#if DB_ENABLED
-        is_Auxiliary_Carry_FLAG_SKIP = 1;
-#endif
+
         int64_t val = 0;
         switch (width) {
         case 8:  val = static_cast<int8_t>(raw_val); break;
@@ -6624,7 +6622,9 @@ private:
             return;
         }
         uint8_t shift = static_cast<uint8_t>(tmp_shift) & 0x3F; // shift mask as per x86 rules
-
+        if (shift == 0) {
+            return;
+        }
         uint64_t mask = (width == 64) ? ~0ULL : ((1ULL << width) - 1);
         uint64_t result = static_cast<uint64_t>(val);
 
