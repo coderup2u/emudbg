@@ -35,15 +35,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
-#define LOG_ENABLED 0
+#define LOG_ENABLED 1
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //------------------------------------------
 
 
@@ -4138,54 +4138,52 @@ private:
         const auto& src = instr->operands[1];
         uint8_t width = instr->info.operand_width;
 
-        uint64_t acc = 0;
+        uint64_t dstVal, srcVal;
+        if (!read_operand_value(dst, width, dstVal) ||
+            !read_operand_value(src, width, srcVal)) {
+            LOG(L"[!] Failed to read operands for CMPXCHG");
+            return;
+        }
+        if (src.type == ZYDIS_OPERAND_TYPE_IMMEDIATE)
+            srcVal = zero_extend(srcVal, width);
 
+
+        uint64_t accVal = 0;
         switch (width) {
-        case 8:  acc = g_regs.rax.l; break;
-        case 16: acc = g_regs.rax.w; break;
-        case 32: acc = g_regs.rax.d; break;
-        case 64: acc = g_regs.rax.q; break;
-        default:
-            LOG(L"[!] Unsupported operand width: " << std::dec << static_cast<int>(width));
-            return;
+        case 8:  accVal = g_regs.rax.l; break;
+        case 16: accVal = g_regs.rax.w; break;
+        case 32: accVal = g_regs.rax.d; break;
+        case 64: accVal = g_regs.rax.q; break;
+        default: assert(false); return;
         }
 
-        uint64_t dst_val = 0;
-        if (!read_operand_value(dst, width, dst_val)) {
-            LOG(L"[!] Failed to read destination operand");
-            return;
-        }
+        uint64_t mask = get_mask_for_width(width);
+        uint64_t res = (accVal - dstVal) & mask;
 
-        bool equal = false;
+ 
+        auto& f = g_regs.rflags.flags;
+        f.ZF = (res == 0);
+        f.SF = res >> (width - 1);
+        f.PF = !parity(res & 0xFF);
+        f.CF = (accVal < dstVal);
+        f.AF = ((accVal ^ dstVal ^ res) & 0x10) != 0;
+        f.OF = (((accVal ^ dstVal) & (accVal ^ res)) >> (width - 1)) & 1;
 
-        if (dst_val == acc) {
-            uint64_t src_val = 0;
-            if (!read_operand_value(src, width, src_val)) {
-                LOG(L"[!] Failed to read source operand");
-                return;
-            }
-            if (!write_operand_value(dst, width, src_val)) {
-                LOG(L"[!] Failed to write to destination operand");
-                return;
-            }
-            equal = true;
+        if (f.ZF) {
+            write_operand_value(dst, width, srcVal);
+            LOG(L"[+] CMPXCHG: equal, src -> dst");
         }
         else {
-
+            // dst -> accumulator
             switch (width) {
-            case 8:  g_regs.rax.l = static_cast<uint8_t>(dst_val); break;
-            case 16: g_regs.rax.w = static_cast<uint16_t>(dst_val); break;
-            case 32: g_regs.rax.d = static_cast<uint32_t>(dst_val); break;
-            case 64: g_regs.rax.q = dst_val; break;
+            case 8:  g_regs.rax.l = dstVal; break;
+            case 16: g_regs.rax.w = dstVal; break;
+            case 32: g_regs.rax.d = dstVal; break;
+            case 64: g_regs.rax.q = dstVal; break;
             }
+            LOG(L"[+] CMPXCHG: not equal, dst -> acc");
         }
-
-        update_flags_sub(dst_val - acc, dst_val, acc, width);
-
-        g_regs.rflags.flags.ZF = equal;
-        LOG(L"[+] CMPXCHG => ZF=" << (equal ? "1" : "0"));
     }
-
 
     void emulate_pop(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
