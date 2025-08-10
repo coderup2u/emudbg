@@ -1041,6 +1041,7 @@ public:
             { ZYDIS_MNEMONIC_PSHUFD, &CPU::emulate_pshufd },
             { ZYDIS_MNEMONIC_POR, &CPU::emulate_por },
             { ZYDIS_MNEMONIC_PMOVMSKB, &CPU::emulate_pmovmskb },
+            { ZYDIS_MNEMONIC_PAUSE, &CPU::emulate_pause },
             
         };
 
@@ -3283,9 +3284,9 @@ private:
     }
     void emulate_pcmpeqb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
-        const auto& src1 = instr->operands[1];
-        const auto& src2 = instr->operands[2];
+        const auto& src = instr->operands[1];
         auto width = dst.size;
+
 
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported operand width in PCMPEQB: " << (int)width);
@@ -3293,13 +3294,13 @@ private:
         }
 
         if (width == 128) {
-            __m128i v1, v2;
-            if (!read_operand_value<__m128i>(src1, width, v1) || !read_operand_value<__m128i>(src2, width, v2)) {
+            __m128i v_dst, v_src;
+            if (!read_operand_value<__m128i>(dst, width, v_dst) || !read_operand_value<__m128i>(src, width, v_src)) {
                 LOG(L"[!] Failed to read source operands in PCMPEQB (128-bit)");
                 return;
             }
 
-            __m128i result = _mm_cmpeq_epi8(v1, v2);
+            __m128i result = _mm_cmpeq_epi8(v_dst, v_src);
 
             if (!write_operand_value<__m128i>(dst, width, result)) {
                 LOG(L"[!] Failed to write result in PCMPEQB (128-bit)");
@@ -3307,18 +3308,17 @@ private:
             }
         }
         else if (width == 256) {
-            __m256i v1, v2;
-            if (!read_operand_value<__m256i>(src1, width, v1) || !read_operand_value<__m256i>(src2, width, v2)) {
+            __m256i v_dst, v_src;
+            if (!read_operand_value<__m256i>(dst, width, v_dst) || !read_operand_value<__m256i>(src, width, v_src)) {
                 LOG(L"[!] Failed to read source operands in PCMPEQB (256-bit)");
                 return;
             }
 
 #if defined(__AVX2__)
-            __m256i result = _mm256_cmpeq_epi8(v1, v2);
+            __m256i result = _mm256_cmpeq_epi8(v_dst, v_src);
 #else
-     
-            __m128i lo = _mm_cmpeq_epi8(_mm256_castsi256_si128(v1), _mm256_castsi256_si128(v2));
-            __m128i hi = _mm_cmpeq_epi8(_mm256_extracti128_si256(v1, 1), _mm256_extracti128_si256(v2, 1));
+            __m128i lo = _mm_cmpeq_epi8(_mm256_castsi256_si128(v_dst), _mm256_castsi256_si128(v_src));
+            __m128i hi = _mm_cmpeq_epi8(_mm256_extracti128_si256(v_dst, 1), _mm256_extracti128_si256(v_src, 1));
             __m256i result = _mm256_set_m128i(hi, lo);
 #endif
 
@@ -5683,6 +5683,9 @@ private:
     void emulate_nop(const ZydisDisassembledInstruction*) {
         LOG(L"[+] NOP");
     }
+    void emulate_pause(const ZydisDisassembledInstruction*) {
+        LOG(L"[+] pause");
+    }
     void emulate_movq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -7646,6 +7649,7 @@ private:
 
     template<typename T>
     bool read_operand_value(const ZydisDecodedOperand& op, uint32_t width, T& out) {
+
         switch (op.type) {
         case ZYDIS_OPERAND_TYPE_REGISTER:
             out = get_register_value<T>(op.reg.value);
