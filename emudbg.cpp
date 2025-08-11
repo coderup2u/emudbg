@@ -1,6 +1,5 @@
 ﻿#include "cpu.hpp"
 #include <thread>
-#include <mutex>
 
 using namespace std;
 
@@ -248,6 +247,7 @@ int wmain(int argc, wchar_t* argv[]) {
             uint64_t exAddr = reinterpret_cast<uint64_t>(er.ExceptionAddress);
 
             switch (exceptionCode) {
+#if Multithread_the_MultiThread
             case EXCEPTION_BREAKPOINT:
                 if (bpType == BreakpointType::Software && breakpoints.count(exAddr)) {
                     auto& bp = breakpoints[exAddr];
@@ -328,6 +328,59 @@ int wmain(int argc, wchar_t* argv[]) {
                 }
                 break;
 
+#else
+
+            case EXCEPTION_BREAKPOINT:
+                if (bpType == BreakpointType::Software && breakpoints.count(exAddr)) {
+                    auto& bp = breakpoints[exAddr];
+                    RemoveBreakpoint(pi.hProcess, exAddr, bp.originalByte);
+                    bp.remainingHits--;
+                    CONTEXT ctx = { 0 };
+                    ctx.ContextFlags = CONTEXT_FULL;
+                    HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
+                    if (hThread && GetThreadContext(hThread, &ctx)) {
+                        ctx.Rip -= 1;
+                        SetThreadContext(hThread, &ctx);
+                    }
+                    RemoveAllBreakpoints(pi.hProcess, breakpoints);
+                    auto it = cpuThreads.find(dbgEvent.dwThreadId);
+                    if (it != cpuThreads.end()) {
+                        CPU& cpu = it->second;
+                        cpu.CPUThreadState = ThreadState::Running;
+                        cpu.UpdateRegistersFromContext();
+
+                        uint64_t addr = cpu.start_emulation();
+                        LOG(L"[+] Emulation returned address: 0x" << std::hex << addr);
+
+                        cpu.ApplyRegistersToContext();
+
+
+                        bp.remainingHits--;
+                        if (bp.remainingHits > 0) {
+                            SetBreakpoint(pi.hProcess, exAddr, bp.originalByte);
+                        }
+                        else {
+                            breakpoints.erase(exAddr);
+                            LOG(L"[*] Breakpoint at 0x" << std::hex << exAddr << L" removed permanently");
+                        }
+
+                        if (breakpoints.find(addr) == breakpoints.end()) {
+                            BYTE orig;
+                            if (SetBreakpoint(pi.hProcess, addr, orig)) {
+                                breakpoints[addr] = { orig, 1 };
+                                LOG(L"[+] Breakpoint set at new address: 0x" << std::hex << addr);
+                            }
+                        }
+                        else {
+                            breakpoints[addr].remainingHits++;
+                        }
+                    }
+                    if (hThread) CloseHandle(hThread);
+
+                }
+                break;
+
+#endif
 
             case EXCEPTION_SINGLE_STEP: {
 
