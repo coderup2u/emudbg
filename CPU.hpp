@@ -35,7 +35,7 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -1154,7 +1154,7 @@ public:
                 if (instr.mnemonic == ZYDIS_MNEMONIC_PAUSE)
                 {
                     LOG_analyze(BLUE, "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip );
-                    return g_regs.rip + instr.length;
+                    return CPU_PAUSED;
                 }
 
 
