@@ -35,7 +35,7 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -43,7 +43,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //------------------------------------------
 
 
