@@ -35,7 +35,7 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -43,7 +43,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //------------------------------------------
 
 
@@ -1508,8 +1508,6 @@ public:
 
     bool ApplyRegistersToContext()
     {
-
-
 #if DB_ENABLED
         g_regs.rflags.flags.TF = 0;
 #endif
@@ -1518,41 +1516,47 @@ public:
         ctx.ContextFlags = CONTEXT_ALL | CONTEXT_XSTATE;
 
         DWORD ctxSize = 0;
-        if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+        if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) &&
+            GetLastError() != ERROR_INSUFFICIENT_BUFFER)
         {
             LOG(L"[-] InitializeContext query size failed");
-
         }
-
 
         void* buf = malloc(ctxSize);
         if (!buf) {
             LOG(L"[-] malloc failed");
-
+            return false;
         }
-
 
         PCONTEXT pCtx = NULL;
         if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
         {
             LOG(L"[-] InitializeContext failed");
             free(buf);
+            return false;
         }
-
 
         if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_AVX))
         {
             LOG(L"[-] SetXStateFeaturesMask failed");
             free(buf);
-   
+            return false;
         }
 
 
         if (!GetThreadContext(hThread, pCtx))
         {
-            LOG(L"[-] GetThreadContext failed");
+            DWORD err = GetLastError();
+            LOG(L"[-] GetThreadContext failed. Error: " << err);
+
+            if (err == ERROR_INVALID_HANDLE) {
+
+                LOG(L"[!] Thread handle invalid, removing CPU from list.");
+     
+            }
+
             free(buf);
-  
+            return false;
         }
 
         pCtx->Rip = g_regs.rip;
@@ -1576,7 +1580,6 @@ public:
 
         LOG(L"[+] General registers applied");
 
-
         DWORD featureLength = 0;
         PM128A pXmm = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
         if (!pXmm || featureLength < 16 * sizeof(M128A)) {
@@ -1593,15 +1596,23 @@ public:
         }
 
         for (int i = 0; i < 16; i++) {
-            memcpy(&pXmm[i], g_regs.ymm[i].xmm, 16); 
-            memcpy(&pYmmHigh[i], g_regs.ymm[i].ymmh, 16); 
+            memcpy(&pXmm[i], g_regs.ymm[i].xmm, 16);
+            memcpy(&pYmmHigh[i], g_regs.ymm[i].ymmh, 16);
         }
 
         LOG(L"[+] YMM registers applied");
 
 
         if (!SetThreadContext(hThread, pCtx)) {
-            LOG(L"[-] Failed to set thread context");
+            DWORD err = GetLastError();
+            LOG(L"[-] Failed to set thread context FOR thread : 0x" << std::hex << hThread
+                << L"  Error: " << std::dec << err);
+
+            if (err == ERROR_INVALID_HANDLE) {
+                LOG(L"[!] Thread handle invalid, removing CPU from list.");
+    
+            }
+
             free(buf);
             return false;
         }
@@ -1610,6 +1621,7 @@ public:
         LOG(L"[+] Finished ApplyRegistersToContext");
         return true;
     }
+
 
 
 private:

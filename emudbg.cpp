@@ -1,4 +1,6 @@
 ﻿#include "cpu.hpp"
+#include <thread>
+#include <mutex>
 
 using namespace std;
 
@@ -251,35 +253,57 @@ int wmain(int argc, wchar_t* argv[]) {
                     auto& bp = breakpoints[exAddr];
                     RemoveBreakpoint(pi.hProcess, exAddr, bp.originalByte);
                     bp.remainingHits--;
+
                     CONTEXT ctx = { 0 };
-                    ctx.ContextFlags = CONTEXT_FULL ;
-                    HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
-                    if (hThread && GetThreadContext(hThread, &ctx)) {
+                    ctx.ContextFlags = CONTEXT_FULL;
+                    HANDLE hThreadTrigger = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
+                    if (hThreadTrigger && GetThreadContext(hThreadTrigger, &ctx)) {
                         ctx.Rip -= 1;
-                        SetThreadContext(hThread, &ctx);
+                        SetThreadContext(hThreadTrigger, &ctx);
                     }
-                    RemoveAllBreakpoints(pi.hProcess,breakpoints);
-                    auto it = cpuThreads.find(dbgEvent.dwThreadId);
-                    if (it != cpuThreads.end()) {
-                        CPU& cpu = it->second;
-                        cpu.CPUThreadState = ThreadState::Running;
-                        cpu.UpdateRegistersFromContext();
 
-                        uint64_t addr = cpu.start_emulation();
-                        LOG(L"[+] Emulation returned address: 0x" << std::hex << addr);
+                    RemoveAllBreakpoints(pi.hProcess, breakpoints);
 
-                        cpu.ApplyRegistersToContext();
+                    std::vector<CPU*> cpus;
+                    for (auto& p : cpuThreads) {
+                        cpus.push_back(&p.second);
+                    }
+
+                    std::vector<uint64_t> returnedAddrs(cpus.size(), 0);
+
      
+                    for (auto* cpu : cpus) {
+                        cpu->CPUThreadState = ThreadState::Running;
+                        cpu->UpdateRegistersFromContext();
+                    }
 
-                        bp.remainingHits--;
-                        if (bp.remainingHits > 0) {
-                            SetBreakpoint(pi.hProcess, exAddr, bp.originalByte);
-                        }
-                        else {
-                            breakpoints.erase(exAddr);
-                            LOG(L"[*] Breakpoint at 0x" << std::hex << exAddr << L" removed permanently");
-                        }
 
+                    std::vector<std::thread> workers;
+                    for (size_t i = 0; i < cpus.size(); ++i) {
+                        CPU* cpu = cpus[i];
+                        workers.emplace_back([cpu, &returnedAddrs, i]() {
+                            returnedAddrs[i] = cpu->start_emulation();
+                            LOG( "  returnedAddrs["<< i<<"] " << returnedAddrs[i]);
+                            });
+                    }
+                    for (auto& t : workers) {
+                        if (t.joinable()) t.join();
+                    }
+
+                    for (auto* cpu : cpus) {
+                        if (!cpu->ApplyRegistersToContext()) {
+            
+                            DWORD tid = GetThreadId(cpu->hThread);
+                            if (tid != 0) {
+                                LOG(L"[!] Removing CPU for dead thread ID: " << tid);
+                                cpuThreads.erase(tid);
+                            }
+                        }
+                    }
+
+
+                    for (auto addr : returnedAddrs) {
+                        if (addr == 0) continue;
                         if (breakpoints.find(addr) == breakpoints.end()) {
                             BYTE orig;
                             if (SetBreakpoint(pi.hProcess, addr, orig)) {
@@ -291,10 +315,19 @@ int wmain(int argc, wchar_t* argv[]) {
                             breakpoints[addr].remainingHits++;
                         }
                     }
-                    if (hThread) CloseHandle(hThread);
-          
+
+                    if (bp.remainingHits > 0) {
+                        SetBreakpoint(pi.hProcess, exAddr, bp.originalByte);
+                    }
+                    else {
+                        breakpoints.erase(exAddr);
+                        LOG(L"[*] Breakpoint at 0x" << std::hex << exAddr << L" removed permanently");
+                    }
+
+                    if (hThreadTrigger) CloseHandle(hThreadTrigger);
                 }
                 break;
+
 
             case EXCEPTION_SINGLE_STEP: {
 
@@ -367,6 +400,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
         case EXIT_THREAD_DEBUG_EVENT:
             cpuThreads.erase(dbgEvent.dwThreadId);
+            LOG(dbgEvent.dwThreadId<< "  EXIT");
             break;
 
         case EXIT_PROCESS_DEBUG_EVENT:
