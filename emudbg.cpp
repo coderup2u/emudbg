@@ -191,7 +191,7 @@ int wmain(int argc, wchar_t* argv[]) {
                 uint64_t entryAddress = (uint64_t)dbgEvent.u.CreateThread.lpStartAddress;
                 if (IsInEmulationRange(entryAddress)) {
 #if analyze_ENABLED
-                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << address);
+                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << entryAddress);
 
 #endif
 
@@ -210,7 +210,7 @@ int wmain(int argc, wchar_t* argv[]) {
                 }
                 if (IsInEmulationRange(ctx.Rip)) {
 #if analyze_ENABLED
-                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << address);
+                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << ctx.Rip);
 
 #endif
           
