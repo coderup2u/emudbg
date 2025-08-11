@@ -14,7 +14,7 @@
 #include <tchar.h>
 
 
-
+#define CPU_PAUSED (0x1)      
 
 #define XSTATE_AVX                          (XSTATE_GSSE)
 #define XSTATE_MASK_AVX                     (XSTATE_MASK_GSSE)
@@ -35,7 +35,7 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -43,7 +43,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 //------------------------------------------
@@ -1043,7 +1043,7 @@ public:
             { ZYDIS_MNEMONIC_PSHUFD, &CPU::emulate_pshufd },
             { ZYDIS_MNEMONIC_POR, &CPU::emulate_por },
             { ZYDIS_MNEMONIC_PMOVMSKB, &CPU::emulate_pmovmskb },
-            { ZYDIS_MNEMONIC_PAUSE, &CPU::emulate_pause },
+
             
         };
 
@@ -1149,6 +1149,11 @@ public:
                 {
                     LOG_analyze(BLUE, "[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — GDTR is being read");
                     LOG("[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — reading GDTR");
+                    return g_regs.rip + instr.length;
+                }
+                if (instr.mnemonic == ZYDIS_MNEMONIC_PAUSE)
+                {
+                    LOG_analyze(BLUE, "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip );
                     return g_regs.rip + instr.length;
                 }
 
@@ -5697,9 +5702,7 @@ private:
     void emulate_nop(const ZydisDisassembledInstruction*) {
         LOG(L"[+] NOP");
     }
-    void emulate_pause(const ZydisDisassembledInstruction*) {
-        LOG(L"[+] pause");
-    }
+
     void emulate_movq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];

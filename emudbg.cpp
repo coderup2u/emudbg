@@ -188,12 +188,54 @@ int wmain(int argc, wchar_t* argv[]) {
                 EnableStealthMode(hThread);
 
 #endif
-                uint64_t pointer = ctx.Rdx, address = 0;
-                if (ReadProcessMemory(pi.hProcess, (LPCVOID)pointer, &address, sizeof(address), nullptr) && IsInEmulationRange(address)) {
+                uint64_t entryAddress = (uint64_t)dbgEvent.u.CreateThread.lpStartAddress;
+                if (IsInEmulationRange(entryAddress)) {
 #if analyze_ENABLED
                     LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << address);
 
 #endif
+
+                    CPU cpu(hThread);
+                    cpu.CPUThreadState = ThreadState::Unknown;
+                    cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
+
+                    if (bpType == BreakpointType::Hardware)
+                        SetHardwareBreakpointAuto(hThread, ctx.Rip);
+                    else {
+                        BYTE orig;
+                        if (breakpoints.find(ctx.Rip) == breakpoints.end()) {
+                            if (SetBreakpoint(pi.hProcess, ctx.Rip, orig)) breakpoints[ctx.Rip] = { orig, 1 };
+                        }
+                    }
+                }
+                if (IsInEmulationRange(ctx.Rip)) {
+#if analyze_ENABLED
+                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << address);
+
+#endif
+          
+                    CPU cpu(hThread);
+                    cpu.CPUThreadState = ThreadState::Unknown;
+                    cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
+
+                    if (bpType == BreakpointType::Hardware)
+                        SetHardwareBreakpointAuto(hThread, ctx.Rip);
+                    else {
+                        BYTE orig;
+                        if (breakpoints.find(ctx.Rip) == breakpoints.end()) {
+                            if (SetBreakpoint(pi.hProcess, ctx.Rip, orig)) breakpoints[ctx.Rip] = { orig, 1 };
+                        }
+                    }
+                }
+
+                uint64_t pointer = ctx.Rdx, address = 0;
+            if (ReadProcessMemory(pi.hProcess, (LPCVOID)pointer, &address, sizeof(address), nullptr) && IsInEmulationRange(address)) {
+#if analyze_ENABLED
+                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << address);
+
+#endif
+
+
                     CPU cpu(hThread);
                     cpu.CPUThreadState = ThreadState::Unknown;
                     cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
