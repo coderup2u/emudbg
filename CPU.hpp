@@ -1052,6 +1052,9 @@ public:
             { ZYDIS_MNEMONIC_CVTPS2PD, &CPU::emulate_cvtps2pd },
             { ZYDIS_MNEMONIC_PCMPEQW, &CPU::emulate_pcmpeqw },
             { ZYDIS_MNEMONIC_VMOVNTDQ, &CPU::emulate_vmovntdq },
+            { ZYDIS_MNEMONIC_SFENCE, &CPU::emulate_sfence },
+            { ZYDIS_MNEMONIC_MOVHPD, &CPU::emulate_movhpd },
+            { ZYDIS_MNEMONIC_PADDQ, &CPU::emulate_paddq },
 
             
         };
@@ -2875,7 +2878,14 @@ private:
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => " << std::dec << result_scalar);
     }
+    void emulate_sfence(const ZydisDisassembledInstruction* instr) {
+        // In real CPU: serialize store operations before continuing execution.
+        // In emulation: no-op, but we log it.
 
+      //  _mm_sfence(); // Optional: use SSE intrinsic as a software fence
+
+        LOG(L"[+] SFENCE executed - store operations serialized (emulated)");
+    }
     void emulate_sqrtss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -7384,6 +7394,53 @@ private:
 
         LOG(L"[+] ROL => 0x" << std::hex << result);
     }
+    void emulate_paddq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size;  
+
+        if (width == 128) {
+            __m128i v_dst, v_src;
+            if (!read_operand_value<__m128i>(dst, width, v_dst) || !read_operand_value<__m128i>(src, width, v_src)) {
+                LOG(L"[!] Failed to read operands in PADDQ (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_add_epi64(v_dst, v_src);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in PADDQ (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v_dst, v_src;
+            if (!read_operand_value<__m256i>(dst, width, v_dst) || !read_operand_value<__m256i>(src, width, v_src)) {
+                LOG(L"[!] Failed to read operands in PADDQ (256-bit)");
+                return;
+            }
+
+#if defined(__AVX2__)
+            __m256i result = _mm256_add_epi64(v_dst, v_src);
+#else
+ 
+            __m128i lo = _mm_add_epi64(_mm256_castsi256_si128(v_dst), _mm256_castsi256_si128(v_src));
+            __m128i hi = _mm_add_epi64(_mm256_extracti128_si256(v_dst, 1), _mm256_extracti128_si256(v_src, 1));
+            __m256i result = _mm256_set_m128i(hi, lo);
+#endif
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in PADDQ (256-bit)");
+                return;
+            }
+        }
+        else {
+            LOG(L"[!] Unsupported operand width in PADDQ: " << width);
+        }
+
+        LOG(L"[+] PADDQ executed");
+    }
 
 
     void emulate_vmovups(const ZydisDisassembledInstruction* instr) {
@@ -7473,6 +7530,59 @@ private:
             LOG(L"[!] Unsupported register size in VPMOVMSKB: " << src_size_bits << " bits");
         }
     }
+    void emulate_movhpd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        __m128 xmm_val;
+
+        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+
+            if (!read_operand_value(dst, 128, xmm_val)) {
+                LOG(L"[!] Failed to read destination XMM register in MOVHPD");
+                return;
+            }
+
+            uint64_t mem_val = 0;
+            if (!read_operand_value(src, 64, mem_val)) {
+                LOG(L"[!] Failed to read source memory operand in MOVHPD");
+                return;
+            }
+
+
+            uint64_t* xmm_qwords = reinterpret_cast<uint64_t*>(&xmm_val);
+            xmm_qwords[1] = mem_val;
+
+            if (!write_operand_value(dst, 128, xmm_val)) {
+                LOG(L"[!] Failed to write destination XMM register in MOVHPD");
+                return;
+            }
+
+            LOG(L"[+] MOVHPD xmm, m64 executed");
+        }
+        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+
+
+            if (!read_operand_value(src, 128, xmm_val)) {
+                LOG(L"[!] Failed to read source XMM register in MOVHPD");
+                return;
+            }
+
+            uint64_t* xmm_qwords = reinterpret_cast<uint64_t*>(&xmm_val);
+            uint64_t high_qword = xmm_qwords[1];
+
+            if (!write_operand_value(dst, 64, high_qword)) {
+                LOG(L"[!] Failed to write destination memory operand in MOVHPD");
+                return;
+            }
+
+            LOG(L"[+] MOVHPD m64, xmm executed");
+        }
+        else {
+            LOG(L"[!] Unsupported operand types for MOVHPD");
+        }
+    }
+
 
     void emulate_pmovmskb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0]; 
