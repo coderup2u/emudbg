@@ -1,8 +1,23 @@
 .code
 PUBLIC rdtsc_asm
 PUBLIC xgetbv_asm
-
+PUBLIC fnstcw_asm
+PUBLIC read_mxcsr_asm
 ; uint64_t xgetbv_asm(uint32_t ecx)
+
+fnstcw_asm PROC
+    fnstcw [rcx]   
+    ret
+fnstcw_asm ENDP
+
+
+read_mxcsr_asm PROC
+
+
+    stmxcsr [rcx]  
+    ret
+read_mxcsr_asm ENDP
+
 
 xgetbv_asm PROC
     ; ecx is in ecx already

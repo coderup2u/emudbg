@@ -108,6 +108,8 @@ enum class ThreadState {
     Sleeping,
     Blocked,
 };
+extern "C" void read_mxcsr_asm(uint32_t* dest);
+extern "C" void fnstcw_asm(void* dest);
 extern "C" uint64_t __cdecl xgetbv_asm(uint32_t ecx);
 extern "C" uint64_t rdtsc_asm();
 
@@ -1055,6 +1057,9 @@ public:
             { ZYDIS_MNEMONIC_SFENCE, &CPU::emulate_sfence },
             { ZYDIS_MNEMONIC_MOVHPD, &CPU::emulate_movhpd },
             { ZYDIS_MNEMONIC_PADDQ, &CPU::emulate_paddq },
+            { ZYDIS_MNEMONIC_CVTTSD2SI, &CPU::emulate_cvttsd2si },
+            { ZYDIS_MNEMONIC_STMXCSR, &CPU::emulate_stmxcsr },
+            { ZYDIS_MNEMONIC_FNSTCW, &CPU::emulate_fnstcw },
 
             
         };
@@ -5650,7 +5655,19 @@ private:
 
         LOG(L"[+] MOVUPS executed");
     }
+    void emulate_stmxcsr(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];  
+        uint32_t mxcsr_val = 0;
+        read_mxcsr_asm(&mxcsr_val);
 
+
+        if (!write_operand_value(dst, 32, mxcsr_val)) {
+            LOG(L"[!] Failed to write MXCSR in STMXCSR");
+            return;
+        }
+
+        LOG(L"[+] STMXCSR executed: stored MXCSR = 0x" << std::hex << mxcsr_value);
+    }
     void emulate_stosw(const ZydisDisassembledInstruction* instr) {
         uint16_t value = g_regs.rax.w;  // AX
         uint64_t dest = g_regs.rdi.q;
@@ -5666,6 +5683,18 @@ private:
         LOG(L"[+] STOSW: Wrote 0x" << std::hex << value
             << L" to [RDI] = 0x" << dest
             << L", new RDI = 0x" << g_regs.rdi.q);
+    }
+    void emulate_fnstcw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        uint16_t cw_val = 0;
+        fnstcw_asm(&cw_val);
+
+        if (!write_operand_value(dst, 16, cw_val)) {
+            LOG(L"[!] Failed to write FPU Control Word in FNSTCW");
+            return;
+        }
+
+        LOG(L"[+] FNSTCW executed: stored FPU Control Word = 0x" << std::hex << cw_val);
     }
 
     void emulate_punpcklqdq(const ZydisDisassembledInstruction* instr) {
@@ -7337,6 +7366,45 @@ private:
         }
 
         LOG(L"[+] XCHG executed");
+    }
+    void emulate_cvttsd2si(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];  
+        const auto& src = instr->operands[1];  
+
+        __m128d src_val;
+        if (!read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read source operand in CVTTSD2SI");
+            return;
+        }
+
+        double src_double = src_val.m128d_f64[0];
+
+        uint8_t dst_size = dst.size; 
+
+        int64_t result_int = 0;
+
+        // truncate conversion
+        if (dst_size == 32) {
+            // convert to 32-bit int with truncation
+            int32_t truncated = static_cast<int32_t>(src_double);
+            result_int = static_cast<int64_t>(truncated);
+        }
+        else if (dst_size == 64) {
+            // convert to 64-bit int with truncation
+            int64_t truncated = static_cast<int64_t>(src_double);
+            result_int = truncated;
+        }
+        else {
+            LOG(L"[!] Unsupported destination size in CVTTSD2SI: " << (int)dst_size);
+            return;
+        }
+
+        if (!write_operand_value(dst, dst_size * 8, result_int)) {
+            LOG(L"[!] Failed to write destination operand in CVTTSD2SI");
+            return;
+        }
+
+        LOG(L"[+] CVTTSD2SI executed: " << std::fixed << src_double << " -> " << result_int);
     }
 
 
