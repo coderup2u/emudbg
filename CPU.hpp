@@ -1044,6 +1044,13 @@ public:
             { ZYDIS_MNEMONIC_POR, &CPU::emulate_por },
             { ZYDIS_MNEMONIC_PMOVMSKB, &CPU::emulate_pmovmskb },
             { ZYDIS_MNEMONIC_PAUSE, &CPU::emulate_pause },
+            { ZYDIS_MNEMONIC_SHUFPS, &CPU::emulate_shufps },
+            { ZYDIS_MNEMONIC_UNPCKLPS, &CPU::emulate_unpcklps },
+            { ZYDIS_MNEMONIC_SQRTSS, &CPU::emulate_sqrtss },
+            { ZYDIS_MNEMONIC_RSQRTPS, &CPU::emulate_rsqrtps },
+            { ZYDIS_MNEMONIC_DIVPS, &CPU::emulate_divps },
+            { ZYDIS_MNEMONIC_CVTPS2PD, &CPU::emulate_cvtps2pd },
+            { ZYDIS_MNEMONIC_PCMPEQW, &CPU::emulate_pcmpeqw },
 
             
         };
@@ -1996,9 +2003,58 @@ private:
 
 #endif
 
+
         SIZE_T bytesRead;
-        return ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, size, &bytesRead) && bytesRead == size;
-    }
+        bool result = ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, size, &bytesRead) &&
+            bytesRead == size;
+
+        if (!result) {
+            DWORD err = GetLastError();
+            LOG("ReadProcessMemory failed with error: " << err);
+
+            if (err == ERROR_PARTIAL_COPY || err == ERROR_NOACCESS) {
+                // --- Step 1: Try to change protection and read again ---
+                MEMORY_BASIC_INFORMATION mbi;
+                if (!VirtualQueryEx(pi.hProcess, (LPCVOID)address, &mbi, sizeof(mbi))) {
+                    printf("VirtualQueryEx failed with error: %lu\n", GetLastError());
+                    return false;
+                }
+
+                if (mbi.State != MEM_COMMIT) {
+                    // Allocate/commit memory if it's not committed
+                    if (!VirtualAllocEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, MEM_COMMIT, PAGE_READWRITE)) {
+                        printf("VirtualAllocEx failed with error: %lu\n", GetLastError());
+                        return false;
+                    }
+                }
+
+                DWORD oldProtect;
+                if (!VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, PAGE_READWRITE, &oldProtect)) {
+                    printf("VirtualProtectEx failed with error: %lu\n", GetLastError());
+                    return false;
+                }
+
+                // Try reading again
+                result = ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, size, &bytesRead) &&
+                    bytesRead == size;
+
+                // Restore original protection
+                DWORD tmp;
+                VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, oldProtect, &tmp);
+            }
+        }
+
+#if LOG_ENABLED
+        if (result) {
+            LOG("ReadMemory LOG at 0x" << std::hex << address);
+            for (SIZE_T i = 0; i < size; i++)
+                printf("%02X ", ((unsigned char*)buffer)[i]);
+            printf("\n");
+        }
+#endif
+
+        return result;
+}
     bool WriteMemory(uint64_t address, const void* buffer, SIZE_T size) {
         SIZE_T bytesWritten;
 
@@ -2819,6 +2875,41 @@ private:
             << L" => " << std::dec << result_scalar);
     }
 
+    void emulate_sqrtss(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        if (dst.size != 128) {
+            LOG(L"[!] Unsupported operand size for SQRTSS: " << dst.size);
+            return;
+        }
+
+        __m128 dst_val, src_val;
+        if (!read_operand_value<__m128>(dst, 128, dst_val)) {
+            LOG(L"[!] Failed to read destination operand for SQRTSS");
+            return;
+        }
+        if (!read_operand_value<__m128>(src, 128, src_val)) {
+            LOG(L"[!] Failed to read source operand for SQRTSS");
+            return;
+        }
+
+        alignas(16) float d[4], s[4];
+        _mm_store_ps(d, dst_val);
+        _mm_store_ps(s, src_val);
+
+        // Calculate sqrt of low float from src, keep rest from dst
+        d[0] = std::sqrt(s[0]);
+
+        __m128 result = _mm_load_ps(d);
+
+        if (!write_operand_value<__m128>(dst, 128, result)) {
+            LOG(L"[!] Failed to write result for SQRTSS");
+            return;
+        }
+
+        LOG(L"[+] SQRTSS executed");
+    }
 
     void emulate_imul(const ZydisDisassembledInstruction* instr) {
         const auto& ops = instr->operands;
@@ -3350,6 +3441,55 @@ private:
 
         LOG(L"[+] PCMPEQB executed");
     }
+    void emulate_pcmpeqw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported operand width in PCMPEQW: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v_dst, v_src;
+            if (!read_operand_value<__m128i>(dst, width, v_dst) ||
+                !read_operand_value<__m128i>(src, width, v_src)) {
+                LOG(L"[!] Failed to read source operands in PCMPEQW (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_cmpeq_epi16(v_dst, v_src);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in PCMPEQW (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v_dst, v_src;
+            if (!read_operand_value<__m256i>(dst, width, v_dst) ||
+                !read_operand_value<__m256i>(src, width, v_src)) {
+                LOG(L"[!] Failed to read source operands in PCMPEQW (256-bit)");
+                return;
+            }
+
+#if defined(__AVX2__)
+            __m256i result = _mm256_cmpeq_epi16(v_dst, v_src);
+#else
+            __m128i lo = _mm_cmpeq_epi16(_mm256_castsi256_si128(v_dst), _mm256_castsi256_si128(v_src));
+            __m128i hi = _mm_cmpeq_epi16(_mm256_extracti128_si256(v_dst, 1), _mm256_extracti128_si256(v_src, 1));
+            __m256i result = _mm256_set_m128i(hi, lo);
+#endif
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in PCMPEQW (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] PCMPEQW executed");
+    }
 
     void emulate_pshuflw(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -3394,6 +3534,50 @@ private:
         }
 
         LOG(L"[+] PSHUFLW executed");
+    }
+    void emulate_shufps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const auto& imm = instr->operands[2];
+
+        if (dst.size != 128) {
+            LOG(L"[!] Unsupported operand size for SHUFPS: " << dst.size);
+            return;
+        }
+
+        __m128 src1_val, src2_val;
+        if (!read_operand_value<__m128>(dst, 128, src1_val)) {
+            LOG(L"[!] Failed to read first source operand (dst) for SHUFPS");
+            return;
+        }
+        if (!read_operand_value<__m128>(src, 128, src2_val)) {
+            LOG(L"[!] Failed to read second source operand (src) for SHUFPS");
+            return;
+        }
+
+        uint8_t shuffle_imm = static_cast<uint8_t>(imm.imm.value.u & 0xFF);
+
+        alignas(16) float f1[4], f2[4], out[4];
+        _mm_store_ps(f1, src1_val);
+        _mm_store_ps(f2, src2_val);
+
+        // Low 2 bits -> index for out[0] from f1
+        out[0] = f1[(shuffle_imm >> 0) & 0x3];
+        // Bits 2-3 -> index for out[1] from f1
+        out[1] = f1[(shuffle_imm >> 2) & 0x3];
+        // Bits 4-5 -> index for out[2] from f2
+        out[2] = f2[(shuffle_imm >> 4) & 0x3];
+        // Bits 6-7 -> index for out[3] from f2
+        out[3] = f2[(shuffle_imm >> 6) & 0x3];
+
+        __m128 result = _mm_load_ps(out);
+
+        if (!write_operand_value<__m128>(dst, 128, result)) {
+            LOG(L"[!] Failed to write result for SHUFPS");
+            return;
+        }
+
+        LOG(L"[+] SHUFPS executed");
     }
 
 
@@ -4386,6 +4570,44 @@ private:
         LOG(L"[+] BTC => CF = " << g_regs.rflags.flags.CF
             << L", Result: 0x" << std::hex << bit_base);
     }
+    void emulate_rsqrtps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        if (dst.size != 128) {
+            LOG(L"[!] Unsupported operand size for RSQRTPS: " << dst.size);
+            return;
+        }
+
+        __m128 src_val;
+        if (!read_operand_value<__m128>(src, 128, src_val)) {
+            LOG(L"[!] Failed to read source operand for RSQRTPS");
+            return;
+        }
+
+        alignas(16) float s[4];
+        _mm_store_ps(s, src_val);
+
+        // Calculate reciprocal sqrt for all 4 floats
+        for (int i = 0; i < 4; i++) {
+            if (s[i] <= 0.0f) {
+                // Handling negative or zero (NaN/Inf cases similar to hardware)
+                s[i] = std::numeric_limits<float>::quiet_NaN();
+            }
+            else {
+                s[i] = 1.0f / std::sqrt(s[i]);
+            }
+        }
+
+        __m128 result = _mm_load_ps(s);
+
+        if (!write_operand_value<__m128>(dst, 128, result)) {
+            LOG(L"[!] Failed to write result for RSQRTPS");
+            return;
+        }
+
+        LOG(L"[+] RSQRTPS executed");
+    }
 
     void emulate_bt(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -4901,6 +5123,29 @@ private:
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => " << std::dec << result.m128d_f64[0]);
     }
+    void emulate_divps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];  // XMM register
+        const auto& src = instr->operands[1];  // XMM register or memory
+
+        __m128 dst_val, src_val;
+        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operands for DIVPS");
+            return;
+        }
+
+        // Perform packed single-precision divide (all 4 floats)
+        __m128 result = _mm_div_ps(dst_val, src_val);
+
+        write_operand_value(dst, 128, result);
+
+        LOG(L"[+] DIVPS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
+            << L" => ["
+            << result.m128_f32[0] << L", "
+            << result.m128_f32[1] << L", "
+            << result.m128_f32[2] << L", "
+            << result.m128_f32[3] << L"]");
+    }
 
     void emulate_rdtsc(const ZydisDisassembledInstruction*) {
 #if DB_ENABLED
@@ -5323,6 +5568,35 @@ private:
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => " << std::fixed << converted);
     }
+    void emulate_cvtps2pd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];  // XMM register (dest)
+        const auto& src = instr->operands[1];  // XMM register or memory (src)
+
+        __m128 src_val_f32;
+        __m128d dst_val_f64;
+
+        // Read source (packed single-precision floats)
+        if (!read_operand_value(src, 128, src_val_f32)) {
+            LOG(L"[!] Failed to read source operand for CVTPS2PD");
+            return;
+        }
+
+        // Convert lower two floats to doubles
+        float f0 = src_val_f32.m128_f32[0];
+        float f1 = src_val_f32.m128_f32[1];
+        dst_val_f64.m128d_f64[0] = static_cast<double>(f0);
+        dst_val_f64.m128d_f64[1] = static_cast<double>(f1);
+
+        // Write result (packed doubles) to destination
+        if (!write_operand_value(dst, 128, dst_val_f64)) {
+            LOG(L"[!] Failed to write result for CVTPS2PD");
+            return;
+        }
+
+        LOG(L"[+] CVTPS2PD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
+            << L" => [" << dst_val_f64.m128d_f64[0] << L", " << dst_val_f64.m128d_f64[1] << L"]");
+    }
 
 
     void emulate_jle(const ZydisDisassembledInstruction* instr) {
@@ -5677,6 +5951,44 @@ private:
         else {
             LOG(L"[+] SETNB: Wrote " << (int)val << L" to unknown destination");
         }
+    }
+    void emulate_unpcklps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        if (dst.size != 128) {
+            LOG(L"[!] Unsupported operand size for UNPCKLPS: " << dst.size);
+            return;
+        }
+
+        __m128 src1_val, src2_val;
+        if (!read_operand_value<__m128>(dst, 128, src1_val)) {
+            LOG(L"[!] Failed to read first source operand (dst) for UNPCKLPS");
+            return;
+        }
+        if (!read_operand_value<__m128>(src, 128, src2_val)) {
+            LOG(L"[!] Failed to read second source operand (src) for UNPCKLPS");
+            return;
+        }
+
+        alignas(16) float f1[4], f2[4], out[4];
+        _mm_store_ps(f1, src1_val);
+        _mm_store_ps(f2, src2_val);
+
+        // Interleave low 2 floats from both sources
+        out[0] = f1[0];
+        out[1] = f2[0];
+        out[2] = f1[1];
+        out[3] = f2[1];
+
+        __m128 result = _mm_load_ps(out);
+
+        if (!write_operand_value<__m128>(dst, 128, result)) {
+            LOG(L"[!] Failed to write result for UNPCKLPS");
+            return;
+        }
+
+        LOG(L"[+] UNPCKLPS executed");
     }
 
 
