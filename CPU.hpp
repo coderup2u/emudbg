@@ -1051,6 +1051,7 @@ public:
             { ZYDIS_MNEMONIC_DIVPS, &CPU::emulate_divps },
             { ZYDIS_MNEMONIC_CVTPS2PD, &CPU::emulate_cvtps2pd },
             { ZYDIS_MNEMONIC_PCMPEQW, &CPU::emulate_pcmpeqw },
+            { ZYDIS_MNEMONIC_VMOVNTDQ, &CPU::emulate_vmovntdq },
 
             
         };
@@ -7535,6 +7536,27 @@ private:
         }
 
         LOG(L"[+] VMOVDQU executed");
+    }
+    void emulate_vmovntdq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        constexpr uint32_t width = 256; // 256-bit for YMM registers
+
+        __m256i value;
+
+        if (!read_operand_value(src, width, value)) {
+            LOG(L"[!] Failed to read source operand in vmovntdq");
+            return;
+        }
+
+        // In real hardware: would use non-temporal store (_mm256_stream_si256)
+        // In emulation: normal write
+        if (!write_operand_value(dst, width, value)) {
+            LOG(L"[!] Failed to write destination operand in vmovntdq");
+            return;
+        }
+
+        LOG(L"[+] VMOVNTDQ executed (non-temporal hint ignored in emulation)");
     }
 
     void emulate_setnbe(const ZydisDisassembledInstruction* instr) {
