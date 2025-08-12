@@ -131,7 +131,6 @@ int wmain(int argc, wchar_t* argv[]) {
                     }
 #endif
 #if FUll_user_MODE
-
                     if (lowerLoaded.find(L"system32") == std::wstring::npos &&
                         lowerLoaded.find(L"ntdll.dll") == std::wstring::npos) {
                         IMAGE_DOS_HEADER dosHeader{};
@@ -148,10 +147,30 @@ int wmain(int argc, wchar_t* argv[]) {
                             LOG(L"[+] User-mode DLL added to valid_ranges: " << lowerLoaded.c_str()
                                 << L" at 0x" << std::hex << dllBase
                                 << L" - size: 0x" << dllSize);
+
+                            // --- TLS & EntryPoint Breakpoints ---
+                            auto modEntryRVA = GetEntryPointRVA(buffer);
+                            auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
+
+                            HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
+                            if (modEntryRVA)
+                                modTLSRVAs.push_back(modEntryRVA);
+
+                            for (auto& rva : modTLSRVAs) {
+                                uint64_t addr = dllBase + rva;
+                                if (bpType == BreakpointType::Hardware)
+                                    SetHardwareBreakpointAuto(hThread, addr);
+                                else {
+                                    BYTE orig;
+                                    if (SetBreakpoint(pi.hProcess, addr, orig))
+                                        breakpoints[addr] = { orig, 1 };
+                                }
+                            }
+                            if (hThread) CloseHandle(hThread);
                         }
                     }
-
 #endif
+
                     if (waitForModule && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
                         moduleBase = (uint64_t)ld.lpBaseOfDll;
                         auto modEntryRVA = GetEntryPointRVA(buffer);
@@ -210,7 +229,7 @@ int wmain(int argc, wchar_t* argv[]) {
                 }
                 if (IsInEmulationRange(ctx.Rip)) {
 #if analyze_ENABLED
-                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << ctx.Rip);
+                    LOG_analyze(GREEN, "New THREAD CREATED! Rip : " << std::hex << ctx.Rip);
 
 #endif
           
@@ -231,7 +250,7 @@ int wmain(int argc, wchar_t* argv[]) {
                 uint64_t pointer = ctx.Rdx, address = 0;
             if (ReadProcessMemory(pi.hProcess, (LPCVOID)pointer, &address, sizeof(address), nullptr) && IsInEmulationRange(address)) {
 #if analyze_ENABLED
-                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << address);
+                    LOG_analyze(GREEN, "New THREAD CREATED! RDX address : " << std::hex << address);
 
 #endif
 
@@ -377,6 +396,7 @@ int wmain(int argc, wchar_t* argv[]) {
                     auto& bp = breakpoints[exAddr];
                     RemoveBreakpoint(pi.hProcess, exAddr, bp.originalByte);
                     bp.remainingHits--;
+
                     CONTEXT ctx = { 0 };
                     ctx.ContextFlags = CONTEXT_FULL;
                     HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
@@ -384,8 +404,21 @@ int wmain(int argc, wchar_t* argv[]) {
                         ctx.Rip -= 1;
                         SetThreadContext(hThread, &ctx);
                     }
+
                     RemoveAllBreakpoints(pi.hProcess, breakpoints);
+
                     auto it = cpuThreads.find(dbgEvent.dwThreadId);
+                    if (it == cpuThreads.end()) {
+     
+                        if (hThread) {
+                            CPU cpu(hThread);
+                            cpu.CPUThreadState = ThreadState::Unknown;
+                            cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
+                            LOG(L"[+] Created new CPU object for missing thread: " << dbgEvent.dwThreadId);
+                            it = cpuThreads.find(dbgEvent.dwThreadId);
+                        }
+                    }
+
                     if (it != cpuThreads.end()) {
                         CPU& cpu = it->second;
                         cpu.CPUThreadState = ThreadState::Running;
@@ -396,8 +429,6 @@ int wmain(int argc, wchar_t* argv[]) {
 
                         cpu.ApplyRegistersToContext();
 
-
-                        bp.remainingHits--;
                         if (bp.remainingHits > 0) {
                             SetBreakpoint(pi.hProcess, exAddr, bp.originalByte);
                         }
@@ -417,10 +448,11 @@ int wmain(int argc, wchar_t* argv[]) {
                             breakpoints[addr].remainingHits++;
                         }
                     }
-                    if (hThread) CloseHandle(hThread);
 
+                    if (hThread) CloseHandle(hThread);
                 }
                 break;
+
 
 #endif
 

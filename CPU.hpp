@@ -35,7 +35,7 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -857,7 +857,7 @@ bool Patch_CheckRemoteDebuggerPresent() {
 }
 
 // ----------------------------- CPU Class Definition -----------------------------
-
+bool is_paused = 0;
 class CPU {
 public:
     // ------------------- CPU Context -------------------
@@ -1043,6 +1043,7 @@ public:
             { ZYDIS_MNEMONIC_PSHUFD, &CPU::emulate_pshufd },
             { ZYDIS_MNEMONIC_POR, &CPU::emulate_por },
             { ZYDIS_MNEMONIC_PMOVMSKB, &CPU::emulate_pmovmskb },
+            { ZYDIS_MNEMONIC_PAUSE, &CPU::emulate_pause },
 
             
         };
@@ -1120,7 +1121,7 @@ public:
                 my_mange.is_write = 0;
                 g_regs.rflags.flags.TF = 1;
 #endif
-
+             
 
                 const ZydisDisassembledInstruction* op = disasm.GetInstr();
                 instr = op->info;
@@ -1151,12 +1152,16 @@ public:
                     LOG("[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — reading GDTR");
                     return g_regs.rip + instr.length;
                 }
-                if (instr.mnemonic == ZYDIS_MNEMONIC_PAUSE)
-                {
-                    LOG_analyze(BLUE, "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip );
-                    return CPU_PAUSED;
-                }
-
+                //if (instr.mnemonic == ZYDIS_MNEMONIC_PAUSE)
+                //{
+                //    LOG_analyze(BLUE, "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip );
+                //    return CPU_PAUSED;
+                //}
+                if (is_paused && instr.mnemonic == ZYDIS_MNEMONIC_JMP) {
+                    is_paused = 0;
+                    return g_regs.rip + instr.length;
+                 }
+    
 
                 auto it = dispatch_table.find(instr.mnemonic);
                 if (it != dispatch_table.end()) {
@@ -1208,11 +1213,7 @@ public:
 
                 address = g_regs.rip;
 
-                // check if out of bounds, handle accordingly
-                if (disasm.IsJump() ||
-                    instr.mnemonic == ZYDIS_MNEMONIC_CALL ||
-                    instr.mnemonic == ZYDIS_MNEMONIC_RET)
-                {
+
                     if (!IsInEmulationRange(address)) {
 #if analyze_ENABLED
                         LOG_analyze( CYAN ,  GetExportedFunctionNameByAddress(address).c_str());
@@ -1233,7 +1234,7 @@ public:
                         ReadMemory(g_regs.rsp.q, &value, 8);
                         return value;
                     }
-                }
+                
             }
             else {
                 std::wcout << L"Failed to disassemble at address 0x" << std::hex << address << std::endl;
@@ -5701,6 +5702,11 @@ private:
 
     void emulate_nop(const ZydisDisassembledInstruction*) {
         LOG(L"[+] NOP");
+    }
+    void emulate_pause(const ZydisDisassembledInstruction*) {
+        LOG_analyze(BLUE, "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
+        LOG( "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
+        is_paused = 1;
     }
 
     void emulate_movq(const ZydisDisassembledInstruction* instr) {
