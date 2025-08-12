@@ -1060,6 +1060,7 @@ public:
             { ZYDIS_MNEMONIC_CVTTSD2SI, &CPU::emulate_cvttsd2si },
             { ZYDIS_MNEMONIC_STMXCSR, &CPU::emulate_stmxcsr },
             { ZYDIS_MNEMONIC_FNSTCW, &CPU::emulate_fnstcw },
+            { ZYDIS_MNEMONIC_UCOMISS, &CPU::emulate_ucomiss },
 
             
         };
@@ -7651,6 +7652,46 @@ private:
         }
     }
 
+    void emulate_ucomiss(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        float val_dst = 0.0f, val_src = 0.0f;
+
+
+        if (!read_operand_value(dst, 32, val_dst)) {
+            LOG(L"[!] Failed to read destination operand in UCOMISS");
+            return;
+        }
+
+        if (!read_operand_value(src, 32, val_src)) {
+            LOG(L"[!] Failed to read source operand in UCOMISS");
+            return;
+        }
+
+        bool unordered = (_isnan(val_dst) || _isnan(val_src)); 
+        bool equal = (val_dst == val_src);
+        bool less = (val_dst < val_src);
+
+        g_regs.rflags.flags.ZF = 0;
+        g_regs.rflags.flags.PF = 0;
+        g_regs.rflags.flags.CF = 0;
+
+        if (unordered) {
+            g_regs.rflags.flags.ZF = 1;
+            g_regs.rflags.flags.PF = 1;
+            g_regs.rflags.flags.CF = 1;
+        }
+        else {
+            if (equal) g_regs.rflags.flags.ZF = 1;
+            if (less) g_regs.rflags.flags.CF = 1;
+        }
+
+        LOG(L"[+] UCOMISS executed: dst=" << val_dst << L", src=" << val_src
+            << L", ZF=" << g_regs.rflags.flags.ZF
+            << L", PF=" << g_regs.rflags.flags.PF
+            << L", CF=" << g_regs.rflags.flags.CF);
+    }
 
     void emulate_pmovmskb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0]; 
