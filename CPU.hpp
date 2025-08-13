@@ -1061,6 +1061,9 @@ public:
             { ZYDIS_MNEMONIC_STMXCSR, &CPU::emulate_stmxcsr },
             { ZYDIS_MNEMONIC_FNSTCW, &CPU::emulate_fnstcw },
             { ZYDIS_MNEMONIC_UCOMISS, &CPU::emulate_ucomiss },
+            { ZYDIS_MNEMONIC_ROUNDSS, &CPU::emulate_roundss },
+            { ZYDIS_MNEMONIC_LEAVE, &CPU::emulate_leave },
+
 
             
         };
@@ -8034,6 +8037,64 @@ private:
         set_register_value<uint8_t>(dst.reg.value, value);
         LOG(L"[+] SETNZ => " << std::hex << static_cast<int>(value));
     }
+    void emulate_roundss(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const auto& imm = instr->operands[2]; // immediate rounding mode
+
+        __m128 dst_val, src_val;
+        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operands in ROUNDSS");
+            return;
+        }
+
+        int rounding_mode = imm.imm.value.u; // bits 1:0 define mode
+
+        __m128 result;
+        switch (rounding_mode & 0x3) {
+        case 0: // round to nearest
+            result = _mm_round_ss(dst_val, src_val, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+            break;
+        case 1: // round down
+            result = _mm_round_ss(dst_val, src_val, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
+            break;
+        case 2: // round up
+            result = _mm_round_ss(dst_val, src_val, _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC);
+            break;
+        case 3: // truncate
+            result = _mm_round_ss(dst_val, src_val, _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC);
+            break;
+        default:
+            LOG(L"[!] Invalid rounding mode in ROUNDSS");
+            return;
+        }
+
+        if (!write_operand_value(dst, 128, result)) {
+            LOG(L"[!] Failed to write result in ROUNDSS");
+            return;
+        }
+
+        LOG(L"[+] ROUNDSS executed (mode=" << rounding_mode << L")");
+    }
+    void emulate_leave(const ZydisDisassembledInstruction* instr) {
+        (void)instr; // unused
+
+        // RSP = RBP
+        g_regs.rsp.q = g_regs.rbp.q;
+
+        // pop RBP
+        uint64_t new_rbp = 0;
+        if (!ReadMemory(g_regs.rsp.q, &new_rbp, 64)) {
+            LOG(L"[!] Failed to read memory in LEAVE");
+            return;
+        }
+        g_regs.rbp.q = new_rbp;
+        g_regs.rsp.q += 8; // advance stack pointer
+
+        LOG(L"[+] LEAVE executed: RSP=" << std::hex << g_regs.rsp.q
+            << L", RBP=" << g_regs.rbp.q);
+    }
+
 
     void emulate_jl(const ZydisDisassembledInstruction* instr) {
         uint64_t target = 0;
