@@ -1,0 +1,3 @@
+[submodule "deps/zyemu"]
+	path = deps/zyemu
+	url = https://github.com/ZehMatt/zyemu.git
