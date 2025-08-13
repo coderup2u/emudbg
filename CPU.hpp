@@ -46,7 +46,11 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 #define FUll_user_MODE 1
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
+//using jit for emulation WIP
+#define Jit_ENABLED 0
 //------------------------------------------
+
+
 
 
 #if LOG_ENABLED
@@ -692,6 +696,126 @@ struct memory_mange
     char  buffer[1024];
     bool is_write;
 };
+//----------------- jit Helpers ----------------------
+
+
+#if Jit_ENABLED
+#include <zyemu/zyemu.hpp>
+
+zyemu::StatusCode memReadHandler(zyemu::ThreadId tid, std::uint64_t readAddress, void* dst, std::size_t size, void* userData)
+{
+
+
+
+    SIZE_T bytesRead;
+    bool result = ReadProcessMemory(pi.hProcess, (LPCVOID)readAddress, dst, size, &bytesRead) &&
+        bytesRead == size;
+
+    if (!result) {
+        DWORD err = GetLastError();
+
+
+        if (err == ERROR_PARTIAL_COPY || err == ERROR_NOACCESS) {
+            // --- Step 1: Try to change protection and read again ---
+            MEMORY_BASIC_INFORMATION mbi;
+            if (!VirtualQueryEx(pi.hProcess, (LPCVOID)readAddress, &mbi, sizeof(mbi))) {
+                printf("VirtualQueryEx failed with error: %lu\n", GetLastError());
+                return zyemu::StatusCode::invalidMemory;
+            }
+
+            if (mbi.State != MEM_COMMIT) {
+                // Allocate/commit memory if it's not committed
+                if (!VirtualAllocEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, MEM_COMMIT, PAGE_READWRITE)) {
+                    printf("VirtualAllocEx failed with error: %lu\n", GetLastError());
+                    return zyemu::StatusCode::invalidMemory;
+                }
+            }
+
+            DWORD oldProtect;
+            if (!VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, PAGE_READWRITE, &oldProtect)) {
+                printf("VirtualProtectEx failed with error: %lu\n", GetLastError());
+                return zyemu::StatusCode::invalidMemory;
+            }
+
+            // Try reading again
+            result = ReadProcessMemory(pi.hProcess, (LPCVOID)readAddress, dst, size, &bytesRead) &&
+                bytesRead == size;
+
+            // Restore original protection
+            DWORD tmp;
+            VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, oldProtect, &tmp);
+        }
+    }
+
+    return result ? zyemu::StatusCode::success : zyemu::StatusCode::invalidMemory;
+
+}
+
+
+zyemu::StatusCode memWriteHandler(zyemu::ThreadId tid, std::uint64_t writeAddress, const void* src, std::size_t size, void* userData)
+{
+
+    SIZE_T bytesWritten;
+    bool result = WriteProcessMemory(pi.hProcess, (LPVOID)writeAddress, src, size, &bytesWritten) &&
+        bytesWritten == size;
+
+    if (!result) {
+        DWORD err = GetLastError();
+
+
+        if (err == ERROR_PARTIAL_COPY || err == ERROR_NOACCESS) {
+            // --- Step 1: Check current memory content ---
+            std::vector<BYTE> current(size);
+            SIZE_T bytesRead;
+            if (ReadProcessMemory(pi.hProcess, (LPCVOID)writeAddress, current.data(), size, &bytesRead) &&
+                bytesRead == size) {
+                if (memcmp(current.data(), src, size) == 0) {
+                    printf("[+] Memory already contains desired value.\n");
+                    return zyemu::StatusCode::invalidMemory;
+                }
+            }
+
+            // --- Step 2: Get page info ---
+            MEMORY_BASIC_INFORMATION mbi;
+            if (!VirtualQueryEx(pi.hProcess, (LPCVOID)writeAddress, &mbi, sizeof(mbi))) {
+                printf("VirtualQueryEx failed with error: %lu\n", GetLastError());
+                return zyemu::StatusCode::invalidMemory;
+            }
+
+            if (mbi.State != MEM_COMMIT) {
+                // Allocate/commit memory if it's not committed
+                if (!VirtualAllocEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, MEM_COMMIT, PAGE_READWRITE)) {
+                    printf("VirtualAllocEx failed with error: %lu\n", GetLastError());
+                    return zyemu::StatusCode::invalidMemory;
+                }
+            }
+
+            // --- Step 3: Change protection ---
+            DWORD oldProtect;
+            if (!VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, PAGE_READWRITE, &oldProtect)) {
+                printf("VirtualProtectEx failed with error: %lu\n", GetLastError());
+                return zyemu::StatusCode::invalidMemory;
+            }
+
+            // --- Step 4: Try writing again ---
+            result = WriteProcessMemory(pi.hProcess, (LPVOID)writeAddress, src, size, &bytesWritten) &&
+                bytesWritten == size;
+
+            // --- Step 5: Restore protection ---
+            DWORD tmp;
+            VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, oldProtect, &tmp);
+        }
+    }
+
+
+    return result ? zyemu::StatusCode::success : zyemu::StatusCode::invalidMemory;
+}
+
+
+
+#endif
+
+
 // ------------------- PE Helpers -------------------
 
 bool IsInEmulationRange(uint64_t addr) {
@@ -1114,6 +1238,7 @@ public:
 //
 //        }
 //#endif
+
         while (true) {
             //DumpRegisters();
             if (!ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, sizeof(buffer), &bytesRead) || bytesRead == 0) {
@@ -1122,14 +1247,8 @@ public:
                     << L", GetLastError = " << std::dec << err);
                 break;
             }
-//#if analyze_ENABLED
-//
-//            if (compareRegState(g_regs_first_time, g_regs) && !is_first_time)
-//                LOG_analyze(GREEN, "Maybe OEP ? aT :0x" << std::hex << g_regs.rip);
-//            else
-//                is_first_time = 0;
-//
-//#endif
+
+
 
             if (disasm.Disassemble(address, buffer, bytesRead)) {
 #if DB_ENABLED
@@ -1141,8 +1260,44 @@ public:
                 my_mange.is_write = 0;
                 g_regs.rflags.flags.TF = 1;
 #endif
-             
+#if Jit_ENABLED
 
+        zyemu::CPU ctx{};
+        ctx.setMode(ZydisMachineMode::ZYDIS_MACHINE_MODE_LONG_64);
+
+        ctx.setMemReadHandler(memReadHandler, nullptr);
+        ctx.setMemWriteHandler(memWriteHandler, nullptr);
+        auto th1 = ctx.createThread();
+        UpdateContextFromGRegs(&ctx, th1);
+        auto status = ctx.step(th1);
+        LOG(g_regs.rip);
+        if (status != zyemu::StatusCode::success)
+        {
+
+            assert(false);
+        }
+        UpdateGRegsFromContext(&ctx, th1);
+        if (!IsInEmulationRange(g_regs.rip)) {
+#if analyze_ENABLED
+            LOG_analyze(CYAN, GetExportedFunctionNameByAddress(address).c_str());
+
+            uint8_t buffer[16] = {};
+            if (ReadMemory(address, buffer, sizeof(buffer))) {
+                if (disasm.Disassemble(address, buffer, bytesRead)) {
+                    const ZydisDisassembledInstruction* op = disasm.GetInstr();
+                    if (op->info.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
+                        LOG_analyze(YELLOW, "indirect syscall from RIP[0x" << std::hex << g_regs.rip << "]");
+                    }
+                }
+            }
+
+#endif
+
+            uint64_t value = 0;
+            ReadMemory(g_regs.rsp.q, &value, 8);
+            return value;
+        }
+#else
                 const ZydisDisassembledInstruction* op = disasm.GetInstr();
                 instr = op->info;
 
@@ -1254,12 +1409,16 @@ public:
                         ReadMemory(g_regs.rsp.q, &value, 8);
                         return value;
                     }
-                
+#endif
             }
+
+
             else {
                 std::wcout << L"Failed to disassemble at address 0x" << std::hex << address << std::endl;
                 break;
             }
+
+
         }
 
         return -1;
@@ -2069,7 +2228,7 @@ private:
         return result;
 }
     bool WriteMemory(uint64_t address, const void* buffer, SIZE_T size) {
-        SIZE_T bytesWritten;
+      
 
 #if analyze_ENABLED
         if (IsInEmulationRange(address)) {
@@ -2092,7 +2251,7 @@ private:
         }
         return true;
 #endif
-
+  SIZE_T bytesWritten;
         bool result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size, &bytesWritten) &&
             bytesWritten == size;
 
@@ -5670,7 +5829,7 @@ private:
             return;
         }
 
-        LOG(L"[+] STMXCSR executed: stored MXCSR = 0x" << std::hex << mxcsr_value);
+        LOG(L"[+] STMXCSR executed: stored MXCSR = 0x" << std::hex << mxcsr_val);
     }
     void emulate_stosw(const ZydisDisassembledInstruction* instr) {
         uint16_t value = g_regs.rax.w;  // AX
@@ -8765,7 +8924,80 @@ private:
 
 
 #endif DB_ENABLED
+#if Jit_ENABLED
 
+    void UpdateContextFromGRegs(zyemu::CPU* ctx, zyemu::ThreadId th1)
+    {
+        if (!ctx) return;
+
+        // Set each register via Zydis wrapper
+        ctx->setRegValue(th1, ZYDIS_REGISTER_RAX, g_regs.rax.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_RBX, g_regs.rbx.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_RCX, g_regs.rcx.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_RDX, g_regs.rdx.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_RSI, g_regs.rsi.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_RDI, g_regs.rdi.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_RBP, g_regs.rbp.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_RSP, g_regs.rsp.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_R8, g_regs.r8.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_R9, g_regs.r9.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_R10, g_regs.r10.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_R11, g_regs.r11.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_R12, g_regs.r12.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_R13, g_regs.r13.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_R14, g_regs.r14.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_R15, g_regs.r15.q);
+        ctx->setRegValue(th1, ZYDIS_REGISTER_RIP, g_regs.rip);
+
+
+            // Optional: set via Zydis if it supports SIMD regs
+            for (int i = 0; i < 16; i++)
+            {
+                ctx->setRegValue(th1, static_cast<ZydisRegister>(ZYDIS_REGISTER_YMM0 + i), *reinterpret_cast<uint64_t*>(g_regs.ymm[i].xmm));
+            }
+        
+
+        LOG(L"[+] CONTEXT updated from g_regs including XMM/YMM");
+    }
+
+    void UpdateGRegsFromContext(zyemu::CPU* ctx, zyemu::ThreadId th1)
+    {
+        if (!ctx) return;
+
+        // --- General Purpose Registers ---
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RAX, g_regs.rax.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RBX, g_regs.rbx.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RCX, g_regs.rcx.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RDX, g_regs.rdx.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RSI, g_regs.rsi.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RDI, g_regs.rdi.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RBP, g_regs.rbp.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RSP, g_regs.rsp.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_R8, g_regs.r8.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_R9, g_regs.r9.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_R10, g_regs.r10.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_R11, g_regs.r11.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_R12, g_regs.r12.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_R13, g_regs.r13.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_R14, g_regs.r14.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_R15, g_regs.r15.q);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RIP, g_regs.rip);
+        ctx->getRegValue(th1, ZYDIS_REGISTER_RFLAGS, g_regs.rflags.value);
+
+        // --- XMM/YMM Registers ---
+        for (int i = 0; i < 16; i++)
+        {
+            __m256 ymm_val{};
+            ctx->getRegValue(th1, static_cast<ZydisRegister>(ZYDIS_REGISTER_YMM0 + i), ymm_val);
+            memcpy(g_regs.ymm[i].full, &ymm_val, sizeof(g_regs.ymm[i].full)); 
+        }
+
+        LOG(L"[+] g_regs updated from zyemu context including full YMM registers");
+    }
+
+
+
+#endif
 
 };
 
