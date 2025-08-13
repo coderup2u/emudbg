@@ -1301,7 +1301,7 @@ public:
                 const ZydisDisassembledInstruction* op = disasm.GetInstr();
                 instr = op->info;
 
-                std::string instrText = disasm.InstructionText();
+                instrText = disasm.InstructionText();
                 LOG(L"0x" << std::hex << disasm.Address()
                     << L": " << std::wstring(instrText.begin(), instrText.end()));
 
@@ -1428,6 +1428,9 @@ public:
 
 
     void DumpRegisters() {
+        std::cout<<"0x" << std::hex << g_regs.rip
+            << ": " << instrText.c_str()<< std::endl;
+
         std::wcout << L"===== Register Dump =====" << std::endl;
 #define DUMP(reg) std::wcout << L#reg << L": 0x" << std::hex << std::setw(16) << std::setfill(L'0') << g_regs.reg.q << std::endl
 
@@ -1814,7 +1817,7 @@ public:
 private:
     // ------------------- Register State -------------------
     RegState g_regs;
-
+    std::string instrText;
     std::unordered_map<ZydisMnemonic, void (CPU::*)(const ZydisDisassembledInstruction*)> dispatch_table;
     std::unordered_map<ZydisRegister, void* > reg_lookup;
 
@@ -4741,34 +4744,22 @@ private:
         }
 
         __m128 src_val;
+
         if (!read_operand_value<__m128>(src, 128, src_val)) {
             LOG(L"[!] Failed to read source operand for RSQRTPS");
             return;
         }
 
-        alignas(16) float s[4];
-        _mm_store_ps(s, src_val);
+        __m128 approx = _mm_rsqrt_ps(src_val);
 
-        // Calculate reciprocal sqrt for all 4 floats
-        for (int i = 0; i < 4; i++) {
-            if (s[i] <= 0.0f) {
-                // Handling negative or zero (NaN/Inf cases similar to hardware)
-                s[i] = std::numeric_limits<float>::quiet_NaN();
-            }
-            else {
-                s[i] = 1.0f / std::sqrt(s[i]);
-            }
-        }
-
-        __m128 result = _mm_load_ps(s);
-
-        if (!write_operand_value<__m128>(dst, 128, result)) {
+        if (!write_operand_value<__m128>(dst, 128, approx)) {
             LOG(L"[!] Failed to write result for RSQRTPS");
             return;
         }
 
-        LOG(L"[+] RSQRTPS executed");
+        LOG(L"[+] RSQRTPS executed (approx like hardware)");
     }
+
 
     void emulate_bt(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -8167,7 +8158,8 @@ private:
         const auto& dst = instr->operands[0];
         uint8_t value = !g_regs.rflags.flags.SF;
 
-        set_register_value<uint8_t>(dst.reg.value, value);
+        write_operand_value(dst, 1, static_cast<uint8_t>(value));
+
 
         LOG(L"[+] SETNS => " << std::hex << static_cast<int>(value));
     }
@@ -8175,7 +8167,9 @@ private:
     void emulate_setnz(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         uint8_t value = !g_regs.rflags.flags.ZF;
-        set_register_value<uint8_t>(dst.reg.value, value);
+
+        write_operand_value(dst, 1, static_cast<uint8_t>(value));
+
         LOG(L"[+] SETNZ => " << std::hex << static_cast<int>(value));
     }
     void emulate_roundss(const ZydisDisassembledInstruction* instr) {
@@ -8261,7 +8255,9 @@ private:
     void emulate_setz(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         uint8_t value = g_regs.rflags.flags.ZF;
-        set_register_value<uint8_t>(dst.reg.value, value);
+
+        write_operand_value(dst, 1, static_cast<uint8_t>(value));
+
         LOG(L"[+] SETZ => " << std::hex << static_cast<int>(value));
     }
     void emulate_stosd(const ZydisDisassembledInstruction* instr) {
