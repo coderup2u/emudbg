@@ -35,9 +35,9 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
-#define LOG_ENABLED 0
+#define LOG_ENABLED 1
 //test with real cpu
 #define DB_ENABLED 0
 //stealth 
@@ -1327,11 +1327,11 @@ public:
                     LOG("[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — reading GDTR");
                     return g_regs.rip + instr.length;
                 }
-                //if (instr.mnemonic == ZYDIS_MNEMONIC_PAUSE)
-                //{
-                //    LOG_analyze(BLUE, "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip );
-                //    return CPU_PAUSED;
-                //}
+                if (instr.mnemonic == ZYDIS_MNEMONIC_INT3)
+                {
+                    LOG_analyze(BLUE, "[+] INT3 at: 0x" << std::hex << g_regs.rip );
+                    return CPU_PAUSED;
+                }
                 if (is_paused && instr.mnemonic == ZYDIS_MNEMONIC_JMP) {
                     is_paused = 0;
                     return g_regs.rip + instr.length;

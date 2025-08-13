@@ -405,7 +405,7 @@ int wmain(int argc, wchar_t* argv[]) {
                         SetThreadContext(hThread, &ctx);
                     }
 
-                    RemoveAllBreakpoints(pi.hProcess, breakpoints);
+                 //   RemoveAllBreakpoints(pi.hProcess, breakpoints);
 
                     auto it = cpuThreads.find(dbgEvent.dwThreadId);
                     if (it == cpuThreads.end()) {
