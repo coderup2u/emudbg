@@ -3058,37 +3058,19 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-        if (dst.size != 128) {
-            LOG(L"[!] Unsupported operand size for SQRTSS: " << dst.size);
-            return;
-        }
+        __m128 dst_val;
+        if (!read_operand_value<__m128>(dst, 128, dst_val)) return;
 
-        __m128 dst_val, src_val;
-        if (!read_operand_value<__m128>(dst, 128, dst_val)) {
-            LOG(L"[!] Failed to read destination operand for SQRTSS");
-            return;
-        }
-        if (!read_operand_value<__m128>(src, 128, src_val)) {
-            LOG(L"[!] Failed to read source operand for SQRTSS");
-            return;
-        }
+        float src_scalar;
+        if (!read_operand_value<float>(src, 32, src_scalar)) return;
 
-        alignas(16) float d[4], s[4];
-        _mm_store_ps(d, dst_val);
-        _mm_store_ps(s, src_val);
+        float sqrt_result = std::sqrt(src_scalar);
 
-        // Calculate sqrt of low float from src, keep rest from dst
-        d[0] = std::sqrt(s[0]);
+        dst_val = _mm_move_ss(dst_val, _mm_set_ss(sqrt_result));
 
-        __m128 result = _mm_load_ps(d);
-
-        if (!write_operand_value<__m128>(dst, 128, result)) {
-            LOG(L"[!] Failed to write result for SQRTSS");
-            return;
-        }
-
-        LOG(L"[+] SQRTSS executed");
+        write_operand_value<__m128>(dst, 128, dst_val);
     }
+
 
     void emulate_imul(const ZydisDisassembledInstruction* instr) {
         const auto& ops = instr->operands;
@@ -5914,7 +5896,7 @@ private:
     void emulate_movss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
-        constexpr uint32_t scalar_width = 32;   
+        constexpr uint32_t scalar_width = 32; // 4 bytes
 
         uint32_t scalar_value;
 
@@ -5924,16 +5906,15 @@ private:
         }
 
         if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-            __m128 dst_reg;
+           
+            YMM dst_reg{};
 
+     
+            memcpy(dst_reg.xmm, &scalar_value, sizeof(scalar_value));
 
-            if (!read_operand_value(dst, 128, dst_reg)) {
-                LOG(L"[!] Failed to read destination register in movss");
-                return;
-            }
-
-            ((float*)&dst_reg)[0] = *(float*)&scalar_value;
-
+  
+            memset(dst_reg.xmm + 4, 0, 12);
+            memset(dst_reg.ymmh, 0, 16);   
 
             if (!write_operand_value(dst, 128, dst_reg)) {
                 LOG(L"[!] Failed to write destination register in movss");
@@ -5941,15 +5922,16 @@ private:
             }
         }
         else {
-
+            // Memory write
             if (!write_operand_value(dst, scalar_width, scalar_value)) {
                 LOG(L"[!] Failed to write memory destination in movss");
                 return;
             }
         }
 
-        LOG(L"[+] MOVSS executed");
+        LOG(L"[+] MOVSS executed with zero-extend");
     }
+
     void emulate_unpckhpd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -8746,7 +8728,7 @@ private:
                 std::wcout << std::endl;
 
    
-                std::wcout << L"regs.ymm[" << i << L"]: ";
+                std::wcout << L"regs.ymm[" << i << L"] : ";
                 for (int j = 0; j < 32; j++) {
                     std::wcout << std::hex << std::setw(2) << std::setfill(L'0')
                         << (int)ctx_ymm_bytes[j] << L" ";
