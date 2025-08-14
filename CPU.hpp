@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -2704,20 +2704,26 @@ private:
     // ------------------- Instruction Emulation -------------------
     void emulate_push(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
+        uint32_t width = op.size; // bits
         uint64_t value = 0;
 
-        if (!read_operand_value(op, 64, value)) {
-            LOG(L"[!] Unsupported operand type for PUSH");
+        if (!read_operand_value(op, width, value)) {
+            std::wcout << L"[!] Unsupported operand type for PUSH" << std::endl;
             return;
         }
 
-        value = zero_extend(value, 64);
+        uint32_t bytes = (width == 16) ? 2 : 8;
 
-        g_regs.rsp.q -= 8;
 
-        WriteMemory(g_regs.rsp.q, &value, 8);
+        if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE && op.imm.is_signed)
+            value = sign_extend(value, width);
+        else
+            value = zero_extend(value, width);
 
-        LOG(L"[+] PUSH 0x" << std::hex << value);
+        g_regs.rsp.q -= bytes;
+        WriteMemory(g_regs.rsp.q, &value, bytes);
+        LOG(L"[+] PUSH 0x" << std::hex << value << L" (" << width << "-bit)");
+
     }
 
     void emulate_setl(const ZydisDisassembledInstruction* instr) {
@@ -4515,24 +4521,25 @@ private:
             LOG(L"[+] CMPXCHG: not equal, dst -> acc");
         }
     }
-
     void emulate_pop(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
-        uint64_t value = 0;
+        uint32_t width = op.size; // bits
+        uint32_t bytes = width / 8;
 
-        if (!ReadMemory(g_regs.rsp.q, &value, 8)) {
+        uint64_t value = 0;
+        if (!ReadMemory(g_regs.rsp.q, &value, bytes)) {
             LOG(L"[!] Failed to read memory at RSP for POP");
             return;
         }
 
-        g_regs.rsp.q += 8;
+        g_regs.rsp.q += bytes;
 
-        if (!write_operand_value(op, 64, value)) {
+        if (!write_operand_value(op, width, value)) {
             LOG(L"[!] Unsupported operand type for POP");
             return;
         }
 
-        LOG(L"[+] POP => 0x" << std::hex << value);
+        LOG(L"[+] POP => 0x" << std::hex << value << " (" << width << "-bit)");
     }
 
 
@@ -8377,7 +8384,12 @@ private:
         if (width >= 64) return value;
         return value & ((1ULL << width) - 1);
     }
-
+    template<typename T>
+    uint64_t sign_extend(T value, unsigned bit_width) {
+        uint64_t mask = 1ULL << (bit_width - 1); 
+        uint64_t v = static_cast<uint64_t>(value);
+        return (v ^ mask) - mask;
+    }
     bool read_operand_value(const ZydisDecodedOperand& op, uint32_t width, uint64_t& out) {
         if (op.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             switch (width) {
@@ -8861,29 +8873,38 @@ private:
                                 if (ReadMemory(my_mange.address, readBuffer, my_mange.size)) {
                                     if (memcmp(readBuffer, my_mange.buffer, my_mange.size) != 0) {
 
-                                        // log readBuffer
-                                        LOG(L"readBuffer:");
+                                        std::wcout << L"readBuffer:" << std::endl;
                                         for (size_t i = 0; i < my_mange.size; ++i) {
-                                            LOG(std::hex << std::setw(2) << std::setfill(L'0') << (static_cast<unsigned char>(readBuffer[i])) << L" ");
+                                            std::wcout << std::hex
+                                                << std::setw(2)
+                                                << std::setfill(L'0')
+                                                << static_cast<unsigned int>(static_cast<unsigned char>(readBuffer[i]))
+                                                << L" ";
                                         }
                                         std::wcout << std::endl;
 
-                                        // log my_mange.buffer
-                                        LOG(L"my_mange.buffer:");
+                                        std::wcout << L"my_mange.buffer:" << std::endl;
                                         const char* buf = static_cast<const char*>(my_mange.buffer);
                                         for (size_t i = 0; i < my_mange.size; ++i) {
-                                            LOG(std::hex << std::setw(2) << std::setfill(L'0') << (static_cast<unsigned char>(buf[i])) << L" ");
+                                            std::wcout << std::hex
+                                                << std::setw(2)
+                                                << std::setfill(L'0')
+                                                << static_cast<unsigned int>(static_cast<unsigned char>(buf[i]))
+                                                << L" ";
                                         }
                                         std::wcout << std::endl;
+
                                         DumpRegisters();
                                         exit(0);
                                     }
                                 }
                                 else {
-                                    LOG(L"WriteMemory LOG failed to read back from 0x" << std::hex << my_mange.address);
+                                    std::wcout << L"WriteMemory failed to read back from 0x"
+                                        << std::hex << my_mange.address << std::endl;
                                 }
                             }
                         }
+
                     }
 
                     break; 
