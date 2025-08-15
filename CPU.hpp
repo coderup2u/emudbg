@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -73,24 +73,35 @@ union YMM {
     uint8_t full[32];
 };
 struct Flags {
-    uint64_t CF : 1;
-    uint64_t : 1;
-    uint64_t PF : 1;
-    uint64_t : 1;
-    uint64_t AF : 1;
-    uint64_t : 1;
-    uint64_t ZF : 1;
-    uint64_t SF : 1;
-    uint64_t TF : 1;
-    uint64_t IF : 1;
-    uint64_t DF : 1;
-    uint64_t OF : 1;
+    uint64_t CF : 1;   // bit 0
+    uint64_t always1 : 1; 
+    uint64_t PF : 1;   // bit 2
+    uint64_t reserved3 : 1;
+    uint64_t AF : 1;   // bit 4
+    uint64_t reserved5 : 1;
+    uint64_t ZF : 1;   // bit 6
+    uint64_t SF : 1;   // bit 7
+    uint64_t TF : 1;   // bit 8
+    uint64_t IF : 1;   // bit 9
+    uint64_t DF : 1;   // bit 10
+    uint64_t OF : 1;   // bit 11
+    uint64_t IOPL : 2; // bits 12-13
+    uint64_t NT : 1;   // bit 14
+    uint64_t reserved15 : 1;
+    uint64_t RF : 1;   // bit 16
+    uint64_t VM : 1;   // bit 17
+    uint64_t AC : 1;   // bit 18
+    uint64_t VIF : 1;  // bit 19
+    uint64_t VIP : 1;  // bit 20
+    uint64_t ID : 1;   // bit 21
+    uint64_t reserved22 : 42;
 };
 
 union RFlags {
     uint64_t value;
     Flags flags;
 };
+
 
 struct RegState {
     GPR rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp;
@@ -1199,6 +1210,8 @@ public:
             { ZYDIS_MNEMONIC_UCOMISS, &CPU::emulate_ucomiss },
             { ZYDIS_MNEMONIC_ROUNDSS, &CPU::emulate_roundss },
             { ZYDIS_MNEMONIC_LEAVE, &CPU::emulate_leave },
+            { ZYDIS_MNEMONIC_PUSHF, &CPU::emulate_pushf },
+            { ZYDIS_MNEMONIC_PUSHFD, &CPU::emulate_pushfd },
 
 
             
@@ -2829,9 +2842,51 @@ private:
 
     void emulate_pushfq(const ZydisDisassembledInstruction* instr) {
         g_regs.rsp.q -= 8;
-        WriteMemory(g_regs.rsp.q, &g_regs.rflags, 8);
-        LOG(L"[+] PUSHfq 0x" << std::hex << g_regs.rflags.value);
+
+        RFlags temp = g_regs.rflags;
+        temp.flags.always1 = 1;
+        temp.flags.RF = 0;
+        temp.flags.VM = 0;
+
+        uint64_t image = temp.value;
+        WriteMemory(g_regs.rsp.q, &image, sizeof(image));
+
+        LOG(L"[+] PUSHFQ (64-bit) 0x" << std::hex << image);
     }
+
+    void emulate_pushf(const ZydisDisassembledInstruction* instr)
+    {
+
+        g_regs.rsp.w -= 2;
+
+
+        RFlags temp = g_regs.rflags;
+        temp.flags.always1 = 1;
+        temp.flags.RF = 0;
+        temp.flags.VM = 0;
+
+        uint16_t flags16 = static_cast<uint16_t>(temp.value);
+        WriteMemory(g_regs.rsp.q, &flags16, sizeof(flags16));
+
+        LOG(L"[+] PUSHF (16-bit) 0x" << std::hex << flags16);
+    }
+
+    void emulate_pushfd(const ZydisDisassembledInstruction* instr)
+    {
+
+        g_regs.rsp.d -= 4;
+
+        RFlags temp = g_regs.rflags;
+        temp.flags.always1 = 1;
+        temp.flags.RF = 0;
+        temp.flags.VM = 0;
+
+        uint32_t eflags32 = static_cast<uint32_t>(temp.value);
+        WriteMemory(g_regs.rsp.q, &eflags32, sizeof(eflags32));
+
+        LOG(L"[+] PUSHFD (32-bit) 0x" << std::hex << eflags32);
+    }
+
 
     void emulate_vzeroupper(const ZydisDisassembledInstruction* instr) {
         for (int i = 0; i < 16; i++) {
