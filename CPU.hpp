@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 1
+#define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -2530,6 +2530,43 @@ private:
         return (address % alignment) == 0;
     }
 
+    uint64_t ComputeEffectiveAddress(const ZydisDecodedOperand& mem_op, const ZydisDecodedInstruction& instr) {
+        uint64_t address = 0;
+
+        // Handle absolute addressing
+        if (mem_op.mem.base == ZYDIS_REGISTER_NONE && mem_op.mem.index == ZYDIS_REGISTER_NONE) {
+            address = mem_op.mem.disp.has_displacement ? mem_op.mem.disp.value : 0;
+        }
+        else {
+            // Base
+            if (mem_op.mem.base == ZYDIS_REGISTER_RIP) {
+                address = g_regs.rip + instr.length;
+            }
+            else if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                address = get_register_value<uint64_t>(mem_op.mem.base);
+            }
+
+            // Index
+            if (mem_op.mem.index != ZYDIS_REGISTER_NONE) {
+                address += get_register_value<uint64_t>(mem_op.mem.index) * mem_op.mem.scale;
+            }
+
+            // Displacement
+            if (mem_op.mem.disp.has_displacement) {
+                address += mem_op.mem.disp.value;
+            }
+        }
+
+        // Segment overrides
+        switch (mem_op.mem.segment) {
+        case ZYDIS_REGISTER_FS: address += g_regs.fs_base; break;
+        case ZYDIS_REGISTER_GS: address += g_regs.gs_base; break;
+        default: break;
+        }
+
+        return address;
+    }
+
     // ------------------- Register Access Helpers -------------------
 
 
@@ -4459,26 +4496,12 @@ private:
         uint64_t index = (mem.index != ZYDIS_REGISTER_NONE) ? get_register_value<uint64_t>(mem.index) : 0;
         uint64_t value = base + index * mem.scale + mem.disp.value;
 
-        uint8_t width = instr->info.operand_width;
+        uint8_t width = dst.size;
 
-
-        if (width < 64) {
-            uint64_t mask = (1ULL << width) - 1;
-            value &= mask;
+        if (!write_operand_value(dst, width, value)) {
+            LOG(L"[!] Failed to write LEA result");
+            return;
         }
-
-        if (width == 8) {
-            value = static_cast<uint8_t>(value);
-        }
-        else if (width == 16) {
-            value = static_cast<uint16_t>(value);
-        }
-        else if (width == 32) {
-            value = static_cast<uint32_t>(value);
-        }
-
-
-        set_register_value<uint64_t>(dst.reg.value, value);
 
         LOG(L"[+] LEA => 0x" << std::hex << value);
     }
