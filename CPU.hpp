@@ -6632,19 +6632,19 @@ private:
             g_regs.rip += instr->info.length;
         }
     }
-
     void emulate_shld(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
         const auto& count_op = instr->operands[2];
-        uint8_t width = instr->info.operand_width;
+        uint32_t width = dst.size; // operand width in bits
+
         uint64_t dst_val = 0, src_val = 0;
 
-        if (!read_operand_value(dst, instr->info.operand_width, dst_val)) {
+        if (!read_operand_value(dst, width, dst_val)) {
             LOG(L"[!] Failed to read destination operand");
             return;
         }
-        if (!read_operand_value(src, instr->info.operand_width, src_val)) {
+        if (!read_operand_value(src, width, src_val)) {
             LOG(L"[!] Failed to read source operand");
             return;
         }
@@ -6661,57 +6661,51 @@ private:
             return;
         }
 
-        if (count == 0) {
-            LOG(L"[+] SHLD => no operation");
-            return;
-        }
 
         count &= 0x3F;
 
-        // Mask values to operand width
-        if (width < 64) {
-            dst_val &= (1ULL << width) - 1;
-            src_val &= (1ULL << width) - 1;
+        if (count == 0) return; 
+
+
+        uint64_t mask = (width == 64) ? ~0ULL : ((1ULL << width) - 1);
+        dst_val &= mask;
+        src_val &= mask;
+
+        uint64_t result = 0;
+        if (count < width) {
+            result = ((dst_val << count) | (src_val >> (width - count))) & mask;
+            g_regs.rflags.flags.CF = (dst_val >> (width - count)) & 1;
         }
+        else {
 
-        uint64_t result = (dst_val << count) | (src_val >> (width - count));
-
-        // Mask result to operand width
-        if (width < 64) {
-            result &= (1ULL << width) - 1;
+            result = 0;
+            g_regs.rflags.flags.CF = (src_val >> (width - 1)) & 1;
         }
 
         bool msb_before = (dst_val >> (width - 1)) & 1;
         bool msb_after = (result >> (width - 1)) & 1;
-        bool cf = (dst_val >> (width - count)) & 1;
-
-        // Set flags
-        g_regs.rflags.flags.CF = cf;
-        if (count == 1) {
-         g_regs.rflags.flags.OF = msb_before ^ msb_after;
-        }
-        else {
-#if DB_ENABLED
-            is_OVERFLOW_FLAG_SKIP = 1;
-#endif
-        }
-
-
-
-
 
         g_regs.rflags.flags.SF = msb_after;
         g_regs.rflags.flags.ZF = (result == 0);
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result & 0xFF));
         g_regs.rflags.flags.AF = 0;
 
-        if (!write_operand_value(dst, instr->info.operand_width, result)) {
+        if (count == 1)
+            g_regs.rflags.flags.OF = msb_before ^ msb_after;
+        else {
+#if DB_ENABLED
+            is_OVERFLOW_FLAG_SKIP = 1;
+#endif
+        }
+
+        if (!write_operand_value(dst, width, result)) {
             LOG(L"[!] Failed to write SHLD result");
             return;
         }
 
         LOG(L"[+] SHLD => 0x" << std::hex << result);
     }
+
 
     void emulate_movzx(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
