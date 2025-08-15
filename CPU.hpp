@@ -101,6 +101,7 @@ struct RegState {
     uint64_t gs_base;
     uint64_t fs_base;
     uint64_t peb_address;
+    uint64_t peb_ldr;
 };
 enum class ThreadState {
     Unknown,
@@ -494,7 +495,18 @@ static const std::map<uint64_t, std::string> teb_offsets = {
     {0x1064, "SpareUlong0"},
     {0x1068, "ResourceRetValue"},
 };
-
+//LDR
+std::map<uint64_t, std::string> ldr_offsets = {
+    {0x00, "Length"},
+    {0x04, "Initialized"},
+    {0x08, "SsHandle"},
+    {0x10, "InLoadOrderModuleList"},
+    {0x20, "InMemoryOrderModuleList"},
+    {0x30, "InInitializationOrderModuleList"},
+    {0x40, "EntryInProgress"},
+    {0x48, "ShutdownInProgress"},
+    {0x50, "ShutdownThreadId"}
+};
 
 
 static const std::map<uint64_t, std::string> peb_offsets = {
@@ -1574,6 +1586,7 @@ public:
 #if analyze_ENABLED
         SIZE_T read_peb;
         ReadProcessMemory(pi.hProcess, (LPCVOID)(g_regs.gs_base + 0x60), &g_regs.peb_address, sizeof(g_regs.peb_address), &read_peb) && read_peb == sizeof(g_regs.peb_address);
+        ReadProcessMemory(pi.hProcess, (LPCVOID)(g_regs.peb_address + 0x18), &g_regs.peb_ldr, sizeof(g_regs.peb_ldr), &read_peb) && read_peb == sizeof(g_regs.peb_ldr);
 #endif
         reg_lookup = {
             // RAX family
@@ -2165,7 +2178,31 @@ private:
                     "[PEB] Reading (" << description.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
             }
         }
+        // PEB LDR
+        if (g_regs.peb_ldr) {
+            const uint64_t ldr_size = 0x80; 
+            if (address >= g_regs.peb_ldr && address < g_regs.peb_ldr + ldr_size) {
+                uint64_t offset = address - g_regs.peb_ldr;
+                std::string description = "Unknown (LDR)";
 
+                auto it = ldr_offsets.upper_bound(offset);
+                if (it != ldr_offsets.begin()) {
+                    --it;
+                    uint64_t base_offset = it->first;
+                    uint64_t delta = offset - base_offset;
+                    if (delta == 0)
+                        description = it->second;
+                    else
+                        description = it->second + " + 0x" + std::to_string(delta);
+                }
+
+                LOG_analyze(GREEN,
+                    "[LDR] Reading (" << description.c_str() << ") at 0x"
+                    << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+            }
+        }
+
+        // read FROM executable
         if (IsInEmulationRange(address)) {
             LOG_analyze(BRIGHT_WHITE,
                 "[+] READ FROM executable memory detected | Target: 0x" << std::hex << address <<
