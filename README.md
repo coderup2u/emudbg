@@ -29,12 +29,12 @@ Windows API functions are skipped through debugger stepping, allowing seamless e
 1. **Clone the repository**
 
     ```bash
-    git clone --recurse-submodules https://github.com/yourusername/EmuDbg.git
-    cd EmuDbg
+    git clone --recurse-submodules https://github.com/mojtabafalleh/emudbg
+    cd emudbg
     cmake .
     ```
 
-2. **Or download the latest prebuilt `EmuDbg.exe` from the [Releases](https://github.com/mojtabafalleh/emudbg/releases) page**
+2. **Or download the latest prebuilt `emudbg.exe` from the [Releases](https://github.com/mojtabafalleh/emudbg/releases) page**
 
 3. **Configure runtime modes (optional):**
 
@@ -61,7 +61,7 @@ Windows API functions are skipped through debugger stepping, allowing seamless e
 ## 🛠 Usage
 
 ```bash
-EmuDbg.exe <exe_path> [-m target.dll] [-b software|hardware]
+emudbg.exe <exe_path> [-m target.dll] [-b software|hardware]
 ```
 
 ## 📌 Arguments
@@ -77,14 +77,15 @@ EmuDbg.exe <exe_path> [-m target.dll] [-b software|hardware]
 
 #### 🔸 Run with software breakpoints on process entry point and TLS callbacks
 ```bash
-EmuDbg.exe C:\Samples\MyApp.exe -b software
+emudbg.exe C:\Samples\MyApp.exe -b software
 ```
-#### 🔸 Wait for a specific DLL to load, then inject hardware breakpoints
-```bash
-EmuDbg.exe C:\Samples\MyApp.exe -m target.dll -b hardware
-```
-### 🔸 Default usage with no flags (uses software breakpoints)
 
+#### 🔸 Wait for a specific DLL to load, then set hardware breakpoints
 ```bash
-EmuDbg.exe C:\Malware\packed.exe
+emudbg.exe C:\Samples\MyApp.exe -m target.dll -b hardware
+```
+
+#### 🔸 Default usage with no flags (uses software breakpoints)
+```bash
+emudbg.exe C:\Samples\MyApp.exe
 ```
