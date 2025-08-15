@@ -974,35 +974,40 @@ bool EnableStealthMode(HANDLE hThread) {
 
     return true;
 }
+#include <Windows.h>
+#include <string>
 
-bool Patch_CheckRemoteDebuggerPresent() {
+bool PatchKernelBaseFunction(HANDLE hProcess, uintptr_t kernelBase_address, const std::string& funcName, const BYTE* patchBytes, size_t patchSize) {
     if (!kernelBase_address) return false;
 
     HMODULE hLocalKernelBase = GetModuleHandleW(L"kernelbase.dll");
     if (!hLocalKernelBase) return false;
 
-    FARPROC localFunc = GetProcAddress(hLocalKernelBase, "CheckRemoteDebuggerPresent");
+    FARPROC localFunc = GetProcAddress(hLocalKernelBase, funcName.c_str());
     if (!localFunc) return false;
+
 
     uintptr_t offset = (uintptr_t)localFunc - (uintptr_t)hLocalKernelBase;
     LPVOID remoteFuncAddr = (LPVOID)(kernelBase_address + offset);
 
+    DWORD oldProtect;
+    if (!VirtualProtectEx(hProcess, remoteFuncAddr, patchSize, PAGE_EXECUTE_READWRITE, &oldProtect))
+        return false;
+
+    bool success = WriteProcessMemory(hProcess, remoteFuncAddr, patchBytes, patchSize, nullptr) != 0;
+
+    VirtualProtectEx(hProcess, remoteFuncAddr, patchSize, oldProtect, &oldProtect);
+
+    return success;
+}
+
+bool Patch_CheckRemoteDebuggerPresent() {
     BYTE patch[] = {
-        0x48, 0x31, 0xC0,  // xor rax, rax
-        0xC3               // ret
+     0x48, 0x31, 0xC0,  // xor rax, rax
+     0xC3               // ret
     };
 
-    DWORD oldProtect;
-    if (VirtualProtectEx(pi.hProcess, remoteFuncAddr, sizeof(patch), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-        if (WriteProcessMemory(pi.hProcess, remoteFuncAddr, patch, sizeof(patch), nullptr)) {
-            VirtualProtectEx(pi.hProcess, remoteFuncAddr, sizeof(patch), oldProtect, &oldProtect);
-            return true;
-        }
-
-        VirtualProtectEx(pi.hProcess, remoteFuncAddr, sizeof(patch), oldProtect, &oldProtect);
-    }
-
-    return false;
+  return  PatchKernelBaseFunction(pi.hProcess, kernelBase_address, "CheckRemoteDebuggerPresent", patch, sizeof(patch));
 }
 
 // ----------------------------- CPU Class Definition -----------------------------
