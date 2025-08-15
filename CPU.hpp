@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -4087,9 +4087,13 @@ private:
             LOG(L"[!] Failed to write result in SBB");
             return;
         }
-
-        g_regs.rflags.flags.CF = (dst_val < (src_val + borrow));
-
+        uint64_t tmp = src_val + borrow;
+        if (borrow && tmp == 0) {
+            g_regs.rflags.flags.CF = true;
+        }
+        else {
+            g_regs.rflags.flags.CF = (dst_val < tmp);
+        }
         // Zero Flag (ZF)
         g_regs.rflags.flags.ZF = (result == 0);
 
