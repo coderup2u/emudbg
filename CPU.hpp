@@ -3214,6 +3214,12 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
+#if analyze_ENABLED
+        LOG(L"[+] RCPSS at [RIP: 0x" << std::hex << g_regs.rip << "] "
+            L"(may be used by DRM)");
+#endif
+
+
         __m128 dst_val, src_val;
         if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for RCPS");
