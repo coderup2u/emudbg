@@ -1021,7 +1021,7 @@ public:
 
 #if DB_ENABLED
     memory_mange my_mange;
-    bool is_cpuid, is_OVERFLOW_FLAG_SKIP, is_Auxiliary_Carry_FLAG_SKIP, is_Zero_FLAG_SKIP, is_parity_FLAG_SKIP, is_Sign_FLAG_SKIP, is_rdtsc;
+    bool is_cpuid, is_OVERFLOW_FLAG_SKIP, is_Auxiliary_Carry_FLAG_SKIP, is_Zero_FLAG_SKIP, is_parity_FLAG_SKIP, is_Sign_FLAG_SKIP, is_rdtsc; // ,is_reading_time;
 #endif
 
 
@@ -1287,6 +1287,7 @@ public:
             if (disasm.Disassemble(address, buffer, bytesRead)) {
 #if DB_ENABLED
                 is_cpuid = 0;
+              //  is_reading_time = 0;
                 is_rdtsc = 0;
                 is_OVERFLOW_FLAG_SKIP = 0;
                 is_Auxiliary_Carry_FLAG_SKIP = 0;
@@ -2285,7 +2286,11 @@ private:
 
 
 #endif
-
+#if DB_ENABLED
+        //const uint64_t kuser_base = 0x00000007FFE0000;
+        //if (address == (kuser_base + 0x14) || address == (kuser_base + 0x8))//time
+        //    is_reading_time = 1;
+#endif
 
         SIZE_T bytesRead;
         bool result = ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, size, &bytesRead) &&
@@ -8741,188 +8746,82 @@ private:
     // ----------------------- Break point helper ------------------
 
 #if DB_ENABLED
+
     void CompareRFlags(const RegState& regs) {
+        struct FlagCheck {
+            std::wstring name;
+            uint64_t emu;
+            uint64_t  real;
+        };
+        std::vector<FlagCheck> checks = {
+            {L"CF", g_regs.rflags.flags.CF, regs.rflags.flags.CF},
+            {L"PF", g_regs.rflags.flags.PF, regs.rflags.flags.PF},
+            {L"AF", g_regs.rflags.flags.AF, regs.rflags.flags.AF},
+            {L"ZF", g_regs.rflags.flags.ZF, regs.rflags.flags.ZF},
+            {L"SF", g_regs.rflags.flags.SF, regs.rflags.flags.SF},
+            {L"IF", g_regs.rflags.flags.IF, regs.rflags.flags.IF},
+            {L"DF", g_regs.rflags.flags.DF, regs.rflags.flags.DF},
+            {L"OF", g_regs.rflags.flags.OF, regs.rflags.flags.OF},
+        };
 
-        if (g_regs.rflags.flags.CF != regs.rflags.flags.CF) {
-            std::wcout << L"[!] CF mismatch: Emulated=" << g_regs.rflags.flags.CF
-                << L", Actual=" << regs.rflags.flags.CF << std::endl;
-            DumpRegisters();
-            exit(0);
 
+        for ( auto& c : checks) {
+            if (c.emu != c.real) {
+                std::wcout << L"[!] " << c.name << L" mismatch: Emulated=" << c.emu
+                    << L", Actual=" << c.real << std::endl;
+
+                    DumpRegisters();
+                    exit(0);
+
+            }
         }
-
-        if (g_regs.rflags.flags.PF != regs.rflags.flags.PF) {
-            std::wcout << L"[!] PF mismatch: Emulated=" << g_regs.rflags.flags.PF
-                << L", Actual=" << regs.rflags.flags.PF << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-        if (g_regs.rflags.flags.AF != regs.rflags.flags.AF) {
-            std::wcout << L"[!] AF mismatch: Emulated=" << g_regs.rflags.flags.AF
-                << L", Actual=" << regs.rflags.flags.AF << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-        if (g_regs.rflags.flags.ZF != regs.rflags.flags.ZF) {
-            std::wcout << L"[!] ZF mismatch: Emulated=" << g_regs.rflags.flags.ZF
-                << L", Actual=" << regs.rflags.flags.ZF << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-        if (g_regs.rflags.flags.SF != regs.rflags.flags.SF) {
-            std::wcout << L"[!] SF mismatch: Emulated=" << g_regs.rflags.flags.SF
-                << L", Actual=" << regs.rflags.flags.SF << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-
-        if (g_regs.rflags.flags.IF != regs.rflags.flags.IF) {
-            std::wcout << L"[!] IF mismatch: Emulated=" << g_regs.rflags.flags.IF
-                << L", Actual=" << regs.rflags.flags.IF << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-        if (g_regs.rflags.flags.DF != regs.rflags.flags.DF) {
-            std::wcout << L"[!] DF mismatch: Emulated=" << g_regs.rflags.flags.DF
-                << L", Actual=" << regs.rflags.flags.DF << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-        if (g_regs.rflags.flags.OF != regs.rflags.flags.OF) {
-            std::wcout << L"[!] OF mismatch: Emulated=" << g_regs.rflags.flags.OF
-                << L", Actual=" << regs.rflags.flags.OF << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-
-
-
     }
+
     void CompareRegistersWithEmulation(const RegState& regs) {
+        struct RegCheck {
+            std::wstring name;
+            uint64_t emu;
+            uint64_t real;
+        };
 
-        if (g_regs.rip != regs.rip) {
-            std::wcout << L"[!] RIP mismatch: Emulated=0x" << std::hex << g_regs.rip
-                << L", Actual=0x" << std::hex << regs.rip << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
+        std::vector<RegCheck> checks = {
+            {L"RIP", g_regs.rip, regs.rip},
+            {L"RSP", g_regs.rsp.q, regs.rsp.q},
+            {L"RBP", g_regs.rbp.q, regs.rbp.q},
+            {L"RAX", g_regs.rax.q, regs.rax.q},
+            {L"RBX", g_regs.rbx.q, regs.rbx.q},
+            {L"RCX", g_regs.rcx.q, regs.rcx.q},
+            {L"RDX", g_regs.rdx.q, regs.rdx.q},
+            {L"RSI", g_regs.rsi.q, regs.rsi.q},
+            {L"RDI", g_regs.rdi.q, regs.rdi.q},
+            {L"R8",  g_regs.r8.q,  regs.r8.q},
+            {L"R9",  g_regs.r9.q,  regs.r9.q},
+            {L"R10", g_regs.r10.q, regs.r10.q},
+            {L"R11", g_regs.r11.q, regs.r11.q},
+            {L"R12", g_regs.r12.q, regs.r12.q},
+            {L"R13", g_regs.r13.q, regs.r13.q},
+            {L"R14", g_regs.r14.q, regs.r14.q},
+            {L"R15", g_regs.r15.q, regs.r15.q},
+        };
 
+        for (auto& c : checks) {
+            if (c.emu != c.real) {
+                std::wcout << L"[!] " << c.name << L" mismatch: Emulated=0x"
+                    << std::hex << c.emu << L", Actual=0x" << c.real << std::endl;
 
-        if (g_regs.rsp.q != regs.rsp.q) {
-            std::wcout << L"[!] RSP mismatch: Emulated=0x" << std::hex << g_regs.rsp.q
-                << L", Actual=0x" << std::hex << regs.rsp.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-
-        if (g_regs.rbp.q != regs.rbp.q) {
-            std::wcout << L"[!] RBP mismatch: Emulated=0x" << std::hex << g_regs.rbp.q
-                << L", Actual=0x" << std::hex << regs.rbp.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-        if (g_regs.rax.q != regs.rax.q) {
-            std::wcout << L"[!] RAX mismatch: Emulated=0x" << std::hex << g_regs.rax.q
-                << L", Actual=0x" << std::hex << regs.rax.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.rbx.q != regs.rbx.q) {
-            std::wcout << L"[!] RBX mismatch: Emulated=0x" << std::hex << g_regs.rbx.q
-                << L", Actual=0x" << std::hex << regs.rbx.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.rcx.q != regs.rcx.q) {
-            std::wcout << L"[!] RCX mismatch: Emulated=0x" << std::hex << g_regs.rcx.q
-                << L", Actual=0x" << std::hex << regs.rcx.q << std::endl;
-            DumpRegisters();
-            exit(0);
-
-        }
-        if (g_regs.rdx.q != regs.rdx.q) {
-            std::wcout << L"[!] RDX mismatch: Emulated=0x" << std::hex << g_regs.rdx.q
-                << L", Actual=0x" << std::hex << regs.rdx.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.rsi.q != regs.rsi.q) {
-            std::wcout << L"[!] RSI mismatch: Emulated=0x" << std::hex << g_regs.rsi.q
-                << L", Actual=0x" << std::hex << regs.rsi.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.rdi.q != regs.rdi.q) {
-            std::wcout << L"[!] RDI mismatch: Emulated=0x" << std::hex << g_regs.rdi.q
-                << L", Actual=0x" << std::hex << regs.rdi.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-
-        if (g_regs.r8.q != regs.r8.q) {
-            std::wcout << L"[!] R8 mismatch: Emulated=0x" << std::hex << g_regs.r8.q
-                << L", Actual=0x" << std::hex << regs.r8.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.r9.q != regs.r9.q) {
-            std::wcout << L"[!] R9 mismatch: Emulated=0x" << std::hex << g_regs.r9.q
-                << L", Actual=0x" << std::hex << regs.r9.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.r10.q != regs.r10.q) {
-            std::wcout << L"[!] R10 mismatch: Emulated=0x" << std::hex << g_regs.r10.q
-                << L", Actual=0x" << std::hex << regs.r10.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.r11.q != regs.r11.q) {
-            std::wcout << L"[!] R11 mismatch: Emulated=0x" << std::hex << g_regs.r11.q
-                << L", Actual=0x" << std::hex << regs.r11.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.r12.q != regs.r12.q) {
-            std::wcout << L"[!] R12 mismatch: Emulated=0x" << std::hex << g_regs.r12.q
-                << L", Actual=0x" << std::hex << regs.r12.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.r13.q != regs.r13.q) {
-            std::wcout << L"[!] R13 mismatch: Emulated=0x" << std::hex << g_regs.r13.q
-                << L", Actual=0x" << std::hex << regs.r13.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.r14.q != regs.r14.q) {
-            std::wcout << L"[!] R14 mismatch: Emulated=0x" << std::hex << g_regs.r14.q
-                << L", Actual=0x" << std::hex << regs.r14.q << std::endl;
-            DumpRegisters();
-            exit(0);
-        }
-        if (g_regs.r15.q != regs.r15.q) {
-            std::wcout << L"[!] R15 mismatch: Emulated=0x" << std::hex << g_regs.r15.q
-                << L", Actual=0x" << std::hex << regs.r15.q << std::endl;
-            DumpRegisters();
-            exit(0);
+                    DumpRegisters();
+                    exit(0);
+                
+            }
         }
 
 
+        // RFLAGS
         if (g_regs.rflags.value != regs.rflags.value) {
             CompareRFlags(regs);
         }
 
-
+        // YMM registers
         for (int i = 0; i < 16; i++) {
             unsigned char g_ymm_bytes[32];
             unsigned char ctx_ymm_bytes[32];
@@ -8936,15 +8835,14 @@ private:
             if (memcmp(g_ymm_bytes, ctx_ymm_bytes, 32) != 0) {
                 std::wcout << L"[!] YMM" << i << L" mismatch" << std::endl;
 
-                std::wcout << L"Real CPuU ymm[" << i << L"]: ";
+                std::wcout << L"Emulated ymm[" << i << L"]: ";
                 for (int j = 0; j < 32; j++) {
                     std::wcout << std::hex << std::setw(2) << std::setfill(L'0')
                         << (int)g_ymm_bytes[j] << L" ";
                 }
                 std::wcout << std::endl;
 
-   
-                std::wcout << L"Real CPU ymm[" << i << L"] : ";
+                std::wcout << L"Actual ymm[" << i << L"]: ";
                 for (int j = 0; j < 32; j++) {
                     std::wcout << std::hex << std::setw(2) << std::setfill(L'0')
                         << (int)ctx_ymm_bytes[j] << L" ";
@@ -8955,7 +8853,6 @@ private:
                 exit(0);
             }
         }
-
     }
     void SingleStepAndCompare(HANDLE hProcess, HANDLE hThread) {
         CONTEXT ctx = { 0 };
