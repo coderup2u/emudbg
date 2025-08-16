@@ -2153,6 +2153,19 @@ private:
            LOG_analyze(YELLOW,
                 "[KUSER_SHARED_DATA] Reading ("<< description.c_str() <<") at 0x"<<std::hex <<address <<" [RIP: 0x"<<std::hex << g_regs.rip<<"]");
         }
+        if (address != g_regs.rip) {
+        auto FunctionName = GetExportedFunctionNameByAddress(address);
+        if (!FunctionName.empty() ) {
+            LOG_analyze(
+                YELLOW,
+                "[Function Lookup] Resolved '" << FunctionName.c_str()
+                << "' at 0x" << std::hex << address
+                << " [RIP: 0x" << std::hex << g_regs.rip
+                << "] - function address read, not executed"
+            );
+        }
+        }
+
 
         // TEB
         if (address >= g_regs.gs_base && address < g_regs.gs_base + 0x1000) {
