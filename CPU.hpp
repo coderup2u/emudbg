@@ -1000,8 +1000,9 @@ bool PatchKernelBaseFunction(HANDLE hProcess, uintptr_t kernelBase_address, cons
 
     return success;
 }
-
+#if Stealth_Mode_ENABLED
 bool Patch_CheckRemoteDebuggerPresent() {
+
     BYTE patch[] = {
      0x48, 0x31, 0xC0,  // xor rax, rax
      0xC3               // ret
@@ -1009,7 +1010,7 @@ bool Patch_CheckRemoteDebuggerPresent() {
 
   return  PatchKernelBaseFunction(pi.hProcess, kernelBase_address, "CheckRemoteDebuggerPresent", patch, sizeof(patch));
 }
-
+#endif
 // ----------------------------- CPU Class Definition -----------------------------
 bool is_paused = 0;
 class CPU {
@@ -1217,6 +1218,9 @@ public:
             { ZYDIS_MNEMONIC_LEAVE, &CPU::emulate_leave },
             { ZYDIS_MNEMONIC_PUSHF, &CPU::emulate_pushf },
             { ZYDIS_MNEMONIC_PUSHFD, &CPU::emulate_pushfd },
+            { ZYDIS_MNEMONIC_VMOVD, &CPU::emulate_vmovd },
+            { ZYDIS_MNEMONIC_ORPS, &CPU::emulate_orps },
+            { ZYDIS_MNEMONIC_SCASB, &CPU::emulate_scasb },
 
 
             
@@ -1339,12 +1343,15 @@ public:
 
                 bool has_lock = (instr.attributes & ZYDIS_ATTRIB_HAS_LOCK) != 0;
                 bool has_rep = (instr.attributes & ZYDIS_ATTRIB_HAS_REP) != 0;
+                bool has_repne = (instr.attributes & ZYDIS_ATTRIB_HAS_REPNE) != 0;
                 bool has_VEX = (instr.attributes & ZYDIS_ATTRIB_HAS_VEX) != 0;
 
                 if (has_lock)
                     LOG(L"[~] LOCK prefix detected.");
                 if (has_rep)
                     LOG(L"[~] REP prefix detected.");
+                if (has_repne)
+                    LOG(L"[~] REPNE prefix detected.");
                 if (has_VEX)
                     LOG(L"[~] VEX prefix detected.");
                 if (instr.mnemonic == ZYDIS_MNEMONIC_SYSCALL )
@@ -1373,28 +1380,28 @@ public:
                 auto it = dispatch_table.find(instr.mnemonic);
                 if (it != dispatch_table.end()) {
 
-                    if (has_rep) {
-                        constexpr uint64_t NT_FLAG_MASK = (1ULL << 16);
-                        uint64_t original_rflags = g_regs.rflags.value;
 
-                        g_regs.rflags.value |= NT_FLAG_MASK;
-                        for (uint64_t count = g_regs.rcx.q; count > 0; count--) {
 
+                    if (has_rep || has_repne)
+                    {
+                        g_regs.rflags.flags.NT = 1;
+
+                        for (uint64_t count = g_regs.rcx.q; count > 0; count--)
+                        {
                             (this->*it->second)(op);
                             g_regs.rcx.q--;
-                            if (g_regs.rcx.q == 0) {
-                                g_regs.rflags.value = (g_regs.rflags.value & ~NT_FLAG_MASK) | (original_rflags & NT_FLAG_MASK);
 
-                                // advance rip after REP finishes
+                            if ((has_repne && g_regs.rflags.flags.ZF) || g_regs.rcx.q == 0) {
+                                g_regs.rflags.flags.NT = 0;
                                 g_regs.rip += instr.length;
                             }
-#if DB_ENABLED
-                            SingleStepAndCompare(pi.hProcess, pi.hThread);
-#endif
-                        }
 
+#if DB_ENABLED 
+                            SingleStepAndCompare(pi.hProcess, pi.hThread); 
+#endif 
+                        } 
                     }
-
+   
                     else {
                         (this->*it->second)(op);
 
@@ -4170,6 +4177,31 @@ private:
             : static_cast<int64_t>(src_val))
             << L") -> Double = " << result);
     }
+    void emulate_scasb(const ZydisDisassembledInstruction* instr) {
+        uint8_t mem_value;
+        if (!ReadMemory(g_regs.rdi.q, &mem_value, sizeof(uint8_t))) {
+            LOG(L"[!] Failed to read memory at RDI = 0x" << std::hex << g_regs.rdi.q);
+            return;
+        }
+
+        uint8_t al = static_cast<uint8_t>(g_regs.rax.q & 0xFF);
+        uint8_t result = al - mem_value;
+
+        g_regs.rflags.flags.ZF = (result == 0);
+        g_regs.rflags.flags.SF = (result & 0x80) != 0;
+        g_regs.rflags.flags.CF = (al < mem_value);
+        g_regs.rflags.flags.PF = !parity(result); 
+        g_regs.rflags.flags.AF = ((al ^ mem_value ^ result) & 0x10) != 0;
+        g_regs.rflags.flags.OF = ((al ^ mem_value) & (al ^ result) & 0x80) != 0;
+
+
+        g_regs.rdi.q = g_regs.rflags.flags.DF ? (g_regs.rdi.q - 1) : (g_regs.rdi.q + 1);
+
+        LOG(L"[+] SCASB => AL = 0x" << std::hex << static_cast<uint32_t>(al)
+            << ", mem = 0x" << static_cast<uint32_t>(mem_value)
+            << ", new RDI = 0x" << g_regs.rdi.q
+            << ", ZF = " << g_regs.rflags.flags.ZF);
+    }
 
 
     void emulate_sbb(const ZydisDisassembledInstruction* instr) {
@@ -6561,6 +6593,54 @@ private:
         }
 
         LOG(L"[+] MOVDQA xmm" << dst.reg.value - ZYDIS_REGISTER_XMM0
+            << ", " << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
+                ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
+                : L"[mem]"));
+    }
+
+    void emulate_vmovd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t value = 0;
+
+
+        if (!read_operand_value(src, 32, value)) {
+            LOG(L"[!] Failed to read source operand in VMOVD");
+            return;
+        }
+
+        if (!write_operand_value(dst, 32, value)) {
+            LOG(L"[!] Failed to write destination operand in VMOVD");
+            return;
+        }
+
+        LOG(L"[+] VMOVD "
+            << (dst.type == ZYDIS_OPERAND_TYPE_REGISTER ? L"xmm" + std::to_wstring(dst.reg.value - ZYDIS_REGISTER_XMM0) : L"[mem]")
+            << ", "
+            << (src.type == ZYDIS_OPERAND_TYPE_REGISTER ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0) : L"[mem]"));
+    }
+
+    void emulate_orps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        __m128 value1, value2;
+
+        if (!read_operand_value(dst, 128, value1) || !read_operand_value(src, 128, value2)) {
+            LOG(L"[!] Failed to read operand in ORPS");
+            return;
+        }
+
+
+        __m128 result = _mm_or_ps(value1, value2);
+
+        if (!write_operand_value(dst, 128, result)) {
+            LOG(L"[!] Failed to write destination operand in ORPS");
+            return;
+        }
+
+        LOG(L"[+] ORPS xmm" << dst.reg.value - ZYDIS_REGISTER_XMM0
             << ", " << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
                 ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
                 : L"[mem]"));
