@@ -1230,6 +1230,8 @@ public:
             { ZYDIS_MNEMONIC_LODSD, &CPU::emulate_lodsd },
             { ZYDIS_MNEMONIC_LODSQ, &CPU::emulate_lodsq },
             { ZYDIS_MNEMONIC_VPSHUFB, &CPU::emulate_vpshufb },
+            { ZYDIS_MNEMONIC_LZCNT, &CPU::emulate_lzcnt },
+            { ZYDIS_MNEMONIC_VPMASKMOVD, &CPU::emulate_vpmaskmovd },
 
 
 
@@ -4292,6 +4294,42 @@ private:
             << ", ZF = " << g_regs.rflags.flags.ZF);
     }
 
+    void emulate_lzcnt(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = instr->info.operand_width;
+
+        uint64_t src_val = 0;
+        if (!read_operand_value(src, width, src_val)) {
+            LOG(L"[!] Failed to read source operand in LZCNT");
+            return;
+        }
+
+        uint64_t result = 0;
+        if (width <= 32) {
+            result = static_cast<uint64_t>(_lzcnt_u32(static_cast<uint32_t>(src_val)));
+        }
+        else if (width <= 64) {
+            result = _lzcnt_u64(src_val);
+        }
+        else {
+            LOG(L"[!] Unsupported width in LZCNT: " << width);
+            return;
+        }
+
+        if (!write_operand_value(dst, width, result)) {
+            LOG(L"[!] Failed to write result in LZCNT");
+            return;
+        }
+
+  
+        g_regs.rflags.flags.ZF = (src_val == 0);
+
+        LOG(L"[+] LZCNT executed: src=0x" << std::hex << src_val
+            << L", result=" << std::dec << result);
+    }
+
 
     void emulate_sbb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -4674,6 +4712,7 @@ private:
 
         LOG(L"[+] VMOVDQA executed");
     }
+
 
     void emulate_lea(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -7567,6 +7606,39 @@ private:
             LOG(L"[!] Unsupported operand type for JNO");
             g_regs.rip += instr->info.length;
         }
+    }
+    void emulate_vpmaskmovd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& mask = instr->operands[1];
+        const auto& src = instr->operands[2];
+
+        uint32_t width = instr->info.operand_width;
+        if (width != 256) {
+            LOG(L"[!] Unsupported width in VPMASKMOVD: " << width);
+            return;
+        }
+
+        __m256i mask_val, src_val;
+        if (!read_operand_value(mask, width, mask_val) || !read_operand_value(src, width, src_val)) {
+            LOG(L"[!] Failed to read operands in VPMASKMOVD");
+            return;
+        }
+
+
+        alignas(32) int32_t src_buffer[8];
+        _mm256_store_si256(reinterpret_cast<__m256i*>(src_buffer), src_val);
+
+
+        __m256i result = _mm256_maskload_epi32(src_buffer, mask_val);
+
+
+        if (!write_operand_value(dst, width, result)) {
+            LOG(L"[!] Failed to write result in VPMASKMOVD");
+            return;
+        }
+
+        LOG(L"[+] VPMASKMOVD executed: mask=0x" << std::hex << mask_val
+            << L", src=0x" << src_val << L", result=0x" << result);
     }
 
 
