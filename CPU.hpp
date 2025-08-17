@@ -5387,7 +5387,7 @@ private:
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
 
-        uint32_t width = instr->info.operand_width;
+        uint32_t width = dst.size;
 
         if (width == 128) {
             __m128i val1, val2;
