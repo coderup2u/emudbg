@@ -490,35 +490,35 @@ int wmain(int argc, wchar_t* argv[]) {
             }
 
             case EXCEPTION_ACCESS_VIOLATION:
-                LOG(L"[!] Access Violation at 0x" << std::hex << exAddr);
+                std::cout << "[!] Access Violation at 0x" << std::hex << exAddr << std::endl;
                 exit(0);
                 break;
 
             case EXCEPTION_ILLEGAL_INSTRUCTION:
-                LOG(L"[!] Illegal instruction at 0x" << std::hex << exAddr);
+                std::cout << "[!] Illegal instruction at 0x" << std::hex << exAddr << std::endl;
                 exit(0);
                 break;
 
             case EXCEPTION_STACK_OVERFLOW:
-                LOG(L"[!] Stack overflow at 0x" << std::hex << exAddr);
+                std::cout << "[!] Stack overflow at 0x" << std::hex << exAddr << std::endl;
                 exit(0);
                 break;
 
             case EXCEPTION_INT_DIVIDE_BY_ZERO:
-                LOG(L"[!] Divide by zero at 0x" << std::hex << exAddr);
+                std::cout << "[!] Divide by zero at 0x" << std::hex << exAddr << std::endl;
                 exit(0);
                 break;
 
             case EXCEPTION_PRIV_INSTRUCTION:
-                LOG(L"[!] Privileged instruction exception at 0x" << std::hex << exAddr);
+                std::cout << "[!] Privileged instruction exception at 0x" << std::hex << std::endl;
                 break;
 
             case 0x406d1388:  // DBG_PRINTEXCEPTION_C
-                LOG(L"[i] Debug string output exception at 0x" << std::hex << exAddr);
+                std::cout << "[i] Debug string output exception at 0x" << std::hex << exAddr << std::endl;
                 break;
 
             default:
-                LOG(L"[!] Unhandled exception 0x" << std::hex << exceptionCode << L" at 0x" << exAddr);
+                std::cout<< "[!] Unhandled exception 0x" << std::hex << exceptionCode << " at 0x" << exAddr << std::endl;
                 break;
             }
 

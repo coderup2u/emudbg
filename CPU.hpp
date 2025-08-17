@@ -1221,6 +1221,15 @@ public:
             { ZYDIS_MNEMONIC_VMOVD, &CPU::emulate_vmovd },
             { ZYDIS_MNEMONIC_ORPS, &CPU::emulate_orps },
             { ZYDIS_MNEMONIC_SCASB, &CPU::emulate_scasb },
+            { ZYDIS_MNEMONIC_CMC, &CPU::emulate_cmc },
+            { ZYDIS_MNEMONIC_LAHF, &CPU::emulate_lahf },
+            { ZYDIS_MNEMONIC_CBW, &CPU::emulate_cbw },
+            { ZYDIS_MNEMONIC_CWDE, &CPU::emulate_cwde },
+            { ZYDIS_MNEMONIC_LODSB, &CPU::emulate_lodsb },
+            { ZYDIS_MNEMONIC_LODSW, &CPU::emulate_lodsw },
+            { ZYDIS_MNEMONIC_LODSD, &CPU::emulate_lodsd },
+            { ZYDIS_MNEMONIC_LODSQ, &CPU::emulate_lodsq },
+
 
 
             
@@ -4732,6 +4741,13 @@ private:
         LOG(L"[+] POPfq => 0x" << std::hex << value);
     }
 
+
+
+    void emulate_cmc(const ZydisDisassembledInstruction* instr) {
+        g_regs.rflags.flags.CF = !g_regs.rflags.flags.CF;
+        LOG(L"[+] CMC => CF toggled, new CF = " << g_regs.rflags.flags.CF);
+    }
+
     void emulate_add(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -7392,6 +7408,22 @@ private:
             << L" PF=" << g_regs.rflags.flags.PF);
     }
 
+    void emulate_lahf(const ZydisDisassembledInstruction* instr) {
+
+        uint8_t ah_value = 0;
+        ah_value |= (g_regs.rflags.flags.SF ? 0x80 : 0);
+        ah_value |= (g_regs.rflags.flags.ZF ? 0x40 : 0);
+        ah_value |= (g_regs.rflags.flags.AF ? 0x10 : 0);
+        ah_value |= (g_regs.rflags.flags.PF ? 0x04 : 0);
+        ah_value |= 0x02; 
+        ah_value |= (g_regs.rflags.flags.CF ? 0x01 : 0);
+
+        g_regs.rax.q &= 0xFFFFFFFFFFFF00FFULL;
+        g_regs.rax.q |= (static_cast<uint64_t>(ah_value) << 8);
+
+        LOG(L"[+] LAHF => AH=0x" << std::hex << static_cast<int>(ah_value)
+            << L" (RAX=0x" << g_regs.rax.q << L")");
+    }
 
     void emulate_cpuid(const ZydisDisassembledInstruction*) {
 #if DB_ENABLED
@@ -8269,6 +8301,63 @@ private:
         LOG(L"[+] CMOVO executed: moved 0x" << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
+
+  
+    void emulate_cbw(const ZydisDisassembledInstruction* instr) {
+        g_regs.rax.q = static_cast<int16_t>(static_cast<int8_t>(g_regs.rax.l));
+        LOG(L"[+] CBW => AL->AX/RAX = 0x" << std::hex << g_regs.rax.q);
+    }
+
+    void emulate_cwde(const ZydisDisassembledInstruction* instr) {
+        g_regs.rax.q = static_cast<int32_t>(static_cast<int16_t>(g_regs.rax.w));
+        LOG(L"[+] CWDE => AX->EAX/RAX = 0x" << std::hex << g_regs.rax.q);
+    }
+    void emulate_lodsb(const ZydisDisassembledInstruction* instr) {
+        uint8_t value = 0;
+        if (!ReadMemory(g_regs.rsi.q, &value, 8)) {
+            LOG(L"[!] Failed to read memory at RSI for LODSB");
+            return;
+        }
+        g_regs.rax.l = value;
+        g_regs.rsi.q += g_regs.rflags.flags.DF ? -1 : 1;
+        LOG(L"[+] LODSB executed: AL = 0x" << std::hex << (uint32_t)value << L", RSI = 0x" << g_regs.rsi.q);
+    }
+
+    void emulate_lodsw(const ZydisDisassembledInstruction* instr) {
+        uint16_t value = 0;
+        if (!ReadMemory(g_regs.rsi.q, &value, 16)) {
+            LOG(L"[!] Failed to read memory at RSI for LODSW");
+            return;
+        }
+        g_regs.rax.w = value;
+        g_regs.rsi.q += g_regs.rflags.flags.DF ? -2 : 2;
+        LOG(L"[+] LODSW executed: AX = 0x" << std::hex << value << L", RSI = 0x" << g_regs.rsi.q);
+    }
+
+    void emulate_lodsd(const ZydisDisassembledInstruction* instr) {
+        uint32_t value = 0;
+        if (!ReadMemory(g_regs.rsi.q, &value, 32)) {
+            LOG(L"[!] Failed to read memory at RSI for LODSD");
+            return;
+        }
+        g_regs.rax.d = value;
+        g_regs.rsi.q += g_regs.rflags.flags.DF ? -4 : 4;
+        LOG(L"[+] LODSD executed: EAX = 0x" << std::hex << value << L", RSI = 0x" << g_regs.rsi.q);
+    }
+
+    void emulate_lodsq(const ZydisDisassembledInstruction* instr) {
+        uint64_t value = 0;
+        if (!ReadMemory(g_regs.rsi.q, &value, 64)) {
+            LOG(L"[!] Failed to read memory at RSI for LODSQ");
+            return;
+        }
+        g_regs.rax.q = value;
+        g_regs.rsi.q += g_regs.rflags.flags.DF ? -8 : 8;
+        LOG(L"[+] LODSQ executed: RAX = 0x" << std::hex << g_regs.rax.q << L", RSI = 0x" << g_regs.rsi.q);
+    }
+
+
+
 
 
     void emulate_vmovaps(const ZydisDisassembledInstruction* instr) {
