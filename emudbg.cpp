@@ -490,13 +490,23 @@ int wmain(int argc, wchar_t* argv[]) {
             }
 
             case EXCEPTION_ACCESS_VIOLATION:
-                std::cout << "[!] Access Violation at 0x" << std::hex << exAddr << std::endl;
+                std::cout << "[!] Access Violation at 0x" << std::hex << exAddr;
+                if (bpType == BreakpointType::Software) {
+                    std::cout << " (Writing INT3 on code integrity protected program can cause this. Use hardware breakpoints: emudbg my.exe -b hardware)";
+                }
+                std::cout << std::endl;
                 exit(0);
                 break;
 
             case EXCEPTION_ILLEGAL_INSTRUCTION:
                 std::cout << "[!] Illegal instruction at 0x" << std::hex << exAddr << std::endl;
                 exit(0);
+                break;
+
+
+            case 0xC0000409: // STATUS_STACK_BUFFER_OVERRUN
+                std::cout << "[!] Stack buffer overrun detected at 0x" << std::hex << exAddr << std::endl;
+                //exit(0);
                 break;
 
             case EXCEPTION_STACK_OVERFLOW:

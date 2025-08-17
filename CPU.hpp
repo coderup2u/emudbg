@@ -1233,6 +1233,7 @@ public:
             { ZYDIS_MNEMONIC_LZCNT, &CPU::emulate_lzcnt },
             { ZYDIS_MNEMONIC_VPMASKMOVD, &CPU::emulate_vpmaskmovd },
             { ZYDIS_MNEMONIC_VPAND, &CPU::emulate_vpand },
+            { ZYDIS_MNEMONIC_PSHUFB, &CPU::emulate_pshufb },
 
 
 
@@ -7691,6 +7692,59 @@ private:
         }
         else {
             LOG(L"[!] Unsupported width in VPMASKMOVD: " << width);
+        }
+    }
+    void emulate_pshufb(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& mask = instr->operands[1];
+        const auto& src = instr->operands[2];
+
+        uint32_t width = dst.size;
+
+        if (width == 128) { // XMM / 128-bit
+            __m128i src_val, mask_val;
+            if (!read_operand_value(src, width, src_val) || !read_operand_value(mask, width, mask_val)) {
+                LOG(L"[!] Failed to read operands in PSHUFB (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_shuffle_epi8(src_val, mask_val);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in PSHUFB (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) { // YMM / 256-bit
+            __m256i src_val, mask_val;
+            if (!read_operand_value(src, width, src_val) || !read_operand_value(mask, width, mask_val)) {
+                LOG(L"[!] Failed to read operands in PSHUFB (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_shuffle_epi8(src_val, mask_val);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in PSHUFB (256-bit)");
+                return;
+            }
+        }
+        else if (width == 512) { // ZMM / 512-bit
+            __m512i src_val, mask_val;
+            if (!read_operand_value(src, width, src_val) || !read_operand_value(mask, width, mask_val)) {
+                LOG(L"[!] Failed to read operands in PSHUFB (512-bit)");
+                return;
+            }
+
+            __m512i result = _mm512_shuffle_epi8(src_val, mask_val);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in PSHUFB (512-bit)");
+                return;
+            }
+        }
+        else {
+            LOG(L"[!] Unsupported width in PSHUFB: " << width);
         }
     }
 
