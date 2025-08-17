@@ -7653,34 +7653,47 @@ private:
         const auto& mask = instr->operands[1];
         const auto& src = instr->operands[2];
 
-        uint32_t width = instr->info.operand_width;
-        if (width != 256) {
+        uint32_t width = dst.size;
+
+        if (width == 128) { // XMM / 128-bit
+            __m128i mask_val, src_val;
+            if (!read_operand_value(mask, width, mask_val) || !read_operand_value(src, width, src_val)) {
+                LOG(L"[!] Failed to read operands in VPMASKMOVD (128-bit)");
+                return;
+            }
+
+            alignas(16) int32_t src_buffer[4];
+            _mm_store_si128(reinterpret_cast<__m128i*>(src_buffer), src_val);
+
+            __m128i result = _mm_maskload_epi32(src_buffer, mask_val);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in VPMASKMOVD (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) { // YMM / 256-bit
+            __m256i mask_val, src_val;
+            if (!read_operand_value(mask, width, mask_val) || !read_operand_value(src, width, src_val)) {
+                LOG(L"[!] Failed to read operands in VPMASKMOVD (256-bit)");
+                return;
+            }
+
+            alignas(32) int32_t src_buffer[8];
+            _mm256_store_si256(reinterpret_cast<__m256i*>(src_buffer), src_val);
+
+            __m256i result = _mm256_maskload_epi32(src_buffer, mask_val);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in VPMASKMOVD (256-bit)");
+                return;
+            }
+        }
+        else {
             LOG(L"[!] Unsupported width in VPMASKMOVD: " << width);
-            return;
         }
-
-        __m256i mask_val, src_val;
-        if (!read_operand_value(mask, width, mask_val) || !read_operand_value(src, width, src_val)) {
-            LOG(L"[!] Failed to read operands in VPMASKMOVD");
-            return;
-        }
-
-
-        alignas(32) int32_t src_buffer[8];
-        _mm256_store_si256(reinterpret_cast<__m256i*>(src_buffer), src_val);
-
-
-        __m256i result = _mm256_maskload_epi32(src_buffer, mask_val);
-
-
-        if (!write_operand_value(dst, width, result)) {
-            LOG(L"[!] Failed to write result in VPMASKMOVD");
-            return;
-        }
-
-        //LOG(L"[+] VPMASKMOVD executed: mask=0x" << std::hex << mask_val
-        //    << L", src=0x" << src_val << L", result=0x" << result);
     }
+
 
 
     void emulate_test(const ZydisDisassembledInstruction* instr) {
