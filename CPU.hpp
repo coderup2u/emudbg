@@ -7409,6 +7409,18 @@ private:
     }
 
     void emulate_lahf(const ZydisDisassembledInstruction* instr) {
+        bool long_mode = (g_regs.rip >> 32) != 0; 
+
+        if (long_mode) {
+            int cpu_info[4] = { 0 };
+            __cpuidex(cpu_info, 0x80000001, 0);
+            bool lahf_supported = (cpu_info[2] & 0x1); 
+
+            if (!lahf_supported) {
+                LOG(L"[!] LAHF not supported in 64-bit mode (#UD)");
+                return;
+            }
+        }
 
         uint8_t ah_value = 0;
         ah_value |= (g_regs.rflags.flags.SF ? 0x80 : 0);
@@ -7424,6 +7436,7 @@ private:
         LOG(L"[+] LAHF => AH=0x" << std::hex << static_cast<int>(ah_value)
             << L" (RAX=0x" << g_regs.rax.q << L")");
     }
+
 
     void emulate_cpuid(const ZydisDisassembledInstruction*) {
 #if DB_ENABLED
