@@ -4324,11 +4324,13 @@ private:
             return;
         }
 
-  
-        g_regs.rflags.flags.ZF = (src_val == 0);
+        g_regs.rflags.flags.CF = (src_val == 0);
+        g_regs.rflags.flags.ZF = (result == 0);
 
         LOG(L"[+] LZCNT executed: src=0x" << std::hex << src_val
-            << L", result=" << std::dec << result);
+            << L", result=" << std::dec << result
+            << L", CF=" << g_regs.rflags.flags.CF
+            << L", ZF=" << g_regs.rflags.flags.ZF);
     }
 
 
@@ -7676,8 +7678,8 @@ private:
             return;
         }
 
-        LOG(L"[+] VPMASKMOVD executed: mask=0x" << std::hex << mask_val
-            << L", src=0x" << src_val << L", result=0x" << result);
+        //LOG(L"[+] VPMASKMOVD executed: mask=0x" << std::hex << mask_val
+        //    << L", src=0x" << src_val << L", result=0x" << result);
     }
 
 
