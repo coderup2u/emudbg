@@ -1229,6 +1229,7 @@ public:
             { ZYDIS_MNEMONIC_LODSW, &CPU::emulate_lodsw },
             { ZYDIS_MNEMONIC_LODSD, &CPU::emulate_lodsd },
             { ZYDIS_MNEMONIC_LODSQ, &CPU::emulate_lodsq },
+            { ZYDIS_MNEMONIC_VPSHUFB, &CPU::emulate_vpshufb },
 
 
 
@@ -2138,6 +2139,27 @@ private:
         out.mask = mask;
         out.mask_raw = mask_raw;
         return out;
+    }
+
+
+
+
+
+    static inline int element_count_for_mode(int mode) {
+        int op = mode & 0x3;
+        return (op == _SIDD_UBYTE_OPS || op == _SIDD_SBYTE_OPS) ? 16 : 8;
+    }
+
+    static inline int element_size_for_mode(int mode) {
+        int op = mode & 0x3;
+        return (op == _SIDD_UBYTE_OPS || op == _SIDD_SBYTE_OPS) ? 1 : 2;
+    }
+
+    static inline bool cmp_elements(int64_t a, int64_t b, int mode_is_signed, int cmp_kind) {
+        // cmp_kind: 0=EQUAL_ANY/EQUAL (used in pairwise), 1=RANGES (handled externally),
+        // 2=EQUAL_EACH (same as 0) ; signature kept simple
+        if (mode_is_signed) return (a == b);
+        else return ((uint64_t)a == (uint64_t)b);
     }
 
     // ------------------- Internal State -------------------
@@ -3562,6 +3584,53 @@ private:
         }
 
         LOG(L"[+] POR executed");
+    }
+    void emulate_vpshufb(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2]; 
+        auto width = dst.size;
+
+        if (width != 128 && width != 256 && width != 512) {
+            LOG(L"[!] Unsupported width in vpshufb: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i a, b;
+            if (!read_operand_value<__m128i>(src1, width, a) ||
+                !read_operand_value<__m128i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_shuffle_epi8(a, b); // VPSHUFB 128-bit
+            write_operand_value<__m128i>(dst, width, result);
+        }
+        else if (width == 256) {
+            __m256i a, b;
+            if (!read_operand_value<__m256i>(src1, width, a) ||
+                !read_operand_value<__m256i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_shuffle_epi8(a, b); // VPSHUFB 256-bit
+            write_operand_value<__m256i>(dst, width, result);
+        }
+        else if (width == 512) {
+            __m512i a, b;
+            if (!read_operand_value<__m512i>(src1, width, a) ||
+                !read_operand_value<__m512i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands (512-bit)");
+                return;
+            }
+
+            __m512i result = _mm512_shuffle_epi8(a, b); // VPSHUFB 512-bit
+            write_operand_value<__m512i>(dst, width, result);
+        }
+
+        LOG(L"[+] VPSHUFB executed (" << width << L"-bit)");
     }
 
     void emulate_xadd(const ZydisDisassembledInstruction* instr) {
@@ -8608,25 +8677,6 @@ private:
         }
 
         LOG(L"[+] SETP => " << std::hex << static_cast<int>(value));
-    }
-
-
-  
-    static inline int element_count_for_mode(int mode) {
-        int op = mode & 0x3;
-        return (op == _SIDD_UBYTE_OPS || op == _SIDD_SBYTE_OPS) ? 16 : 8;
-    }
-
-    static inline int element_size_for_mode(int mode) {
-        int op = mode & 0x3;
-        return (op == _SIDD_UBYTE_OPS || op == _SIDD_SBYTE_OPS) ? 1 : 2;
-    }
-
-    static inline bool cmp_elements(int64_t a, int64_t b, int mode_is_signed, int cmp_kind) {
-        // cmp_kind: 0=EQUAL_ANY/EQUAL (used in pairwise), 1=RANGES (handled externally),
-        // 2=EQUAL_EACH (same as 0) ; signature kept simple
-        if (mode_is_signed) return (a == b);
-        else return ((uint64_t)a == (uint64_t)b);
     }
 
     void emulate_pcmpistri(const ZydisDisassembledInstruction* instr) {
