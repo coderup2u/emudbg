@@ -1232,6 +1232,7 @@ public:
             { ZYDIS_MNEMONIC_VPSHUFB, &CPU::emulate_vpshufb },
             { ZYDIS_MNEMONIC_LZCNT, &CPU::emulate_lzcnt },
             { ZYDIS_MNEMONIC_VPMASKMOVD, &CPU::emulate_vpmaskmovd },
+            { ZYDIS_MNEMONIC_VPAND, &CPU::emulate_vpand },
 
 
 
@@ -5378,6 +5379,44 @@ private:
         LOG(L"[+] RCL => 0x" << std::hex << val);
         LOG("OF : " << g_regs.rflags.flags.OF);
         LOG("CF : " << g_regs.rflags.flags.CF);
+    }
+    void emulate_vpand(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+
+        uint32_t width = instr->info.operand_width;
+
+        if (width == 128) {
+            __m128i val1, val2;
+            if (!read_operand_value(src1, width, val1) || !read_operand_value(src2, width, val2)) {
+                LOG(L"[!] Failed to read operands in VPAND (128-bit)");
+                return;
+            }
+            __m128i result = _mm_and_si128(val1, val2);
+            write_operand_value(dst, width, result);
+        }
+        else if (width == 256) {
+            __m256i val1, val2;
+            if (!read_operand_value(src1, width, val1) || !read_operand_value(src2, width, val2)) {
+                LOG(L"[!] Failed to read operands in VPAND (256-bit)");
+                return;
+            }
+            __m256i result = _mm256_and_si256(val1, val2);
+            write_operand_value(dst, width, result);
+        }
+        else if (width == 512) {
+            __m512i val1, val2;
+            if (!read_operand_value(src1, width, val1) || !read_operand_value(src2, width, val2)) {
+                LOG(L"[!] Failed to read operands in VPAND (512-bit)");
+                return;
+            }
+            __m512i result = _mm512_and_epi32(val1, val2);
+            write_operand_value(dst, width, result);
+        }
+        else {
+            LOG(L"[!] Unsupported width in VPAND: " << width);
+        }
     }
 
 
