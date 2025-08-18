@@ -51,6 +51,18 @@ Windows API functions are skipped through debugger stepping, allowing seamless e
 
     // Test with real CPU
     #define DB_ENABLED 0
+
+    //stealth 
+    #define Stealth_Mode_ENABLED 1
+
+    //emulate everything in dll user mode 
+    #define FUll_user_MODE 1
+    
+    //Multithread_the_MultiThread
+    #define Multithread_the_MultiThread 0
+    
+    //using jit for emulation WIP
+    #define Jit_ENABLED 0
     //------------------------------------------
     ```
 
