@@ -7,13 +7,18 @@ std::unordered_map<DWORD, CPU> cpuThreads;
 
 int wmain(int argc, wchar_t* argv[]) {
     if (argc < 2) {
-        wprintf(L"Usage: %s <exe_path> [-m target.dll] [-b software|hardware]\n", argv[0]);
+        wprintf(L"Usage: %s <exe_path> [-m target.dll] [-r <hex_rva>] [-b software|hardware]\n", argv[0]);
+        wprintf(L"  Example:\n");
+        wprintf(L"    %s program.exe -r 0x1234\n", argv[0]);
+        wprintf(L"    %s program.exe -m ntdll.dll -r 0x500 -b hardware\n", argv[0]);
         return 1;
     }
 
     std::wstring exePath;
     std::wstring targetModuleName;
     bool waitForModule = false;
+    uint64_t targetRVA = 0;
+    bool hasRVA = false;
 
     for (int i = 1; i < argc; ++i) {
         std::wstring arg = argv[i];
@@ -30,6 +35,15 @@ int wmain(int argc, wchar_t* argv[]) {
                 wprintf(L"[-] Invalid breakpoint type: %s\n", type.c_str());
                 return 1;
             }
+        }
+        else if ((arg == L"-r" || arg == L"-rva") && i + 1 < argc) {
+            std::wistringstream iss(argv[++i]);
+            iss >> std::hex >> targetRVA;
+            if (iss.fail()) {
+                wprintf(L"[-] Invalid hex value for RVA: %s\n", argv[i]);
+                return 1;
+            }
+            hasRVA = true;
         }
         else {
             exePath = arg;
@@ -115,6 +129,26 @@ int wmain(int argc, wchar_t* argv[]) {
                     std::transform(lowerLoaded.begin(), lowerLoaded.end(), lowerLoaded.begin(), ::towlower);
                     std::wstring lowerTarget = targetModuleName;
                     std::transform(lowerTarget.begin(), lowerTarget.end(), lowerTarget.begin(), ::towlower);
+
+                    if (hasRVA && waitForModule && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
+                        moduleBase = (uint64_t)ld.lpBaseOfDll;
+                        uint64_t targetAddr = moduleBase + targetRVA;
+
+                        HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
+                        if (hThread) {
+                            if (bpType == BreakpointType::Hardware)
+                                SetHardwareBreakpointAuto(hThread, targetAddr);
+                            else {
+                                BYTE orig;
+                                if (SetBreakpoint(pi.hProcess, targetAddr, orig))
+                                    breakpoints[targetAddr] = { orig, 1 };
+                            }
+                            CloseHandle(hThread);
+                        }
+                        LOG(L"[+] Breakpoint set on module '%s' at RVA 0x%llX -> 0x%llX",
+                            lowerTarget.c_str(), targetRVA, targetAddr);
+                    }
+
 #if Stealth_Mode_ENABLED
 
                     if (lowerLoaded.find(L"kernelbase.dll") != std::wstring::npos) {
@@ -149,6 +183,7 @@ int wmain(int argc, wchar_t* argv[]) {
                                 << L" - size: 0x" << dllSize);
 
                             // --- TLS & EntryPoint Breakpoints ---
+                            if(!hasRVA && !waitForModule){
                             auto modEntryRVA = GetEntryPointRVA(buffer);
                             auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
 
@@ -167,11 +202,15 @@ int wmain(int argc, wchar_t* argv[]) {
                                 }
                             }
                             if (hThread) CloseHandle(hThread);
+                            }
+
+
+
                         }
                     }
 #endif
 
-                    if (waitForModule && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
+                    if (waitForModule && !hasRVA && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
                         moduleBase = (uint64_t)ld.lpBaseOfDll;
                         auto modEntryRVA = GetEntryPointRVA(buffer);
                         auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
@@ -286,7 +325,18 @@ int wmain(int argc, wchar_t* argv[]) {
                 cpuThreads.emplace(dbgEvent.dwThreadId, CPU(hThread));
             }
 
-            if (!waitForModule) {
+            if (hasRVA && !waitForModule) {
+                uint64_t targetAddr = baseAddress + targetRVA;
+                if (bpType == BreakpointType::Hardware)
+                    SetHardwareBreakpointAuto(hThread, targetAddr);
+                else {
+                    BYTE orig;
+                    if (SetBreakpoint(pi.hProcess, targetAddr, orig)) breakpoints[targetAddr] = { orig, 1 };
+                }
+                LOG(L"[+] Breakpoint set on main executable at RVA 0x%llX -> 0x%llX", targetRVA, targetAddr);
+            }
+
+            if (!waitForModule && !hasRVA) {
                 if (entryRVA) tlsRVAs.push_back(entryRVA);
                
                 for (auto &rva : tlsRVAs) {
@@ -299,6 +349,7 @@ int wmain(int argc, wchar_t* argv[]) {
                     }
                 }
             }
+
             break;
         }
 

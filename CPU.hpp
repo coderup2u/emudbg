@@ -43,7 +43,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 //using jit for emulation WIP
@@ -6959,7 +6959,7 @@ private:
             return;
         }
 
-        if (!write_operand_value(dst, 32, value)) {
+        if (!write_operand_value(dst, dst.size, value)) {
             LOG(L"[!] Failed to write destination operand in VMOVD");
             return;
         }
