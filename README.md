@@ -51,6 +51,18 @@ Windows API functions are skipped through debugger stepping, allowing seamless e
 
     // Test with real CPU
     #define DB_ENABLED 0
+
+    //stealth 
+    #define Stealth_Mode_ENABLED 1
+
+    //emulate everything in dll user mode 
+    #define FUll_user_MODE 1
+    
+    //Multithread_the_MultiThread
+    #define Multithread_the_MultiThread 0
+    
+    //using jit for emulation WIP
+    #define Jit_ENABLED 0
     //------------------------------------------
     ```
 
@@ -88,4 +100,13 @@ emudbg.exe C:\Samples\MyApp.exe -m target.dll -b hardware
 #### 🔸 Default usage with no flags (uses software breakpoints)
 ```bash
 emudbg.exe C:\Samples\MyApp.exe
+```
+#### 🔹 Set a breakpoint at a specific RVA in the main executable
+```bash
+emudbg.exe C:\Samples\MyApp.exe -r 0xFAB43
+```
+
+#### 🔹 Set a hardware breakpoint  at a specific RVA inside a specific module
+```bash
+emudbg.exe C:\Games\MyGame.exe -m target.dll -r 0x12A400 -b hardware
 ```
