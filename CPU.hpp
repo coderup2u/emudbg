@@ -43,7 +43,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 //using jit for emulation WIP
@@ -4500,6 +4500,11 @@ private:
         g_regs.rflags.flags.CF = (src_val == 0);
         g_regs.rflags.flags.ZF = (result == 0);
 
+#if DB_ENABLED
+        is_Sign_FLAG_SKIP = 1;
+        is_parity_FLAG_SKIP = 1;
+        is_Auxiliary_Carry_FLAG_SKIP = 1;
+#endif
         LOG(L"[+] LZCNT executed: src=0x" << std::hex << src_val
             << L", result=" << std::dec << result
             << L", CF=" << g_regs.rflags.flags.CF
@@ -6953,13 +6958,15 @@ private:
 
         uint32_t value = 0;
 
-
         if (!read_operand_value(src, 32, value)) {
             LOG(L"[!] Failed to read source operand in VMOVD");
             return;
         }
 
-        if (!write_operand_value(dst, dst.size, value)) {
+        // Zero-extend value to 128 bits
+        struct xmm_t { uint32_t lo; uint32_t hi[3]; } xmm_value = { value, {0,0,0} };
+
+        if (!write_operand_value(dst, 128, xmm_value)) {
             LOG(L"[!] Failed to write destination operand in VMOVD");
             return;
         }
@@ -6969,6 +6976,7 @@ private:
             << ", "
             << (src.type == ZYDIS_OPERAND_TYPE_REGISTER ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0) : L"[mem]"));
     }
+
 
     void emulate_orps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -9291,7 +9299,7 @@ private:
                 }
                 std::wcout << std::endl;
 
-                std::wcout << L"Actual ymm[" << i << L"]: ";
+                std::wcout << L"Actual ymm[" << i << L"]:   ";
                 for (int j = 0; j < 32; j++) {
                     std::wcout << std::hex << std::setw(2) << std::setfill(L'0')
                         << (int)ctx_ymm_bytes[j] << L" ";
