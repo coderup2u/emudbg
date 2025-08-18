@@ -1235,6 +1235,7 @@ public:
             { ZYDIS_MNEMONIC_VPAND, &CPU::emulate_vpand },
             { ZYDIS_MNEMONIC_PSHUFB, &CPU::emulate_pshufb },
             { ZYDIS_MNEMONIC_FXSAVE, &CPU::emulate_fxsave },
+            { ZYDIS_MNEMONIC_FXRSTOR, &CPU::emulate_fxrstor },
 
 
 
@@ -1907,6 +1908,53 @@ public:
 
         free(buf);
         return pCtx->FltSave;
+    }
+    bool RestoreFltSaveToContext(HANDLE hThread, const XMM_SAVE_AREA32& fltSave)
+    {
+        CONTEXT ctx = {};
+        ctx.ContextFlags = CONTEXT_FLOATING_POINT | CONTEXT_XSTATE;
+
+        DWORD ctxSize = 0;
+        if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) &&
+            GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+        {
+            LOG(L"[-] InitializeContext query size failed");
+            return false;
+        }
+
+        void* buf = malloc(ctxSize);
+        if (!buf) {
+            LOG(L"[-] malloc failed");
+            return false;
+        }
+
+        PCONTEXT pCtx = nullptr;
+        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
+        {
+            LOG(L"[-] InitializeContext failed");
+            free(buf);
+            return false;
+        }
+
+        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_LEGACY_SSE))
+        {
+            LOG(L"[-] SetXStateFeaturesMask failed");
+            free(buf);
+            return false;
+        }
+
+        pCtx->FltSave = fltSave;
+
+        if (!SetThreadContext(hThread, pCtx))
+        {
+            LOG(L"[-] SetThreadContext failed");
+            free(buf);
+            return false;
+        }
+
+        LOG(L"[+] FltSave restored successfully");
+        free(buf);
+        return true;
     }
 
 
@@ -2941,6 +2989,35 @@ private:
 
         LOG(L"[+] FXSAVE executed: wrote ");
     }
+    void emulate_fxrstor(const ZydisDisassembledInstruction* instr) {
+        const auto& src = instr->operands[0];
+
+        if (src.type != ZYDIS_OPERAND_TYPE_MEMORY) {
+            LOG(L"[!] FXRSTOR requires a memory operand as source");
+            return;
+        }
+
+#if analyze_ENABLED
+        LOG_analyze(GREEN, "[+] FXRSTOR at [RIP:" << std::hex << g_regs.rip << "]");
+#endif
+
+        XMM_SAVE_AREA32 fltSave{};
+
+
+        if (!read_operand_value(src, sizeof(fltSave), fltSave)) {
+            LOG(L"[!] Failed to read memory operand for FXRSTOR");
+            return;
+        }
+
+
+        if (!RestoreFltSaveToContext(hThread, fltSave)) {
+            LOG(L"[!] Failed to restore FltSave to thread context");
+            return;
+        }
+
+        LOG(L"[+] FXRSTOR executed: restored FltSave to context");
+    }
+
 
 
     void emulate_setl(const ZydisDisassembledInstruction* instr) {
