@@ -1233,6 +1233,8 @@ public:
             { ZYDIS_MNEMONIC_LZCNT, &CPU::emulate_lzcnt },
             { ZYDIS_MNEMONIC_VPMASKMOVD, &CPU::emulate_vpmaskmovd },
             { ZYDIS_MNEMONIC_VPAND, &CPU::emulate_vpand },
+            { ZYDIS_MNEMONIC_PSHUFB, &CPU::emulate_pshufb },
+            { ZYDIS_MNEMONIC_FXSAVE, &CPU::emulate_fxsave },
 
 
 
@@ -1573,7 +1575,6 @@ public:
             return;
         }
 
-
         g_regs.rip = pCtx->Rip;
         g_regs.rax.q = pCtx->Rax;
         g_regs.rbx.q = pCtx->Rbx;
@@ -1772,7 +1773,7 @@ public:
             LOG(L"[-] malloc failed");
             return false;
         }
-
+  
         PCONTEXT pCtx = NULL;
         if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
         {
@@ -1822,7 +1823,7 @@ public:
         pCtx->R14 = g_regs.r14.q;
         pCtx->R15 = g_regs.r15.q;
         pCtx->EFlags = static_cast<DWORD>(g_regs.rflags.value);
-
+        
         LOG(L"[+] General registers applied");
 
         DWORD featureLength = 0;
@@ -1867,6 +1868,46 @@ public:
         return true;
     }
 
+    XMM_SAVE_AREA32 UpdateFltSaveFromContext()
+    {
+        CONTEXT ctx = {};
+        ctx.ContextFlags = CONTEXT_FLOATING_POINT | CONTEXT_XSTATE;
+
+
+        DWORD ctxSize = 0;
+        if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) &&
+            GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+        {
+            LOG(L"[-] InitializeContext query size failed");
+        }
+
+        void* buf = malloc(ctxSize);
+        if (!buf) {
+            LOG(L"[-] malloc failed");
+        }
+
+        PCONTEXT pCtx = nullptr;
+        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
+        {
+            LOG(L"[-] InitializeContext failed");
+            free(buf);
+        }
+
+        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_LEGACY_SSE))
+        {
+            LOG(L"[-] SetXStateFeaturesMask failed");
+            free(buf);
+        }
+
+        if (!GetThreadContext(hThread, pCtx))
+        {
+            LOG(L"[-] GetThreadContext failed");
+            free(buf);
+        }
+
+        free(buf);
+        return pCtx->FltSave;
+    }
 
 
 private:
@@ -2877,6 +2918,30 @@ private:
         LOG(L"[+] PUSH 0x" << std::hex << value << L" (" << width << "-bit)");
 
     }
+    void emulate_fxsave(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+
+        if (dst.type != ZYDIS_OPERAND_TYPE_MEMORY) {
+            LOG(L"[!] FXSAVE requires a memory operand as destination");
+            return;
+        }
+
+#if analyze_ENABLED
+        LOG_analyze(GREEN, "[+] FXSAVE at [RIP:" << std::hex << g_regs.rip << "]");
+#endif
+
+        ApplyRegistersToContext();
+        auto FltSave =  UpdateFltSaveFromContext();
+
+        
+        if (!write_operand_value(dst,sizeof(FltSave), FltSave)) {
+            LOG(L"[!] Failed to write operand for SETLE");
+            return;
+        }
+
+        LOG(L"[+] FXSAVE executed: wrote ");
+    }
+
 
     void emulate_setl(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -3635,6 +3700,36 @@ private:
         }
 
         LOG(L"[+] VPSHUFB executed (" << width << L"-bit)");
+    }
+    void emulate_pshufb(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2].size > 2
+            ? instr->operands[2]
+            : src1; 
+
+        auto width = dst.size;
+        if (width != 128) {
+            LOG(L"[!] Unsupported width in pshufb (only 128-bit legacy supported): " << (int)width);
+            return;
+        }
+
+        __m128i a, mask;
+        if (!read_operand_value<__m128i>(dst, width, a)) {
+            LOG(L"[!] Failed to read destination (source) operand (xmm1)");
+            return;
+        }
+
+        if (!read_operand_value<__m128i>(src2, width, mask)) {
+            LOG(L"[!] Failed to read shuffle mask operand");
+            return;
+        }
+
+
+        __m128i result = _mm_shuffle_epi8(a, mask);
+        write_operand_value<__m128i>(dst, width, result);
+
+        LOG(L"[+] PSHUFB executed (legacy two-operand form)");
     }
 
     void emulate_xadd(const ZydisDisassembledInstruction* instr) {
