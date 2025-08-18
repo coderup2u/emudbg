@@ -89,3 +89,12 @@ emudbg.exe C:\Samples\MyApp.exe -m target.dll -b hardware
 ```bash
 emudbg.exe C:\Samples\MyApp.exe
 ```
+#### 🔹 Set a breakpoint at a specific RVA in the main executable
+```bash
+emudbg.exe C:\Samples\MyApp.exe -r 0xFAB43
+```
+
+#### 🔹 Set a hardware breakpoint  at a specific RVA inside a specific module
+```bash
+emudbg.exe C:\Games\MyGame.exe -m target.dll -r 0x12A400 -b hardware
+```
