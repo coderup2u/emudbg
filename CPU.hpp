@@ -1240,6 +1240,7 @@ public:
 
 
 
+
             
         };
 
@@ -3002,7 +3003,7 @@ private:
 #endif
 
         XMM_SAVE_AREA32 fltSave{};
-
+        
 
         if (!read_operand_value(src, sizeof(fltSave), fltSave)) {
             LOG(L"[!] Failed to read memory operand for FXRSTOR");
@@ -3014,7 +3015,7 @@ private:
             LOG(L"[!] Failed to restore FltSave to thread context");
             return;
         }
-
+        UpdateRegistersFromContext();
         LOG(L"[+] FXRSTOR executed: restored FltSave to context");
     }
 
