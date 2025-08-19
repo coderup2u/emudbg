@@ -43,6 +43,10 @@ rdtsc_asm PROC
 rdtsc_asm ENDP
 
 
+ReadGDTR PROC
+    sgdt fword ptr [rcx]   ; GDTR -> [RCX]
+    ret
+ReadGDTR ENDP
 
 END
 

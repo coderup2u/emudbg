@@ -52,7 +52,6 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 
 
 
-
 #if LOG_ENABLED
 #define LOG(x) std::wcout << x << std::endl
 #else
@@ -124,10 +123,17 @@ enum class ThreadState {
     Sleeping,
     Blocked,
 };
+struct GDTR {
+    unsigned short limit;
+    unsigned long long base;
+};
+GDTR gdtr = {};
+
 extern "C" void read_mxcsr_asm(uint32_t* dest);
 extern "C" void fnstcw_asm(void* dest);
 extern "C" uint64_t __cdecl xgetbv_asm(uint32_t ecx);
 extern "C" uint64_t rdtsc_asm();
+extern "C" void ReadGDTR(GDTR* gdtr);
 
 enum class BreakpointType {
     Software,
@@ -137,6 +143,7 @@ struct BreakpointInfo {
     BYTE originalByte;
     int remainingHits;
 };
+
 BreakpointType bpType = BreakpointType::Software;
 std::vector<std::pair<uint64_t, uint64_t>> valid_ranges;
 PROCESS_INFORMATION pi;
@@ -1236,6 +1243,7 @@ public:
             { ZYDIS_MNEMONIC_PSHUFB, &CPU::emulate_pshufb },
             { ZYDIS_MNEMONIC_FXSAVE, &CPU::emulate_fxsave },
             { ZYDIS_MNEMONIC_FXRSTOR, &CPU::emulate_fxrstor },
+            { ZYDIS_MNEMONIC_SGDT, &CPU::emulate_sgdt },
 
 
 
@@ -1379,12 +1387,7 @@ public:
                     LOG("[+] syscall in : " << g_regs.rip << " rax : " << g_regs.rax.q);
                     return g_regs.rip + instr.length;
                 }
-                if (instr.mnemonic == ZYDIS_MNEMONIC_SGDT)
-                {
-                    LOG_analyze(BLUE, "[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — GDTR is being read");
-                    LOG("[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — reading GDTR");
-                    return g_regs.rip + instr.length;
-                }
+
                 if (instr.mnemonic == ZYDIS_MNEMONIC_INT3)
                 {
                     LOG_analyze(BLUE, "[+] INT3 at: 0x" << std::hex << g_regs.rip );
@@ -1426,14 +1429,16 @@ public:
 
                         if (!disasm.IsJump() &&
                             instr.mnemonic != ZYDIS_MNEMONIC_CALL &&
-                            instr.mnemonic != ZYDIS_MNEMONIC_RET)
+                            instr.mnemonic != ZYDIS_MNEMONIC_RET )
                         {
                             g_regs.rip += instr.length;
                         }
-
+  
 
 #if DB_ENABLED
-                        SingleStepAndCompare(pi.hProcess, pi.hThread);
+                        if (instr.mnemonic != ZYDIS_MNEMONIC_SGDT) {
+                            SingleStepAndCompare(pi.hProcess, pi.hThread);
+                        }
 #endif
                     }
 
@@ -1762,7 +1767,7 @@ public:
 
         CONTEXT ctx = {};
         ctx.ContextFlags = CONTEXT_ALL | CONTEXT_XSTATE;
-
+        ctx.MxCsr;
         DWORD ctxSize = 0;
         if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) &&
             GetLastError() != ERROR_INSUFFICIENT_BUFFER)
@@ -1825,7 +1830,7 @@ public:
         pCtx->R14 = g_regs.r14.q;
         pCtx->R15 = g_regs.r15.q;
         pCtx->EFlags = static_cast<DWORD>(g_regs.rflags.value);
-        
+
         LOG(L"[+] General registers applied");
 
         DWORD featureLength = 0;
@@ -4780,6 +4785,17 @@ private:
         update_flags_or(result, lhs, rhs, width);
 
         LOG(L"[+] OR => 0x" << std::hex << result);
+    }
+    void emulate_sgdt(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+
+        if (!write_operand_value(dst,sizeof(gdtr), gdtr)) {
+            LOG(L"[!] Failed to write sgdt result");
+            return;
+        }
+
+        LOG_analyze(BLUE, "[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — GDTR is being read");
+        LOG("[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — reading GDTR");
     }
 
     void emulate_prefetchw(const ZydisDisassembledInstruction* instr) {

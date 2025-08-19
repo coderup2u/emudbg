@@ -19,7 +19,7 @@ int wmain(int argc, wchar_t* argv[]) {
     bool waitForModule = false;
     uint64_t targetRVA = 0;
     bool hasRVA = false;
-
+    ReadGDTR(&gdtr);
     for (int i = 1; i < argc; ++i) {
         std::wstring arg = argv[i];
         if (arg == L"-m" && i + 1 < argc) {
