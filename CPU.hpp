@@ -1256,6 +1256,8 @@ public:
             { ZYDIS_MNEMONIC_FXSAVE, &CPU::emulate_fxsave },
             { ZYDIS_MNEMONIC_FXRSTOR, &CPU::emulate_fxrstor },
             { ZYDIS_MNEMONIC_SGDT, &CPU::emulate_sgdt },
+            { ZYDIS_MNEMONIC_SAHF, &CPU::emulate_sahf },
+            { ZYDIS_MNEMONIC_XLAT, &CPU::emulate_xlatb },
 
 
 
@@ -4809,7 +4811,7 @@ private:
         }
 
         LOG_analyze(BLUE, "[+] SGDT executed at: 0x" << std::hex << g_regs.rip
-            << " — GDTR written, extra 6 bytes preserved");
+            << " — GDTR written");
     }
 
     void emulate_prefetchw(const ZydisDisassembledInstruction* instr) {}
@@ -7796,6 +7798,31 @@ private:
         LOG(L"[+] LAHF => AH=0x" << std::hex << static_cast<int>(ah_value)
             << L" (RAX=0x" << g_regs.rax.q << L")");
     }
+    void emulate_sahf(const ZydisDisassembledInstruction* instr) {
+        bool long_mode = (g_regs.rip >> 32) != 0;
+
+        if (long_mode) {
+            int cpu_info[4] = { 0 };
+            __cpuidex(cpu_info, 0x80000001, 0);
+            bool sahf_supported = (cpu_info[2] & 0x1); // LAHF/SAHF support
+
+            if (!sahf_supported) {
+                LOG(L"[!] SAHF not supported in 64-bit mode (#UD)");
+                return;
+            }
+        }
+
+        uint8_t al = g_regs.rax.l;
+
+        g_regs.rflags.flags.SF = (al & 0x80);
+        g_regs.rflags.flags.ZF = (al & 0x40) != 0;
+        g_regs.rflags.flags.AF = (al & 0x10) != 0;
+        g_regs.rflags.flags.PF = !parity(al);
+        g_regs.rflags.flags.CF = (al & 0x01) != 0;
+
+        LOG(L"[+] SAHF <= AL=0x" << std::hex << static_cast<int>(al)
+            << L" (RFLAGS=0x" << g_regs.rflags.value << L")");
+    }
 
 
     void emulate_cpuid(const ZydisDisassembledInstruction*) {
@@ -8313,6 +8340,22 @@ private:
         }
 
         LOG(L"[+] PADDQ executed");
+    }
+
+    void emulate_xlatb(const ZydisDisassembledInstruction* instr) {
+        uint64_t table_base = g_regs.rbx.q; 
+        uint8_t al = g_regs.rax.l;
+        uint8_t new_value;
+
+        if (!ReadMemory(table_base + al, &new_value, 1)) {
+            LOG(L"[!] Failed to read memory in XLATB");
+            return;
+        }
+
+        g_regs.rax.l = new_value;
+
+        LOG(L"[+] XLATB => AL=0x" << std::hex << static_cast<int>(new_value)
+            << L" (RAX=0x" << g_regs.rax.q << L")");
     }
 
 
