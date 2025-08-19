@@ -165,17 +165,30 @@ int wmain(int argc, wchar_t* argv[]) {
                     }
 #endif
 #if FUll_user_MODE
-                    if (lowerLoaded.find(L"system32") == std::wstring::npos &&
-                        lowerLoaded.find(L"ntdll.dll") == std::wstring::npos) {
-                        IMAGE_DOS_HEADER dosHeader{};
-                        IMAGE_NT_HEADERS64 ntHeaders{};
-                        if (ReadProcessMemory(pi.hProcess, ld.lpBaseOfDll, &dosHeader, sizeof(dosHeader), nullptr) &&
-                            dosHeader.e_magic == IMAGE_DOS_SIGNATURE &&
-                            ReadProcessMemory(pi.hProcess, (BYTE*)ld.lpBaseOfDll + dosHeader.e_lfanew, &ntHeaders, sizeof(ntHeaders), nullptr) &&
-                            ntHeaders.Signature == IMAGE_NT_SIGNATURE) {
 
-                            uint64_t dllBase = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
-                            uint64_t dllSize = ntHeaders.OptionalHeader.SizeOfImage;
+                    bool isSystemModule = (
+                        lowerLoaded.find(L"system32") != std::wstring::npos ||
+                        lowerLoaded.find(L"ntdll.dll") != std::wstring::npos
+                        );
+
+                    IMAGE_DOS_HEADER dosHeader{};
+                    IMAGE_NT_HEADERS64 ntHeaders{};
+                    if (ReadProcessMemory(pi.hProcess, ld.lpBaseOfDll, &dosHeader, sizeof(dosHeader), nullptr) &&
+                        dosHeader.e_magic == IMAGE_DOS_SIGNATURE &&
+                        ReadProcessMemory(pi.hProcess, (BYTE*)ld.lpBaseOfDll + dosHeader.e_lfanew, &ntHeaders, sizeof(ntHeaders), nullptr) &&
+                        ntHeaders.Signature == IMAGE_NT_SIGNATURE)
+                    {
+                        uint64_t dllBase = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
+                        uint64_t dllSize = ntHeaders.OptionalHeader.SizeOfImage;
+
+                        if (isSystemModule) {
+                            system_modules_ranges.emplace_back(dllBase, dllBase + dllSize);
+                            system_modules_names.push_back(lowerLoaded);
+                            LOG(L"[+] System DLL added to system_modules_ranges: " << lowerLoaded.c_str()
+                                << L" at 0x" << std::hex << dllBase
+                                << L" - size: 0x" << dllSize);
+                        }
+                        else {
                             valid_ranges.emplace_back(dllBase, dllBase + dllSize);
 
                             LOG(L"[+] User-mode DLL added to valid_ranges: " << lowerLoaded.c_str()
@@ -183,32 +196,30 @@ int wmain(int argc, wchar_t* argv[]) {
                                 << L" - size: 0x" << dllSize);
 
                             // --- TLS & EntryPoint Breakpoints ---
-                            if(!hasRVA && !waitForModule){
-                            auto modEntryRVA = GetEntryPointRVA(buffer);
-                            auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
+                            if (!hasRVA && !waitForModule) {
+                                auto modEntryRVA = GetEntryPointRVA(buffer);
+                                auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
 
-                            HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
-                            if (modEntryRVA)
-                                modTLSRVAs.push_back(modEntryRVA);
+                                HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
+                                if (modEntryRVA)
+                                    modTLSRVAs.push_back(modEntryRVA);
 
-                            for (auto& rva : modTLSRVAs) {
-                                uint64_t addr = dllBase + rva;
-                                if (bpType == BreakpointType::Hardware)
-                                    SetHardwareBreakpointAuto(hThread, addr);
-                                else {
-                                    BYTE orig;
-                                    if (SetBreakpoint(pi.hProcess, addr, orig))
-                                        breakpoints[addr] = { orig, 1 };
+                                for (auto& rva : modTLSRVAs) {
+                                    uint64_t addr = dllBase + rva;
+                                    if (bpType == BreakpointType::Hardware)
+                                        SetHardwareBreakpointAuto(hThread, addr);
+                                    else {
+                                        BYTE orig;
+                                        if (SetBreakpoint(pi.hProcess, addr, orig))
+                                            breakpoints[addr] = { orig, 1 };
+                                    }
                                 }
+                                if (hThread) CloseHandle(hThread);
                             }
-                            if (hThread) CloseHandle(hThread);
-                            }
-
-
-
                         }
                     }
 #endif
+
 
                     if (waitForModule && !hasRVA && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
                         moduleBase = (uint64_t)ld.lpBaseOfDll;

@@ -158,6 +158,19 @@ struct BreakpointInfo {
 
 BreakpointType bpType = BreakpointType::Software;
 std::vector<std::pair<uint64_t, uint64_t>> valid_ranges;
+#if FUll_user_MODE
+std::vector<std::pair<uint64_t, uint64_t>> system_modules_ranges;
+std::vector<std::wstring> system_modules_names;
+std::wstring GetSystemModuleNameFromAddress(uint64_t addr) {
+    for (size_t i = 0; i < system_modules_ranges.size(); ++i) {
+        auto [start, end] = system_modules_ranges[i];
+        if (addr >= start && addr < end) {
+            return system_modules_names[i];
+        }
+    }
+    return L""; 
+}
+#endif
 PROCESS_INFORMATION pi;
 IMAGE_OPTIONAL_HEADER64 optionalHeader;
 #if Stealth_Mode_ENABLED
@@ -867,7 +880,13 @@ bool IsInEmulationRange(uint64_t addr) {
     }
     return false;
 }
-
+bool IsInSystemRange(uint64_t addr) {
+    for (const auto& range : system_modules_ranges) {
+        if (addr >= range.first && addr <= range.second)
+            return true;
+    }
+    return false;
+}
 uint64_t GetTEBAddress(HANDLE hThread) {
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
     if (!ntdll) return 0;
@@ -1040,7 +1059,7 @@ public:
 
 #if DB_ENABLED
     memory_mange my_mange;
-    bool is_cpuid, is_OVERFLOW_FLAG_SKIP, is_Auxiliary_Carry_FLAG_SKIP, is_Zero_FLAG_SKIP, is_parity_FLAG_SKIP, is_Sign_FLAG_SKIP, is_rdtsc; // ,is_reading_time;
+    bool is_cpuid, is_OVERFLOW_FLAG_SKIP, is_Auxiliary_Carry_FLAG_SKIP, is_Zero_FLAG_SKIP, is_Parity_FLAG_SKIP, is_Sign_FLAG_SKIP, is_rdtsc; // ,is_reading_time;
 #endif
 
 
@@ -1332,7 +1351,7 @@ public:
                 is_OVERFLOW_FLAG_SKIP = 0;
                 is_Auxiliary_Carry_FLAG_SKIP = 0;
                 is_Zero_FLAG_SKIP = 0;
-                is_parity_FLAG_SKIP = 0;
+                is_Parity_FLAG_SKIP = 0;
                 is_Sign_FLAG_SKIP = 0;
                 my_mange.is_write = 0;
                 g_regs.rflags.flags.TF = 1;
@@ -1401,7 +1420,10 @@ public:
                     LOG("[+] syscall in : " << g_regs.rip << " rax : " << g_regs.rax.q);
                     return g_regs.rip + instr.length;
                 }
-
+                if (instr.mnemonic == ZYDIS_MNEMONIC_LSL)
+                {
+                    return g_regs.rip + instr.length;
+                }
                 if (instr.mnemonic == ZYDIS_MNEMONIC_INT3)
                 {
                     LOG_analyze(BLUE, "[+] INT3 at: 0x" << std::hex << g_regs.rip );
@@ -1482,10 +1504,21 @@ public:
 
 #endif
 
-                        uint64_t value = 0;
-                        ReadMemory(g_regs.rsp.q, &value, 8);
-                        return value;
+#if FUll_user_MODE
+                        if (IsInSystemRange(address)) 
+#endif
+                        {
+                            uint64_t value = 0;
+                            ReadMemory(g_regs.rsp.q, &value, 8);
+                            return value;
+                        }
+
+
+
                     }
+
+
+
 #endif
             }
 
@@ -2285,7 +2318,13 @@ private:
 #if analyze_ENABLED
         const uint64_t kuser_base = 0x00000007FFE0000;
         const uint64_t kuser_size = 0x1000;
-
+#if FUll_user_MODE
+        std::wstring dllName = GetSystemModuleNameFromAddress(address);
+        if (!dllName.empty()) {
+            LOG_analyze(YELLOW,
+                "[READ SYSTEM DLL] Reading From (" << dllName.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+        }
+#endif
         // KUSER_SHARED_DATA
         if (address >= kuser_base && address < kuser_base + kuser_size) {
             uint64_t offset = address - kuser_base;
@@ -3421,34 +3460,27 @@ private:
             L"(may be used by DRM)");
 #endif
 
-
         __m128 dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for RCPS");
             return;
         }
 
-        // Load lowest 32 bits (scalar floats)
-        float a = dst_val.m128_f32[0];
-        float b = src_val.m128_f32[0];
 
-        if (b == 0.0f) {
-            LOG(L"[!] Division by zero in RCPS");
-            // behavior on division by zero can vary, here just skip or set some value
+        __m128 result = _mm_rcp_ss(src_val);
+
+
+        dst_val.m128_f32[0] = result.m128_f32[0];
+
+        if (!write_operand_value(dst, 128, dst_val)) {
+            LOG(L"[!] Failed to write RCPS result");
             return;
         }
 
-        // Approximate reciprocal
-        float result_scalar = 1.0f / b;
-
-        // Write back only the lowest float to dst, keep upper bits unchanged
-        dst_val.m128_f32[0] = result_scalar;
-
-        write_operand_value(dst, 128, dst_val);
-
         LOG(L"[+] RCPS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << result_scalar);
+            << L" => " << std::dec << dst_val.m128_f32[0]);
     }
     void emulate_sfence(const ZydisDisassembledInstruction* instr) {
         // In real CPU: serialize store operations before continuing execution.
@@ -3483,7 +3515,7 @@ private:
         int op_count = instr->info.operand_count_visible;
         unsigned width = instr->info.operand_width;
 #if DB_ENABLED
-        is_parity_FLAG_SKIP = 1;
+        is_Parity_FLAG_SKIP = 1;
         is_Auxiliary_Carry_FLAG_SKIP = 1;
         is_Sign_FLAG_SKIP = 1;
         is_Zero_FLAG_SKIP = 1;
@@ -4535,7 +4567,7 @@ private:
 
 #if DB_ENABLED
         is_Sign_FLAG_SKIP = 1;
-        is_parity_FLAG_SKIP = 1;
+        is_Parity_FLAG_SKIP = 1;
         is_Auxiliary_Carry_FLAG_SKIP = 1;
 #endif
         LOG(L"[+] LZCNT executed: src=0x" << std::hex << src_val
@@ -5072,6 +5104,9 @@ private:
         ReadMemory(g_regs.rsp.q, &value, 8);
         g_regs.rsp.q += 8;
         g_regs.rflags.value = value;
+#if DB_ENABLED
+        g_regs.rflags.flags.IF = 1;
+#endif
         LOG(L"[+] POPfq => 0x" << std::hex << value);
     }
 
@@ -7094,8 +7129,9 @@ private:
 
     }
     void emulate_tzcnt(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0], src = instr->operands[1];
-        uint8_t width = instr->info.operand_width;
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        uint8_t width = instr->info.operand_width; // 16, 32, 64
         uint64_t val = 0;
 
         if (!read_operand_value(src, width, val)) {
@@ -7106,20 +7142,34 @@ private:
         uint64_t result = 0;
 
         if (val == 0) {
-            result = width; 
+            result = width;
+            g_regs.rflags.flags.CF = 1;
         }
         else {
-
             while ((val & 1) == 0) {
                 result++;
                 val >>= 1;
             }
+            g_regs.rflags.flags.CF = 0;
         }
 
+        g_regs.rflags.flags.ZF = (result == 0);
 
         if (!write_operand_value(dst, width, result)) {
-            LOG(L"[!] Failed to write destination operand");
+            LOG(L"[!] Failed to write TZCNT result");
+            return;
         }
+
+#if DB_ENABLED
+        is_Sign_FLAG_SKIP = 1;
+        is_Auxiliary_Carry_FLAG_SKIP = 1;
+        is_Parity_FLAG_SKIP = 1;
+        is_OVERFLOW_FLAG_SKIP = 1;
+#endif
+
+        LOG(L"[+] TZCNT => result=0x" << std::hex << result
+            << L" ZF=" << g_regs.rflags.flags.ZF
+            << L" CF=" << g_regs.rflags.flags.CF);
     }
 
     void emulate_sub(const ZydisDisassembledInstruction* instr) {
@@ -9504,7 +9554,7 @@ private:
                     if (is_Zero_FLAG_SKIP) {
                         g_regs.rflags.flags.ZF = reg.rflags.flags.ZF;
                     }
-                    if (is_parity_FLAG_SKIP) {
+                    if (is_Parity_FLAG_SKIP) {
                         g_regs.rflags.flags.PF = reg.rflags.flags.PF;
                     }
                     if (is_Sign_FLAG_SKIP) {
