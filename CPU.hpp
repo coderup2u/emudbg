@@ -123,17 +123,29 @@ enum class ThreadState {
     Sleeping,
     Blocked,
 };
-struct GDTR {
-    unsigned short limit;
-    unsigned long long base;
+#pragma pack(push, 1)
+
+#ifdef _WIN64  
+using GDTRStruct = struct {
+    uint16_t limit;
+    uint64_t base;
 };
-GDTR gdtr = {};
+#else
+using GDTRStruct = struct {
+    uint16_t limit;
+    uint32_t base;
+};
+#endif
+
+#pragma pack(pop)
+
+GDTRStruct gdtr = {};
 
 extern "C" void read_mxcsr_asm(uint32_t* dest);
 extern "C" void fnstcw_asm(void* dest);
 extern "C" uint64_t __cdecl xgetbv_asm(uint32_t ecx);
 extern "C" uint64_t rdtsc_asm();
-extern "C" void ReadGDTR(GDTR* gdtr);
+extern "C" void ReadGDTR(GDTRStruct* gdtr);
 
 enum class BreakpointType {
     Software,
@@ -4786,20 +4798,21 @@ private:
 
         LOG(L"[+] OR => 0x" << std::hex << result);
     }
+
+
     void emulate_sgdt(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
-        if (!write_operand_value(dst,sizeof(gdtr), gdtr)) {
-            LOG(L"[!] Failed to write sgdt result");
+        if (!write_operand_value(dst, sizeof(gdtr), gdtr)) {
+            LOG(L"[!] Failed to write GDTR + extra bytes");
             return;
         }
 
-        LOG_analyze(BLUE, "[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — GDTR is being read");
-        LOG("[+] SGDT executed at: 0x" << std::hex << g_regs.rip << " — reading GDTR");
+        LOG_analyze(BLUE, "[+] SGDT executed at: 0x" << std::hex << g_regs.rip
+            << " — GDTR written, extra 6 bytes preserved");
     }
 
-    void emulate_prefetchw(const ZydisDisassembledInstruction* instr) {
-    }
+    void emulate_prefetchw(const ZydisDisassembledInstruction* instr) {}
 
     void emulate_vinsertf128(const ZydisDisassembledInstruction* instr) {
         if (instr->info.operand_count < 3 || instr->info.operand_count > 4) {
