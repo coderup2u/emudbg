@@ -3521,7 +3521,14 @@ private:
             case 8:  of = cf = ((int16_t)(int8_t)g_regs.rax.l != (int16_t)g_regs.rax.w); break;
             case 16: of = cf = ((int32_t)(int16_t)g_regs.rax.w != (int32_t)((g_regs.rdx.w << 16) | g_regs.rax.w)); break;
             case 32: of = cf = ((int64_t)(int32_t)g_regs.rax.d != (int64_t)(((uint64_t)g_regs.rdx.d << 32) | g_regs.rax.d)); break;
-            case 64: of = cf = !((int64_t)g_regs.rdx.q == 0 || (int64_t)g_regs.rdx.q == -1); break;
+            case 64:
+            {
+                int64_t low = (int64_t)full_res.low;
+                int64_t high = (int64_t)full_res.high;
+                of = cf = !((high == 0 && low >= 0) || (high == -1 && low < 0));
+            }
+            break;
+
             }
             g_regs.rflags.flags.CF = cf;
             g_regs.rflags.flags.OF = of;
@@ -3549,7 +3556,13 @@ private:
             case 8:  cf = of = ((int16_t)(int8_t)truncated != (int16_t)full_res.low); break;
             case 16: cf = of = ((int32_t)(int16_t)truncated != (int32_t)full_res.low); break;
             case 32: cf = of = ((int64_t)(int32_t)truncated != (int64_t)full_res.low); break;
-            case 64: cf = of = !((int64_t)full_res.high == 0 || (int64_t)full_res.high == -1); break;
+            case 64:
+            {
+                int64_t low = (int64_t)full_res.low;
+                int64_t high = (int64_t)full_res.high;
+                of = cf = !((high == 0 && low >= 0) || (high == -1 && low < 0));
+            }
+            break;
             }
             g_regs.rflags.flags.CF = cf;
             g_regs.rflags.flags.OF = of;
