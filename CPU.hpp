@@ -2321,7 +2321,7 @@ private:
         const uint64_t kuser_size = 0x1000;
 #if FUll_user_MODE
         std::wstring dllName = GetSystemModuleNameFromAddress(address);
-        if (!dllName.empty()) {
+        if (!dllName.empty() && (g_regs.rip != address)) {
             LOG_analyze(YELLOW,
                 "[READ SYSTEM DLL] Reading From (" << dllName.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
         }
