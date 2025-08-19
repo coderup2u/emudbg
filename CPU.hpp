@@ -1401,7 +1401,7 @@ public:
                 LOG(L"0x" << std::hex << disasm.Address()
                     << L": " << std::wstring(instrText.begin(), instrText.end()));
 
-                bool has_lock = (instr.attributes & ZYDIS_ATTRIB_HAS_LOCK) != 0;
+                 has_lock = (instr.attributes & ZYDIS_ATTRIB_HAS_LOCK) != 0;
                 bool has_rep = (instr.attributes & ZYDIS_ATTRIB_HAS_REP) != 0;
                 bool has_repne = (instr.attributes & ZYDIS_ATTRIB_HAS_REPNE) != 0;
                 bool has_VEX = (instr.attributes & ZYDIS_ATTRIB_HAS_VEX) != 0;
@@ -2015,6 +2015,7 @@ private:
     // ------------------- Register State -------------------
     RegState g_regs;
     std::string instrText;
+    bool has_lock;
     uint64_t address;
     std::unordered_map<ZydisMnemonic, void (CPU::*)(const ZydisDisassembledInstruction*)> dispatch_table;
     std::unordered_map<ZydisRegister, void* > reg_lookup;
@@ -3456,8 +3457,9 @@ private:
         const auto& src = instr->operands[1];
 
 #if analyze_ENABLED
-        LOG(L"[+] RCPSS at [RIP: 0x" << std::hex << g_regs.rip << "] "
-            L"(may be used by DRM)");
+
+        LOG_analyze(CYAN, L"[+] RCPSS at [RIP: 0x" << std::hex << g_regs.rip << "] ");
+
 #endif
 
         __m128 dst_val, src_val;
@@ -5030,7 +5032,11 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
         uint8_t width = instr->info.operand_width;
+#if analyze_ENABLED
+        if(has_lock)
+        LOG_analyze(CYAN, L"[+] cmpxchg at [RIP: 0x" << std::hex << g_regs.rip << "] ");
 
+#endif
         uint64_t dstVal, srcVal;
         if (!read_operand_value(dst, width, dstVal) ||
             !read_operand_value(src, width, srcVal)) {
