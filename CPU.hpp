@@ -4170,8 +4170,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-
-        uint8_t width = dst.size;
+        auto width = dst.size;
 
 
         if (width != 128 && width != 256) {
@@ -4202,6 +4201,8 @@ private:
                 return;
             }
 
+
+         
             __m256i result = _mm256_xor_si256(v1, v2);
 
             if (!write_operand_value(dst, width, result)) {
