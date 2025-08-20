@@ -1280,6 +1280,10 @@ public:
             { ZYDIS_MNEMONIC_VPADDQ, &CPU::emulate_vpaddq },
             { ZYDIS_MNEMONIC_VPSUBQ, &CPU::emulate_vpsubq },
             { ZYDIS_MNEMONIC_VPOR, &CPU::emulate_vpor },
+            { ZYDIS_MNEMONIC_VPMULUDQ, &CPU::emulate_vpmuludq },
+            { ZYDIS_MNEMONIC_VPCMPEQQ, &CPU::emulate_vpcmpeqq },
+            { ZYDIS_MNEMONIC_VPSLLQ, &CPU::emulate_vpsllq },
+            { ZYDIS_MNEMONIC_VPANDN, &CPU::emulate_vpandn },
 
 
 
@@ -4140,6 +4144,53 @@ private:
         LOG(L"[+] PSHUFD executed");
     }
 
+    void emulate_vpmuludq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpmuludq: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpmuludq");
+                return;
+            }
+
+
+            __m128i result = _mm_mul_epu32(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpmuludq");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpmuludq");
+                return;
+            }
+
+
+            __m256i result = _mm256_mul_epu32(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpmuludq");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPMULUDQ executed successfully");
+    }
+
     void emulate_cmovnle(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -4311,6 +4362,98 @@ private:
         LOG(L"[+] PCMPEQW executed");
     }
 
+    void emulate_vpandn(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpandn: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpandn");
+                return;
+            }
+
+            __m128i result = _mm_andnot_si128(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpandn");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpandn");
+                return;
+            }
+
+            __m256i result = _mm256_andnot_si256(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpandn");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPANDN executed successfully");
+    }
+    void emulate_vpsllq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const auto& count_op = instr->operands[2]; 
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpsllq: " << (int)width);
+            return;
+        }
+
+        int count = 0;
+        if (!read_operand_value(count_op, 32, count)) { 
+            LOG(L"[!] Failed to read shift count in vpsllq");
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v;
+            if (!read_operand_value(src, width, v)) {
+                LOG(L"[!] Failed to read source operand in vpsllq");
+                return;
+            }
+
+            __m128i result = _mm_slli_epi64(v, count);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpsllq");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v;
+            if (!read_operand_value(src, width, v)) {
+                LOG(L"[!] Failed to read source operand in vpsllq");
+                return;
+            }
+
+            __m256i result = _mm256_slli_epi64(v, count);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpsllq");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPSLLQ executed successfully");
+    }
     void emulate_pshuflw(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5146,7 +5289,52 @@ private:
         LOG(L"[+] VMOVDQA executed");
     }
 
+    void emulate_vpcmpeqq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
 
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpcmpeqq: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpcmpeqq");
+                return;
+            }
+
+
+            __m128i result = _mm_cmpeq_epi64(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpcmpeqq");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpcmpeqq");
+                return;
+            }
+
+
+            __m256i result = _mm256_cmpeq_epi64(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpcmpeqq");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPCMPEQQ executed successfully");
+    }
     void emulate_lea(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& mem = instr->operands[1].mem;
