@@ -1284,6 +1284,10 @@ public:
             { ZYDIS_MNEMONIC_VPCMPEQQ, &CPU::emulate_vpcmpeqq },
             { ZYDIS_MNEMONIC_VPSLLQ, &CPU::emulate_vpsllq },
             { ZYDIS_MNEMONIC_VPANDN, &CPU::emulate_vpandn },
+            { ZYDIS_MNEMONIC_VPSLLVQ, &CPU::emulate_vpsllvq },
+            { ZYDIS_MNEMONIC_VPCMPGTQ, &CPU::emulate_vpcmpgtq },
+            { ZYDIS_MNEMONIC_VPBLENDVB, &CPU::emulate_vpblendvb },
+            { ZYDIS_MNEMONIC_VPERMQ, &CPU::emulate_vpermq },
 
 
 
@@ -2295,8 +2299,30 @@ private:
         return out;
     }
 
+    __m256i emulate_permq_256(__m256i v, uint8_t imm) {
+        alignas(32) uint64_t elems[4];
+        _mm256_store_si256((__m256i*)elems, v);
 
+        uint64_t res[4];
+        for (int i = 0; i < 4; i++) {
+            int sel = (imm >> (2 * i)) & 0x3; 
+            res[i] = elems[sel];
+        }
 
+        return _mm256_load_si256((__m256i*)res);
+    }
+    __m512i emulate_permq_512(__m512i v, uint8_t imm) {
+        alignas(64) uint64_t elems[8];
+        _mm512_store_si512((__m512i*)elems, v);
+
+        uint64_t res[8];
+        for (int i = 0; i < 8; i++) {
+            int sel = (imm >> (3 * i)) & 0x7; 
+            res[i] = elems[sel];
+        }
+
+        return _mm512_load_si512((__m512i*)res);
+    }
 
 
     static inline int element_count_for_mode(int mode) {
@@ -4542,6 +4568,190 @@ private:
 
         LOG(L"[+] SHUFPS executed");
     }
+    void emulate_vpsllvq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2]; 
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpsllvq: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i vdata, vshift;
+            if (!read_operand_value(src1, width, vdata) ||
+                !read_operand_value(src2, width, vshift)) {
+                LOG(L"[!] Failed to read source operand(s) in vpsllvq (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_sllv_epi64(vdata, vshift);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpsllvq (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i vdata, vshift;
+            if (!read_operand_value(src1, width, vdata) ||
+                !read_operand_value(src2, width, vshift)) {
+                LOG(L"[!] Failed to read source operand(s) in vpsllvq (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_sllv_epi64(vdata, vshift);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpsllvq (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPSLLVQ executed successfully");
+    }
+    void emulate_vpcmpgtq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpcmpgtq: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpcmpgtq (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_cmpgt_epi64(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpcmpgtq (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v1, v2;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operand(s) in vpcmpgtq (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_cmpgt_epi64(v1, v2);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpcmpgtq (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPCMPGTQ executed successfully");
+    }
+    void emulate_vpblendvb(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        const auto& mask_op = instr->operands[3]; 
+
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpblendvb: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2, mask;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2) ||
+                !read_operand_value(mask_op, width, mask)) {
+                LOG(L"[!] Failed to read source operand(s) in vpblendvb (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_blendv_epi8(v1, v2, mask);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpblendvb (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v1, v2, mask;
+            if (!read_operand_value(src1, width, v1) ||
+                !read_operand_value(src2, width, v2) ||
+                !read_operand_value(mask_op, width, mask)) {
+                LOG(L"[!] Failed to read source operand(s) in vpblendvb (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_blendv_epi8(v1, v2, mask);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpblendvb (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPBLENDVB executed successfully");
+    }
+    void emulate_vpermq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const auto& imm_op = instr->operands[2]; // 8-bit immediate
+
+        auto width = dst.size;
+
+        uint8_t imm = 0;
+        if (!read_operand_value(imm_op, sizeof(imm), imm)) {
+            LOG(L"[!] Failed to read immediate in vpermq");
+            return;
+        }
+
+        if (width == 256) {
+            __m256i v;
+            if (!read_operand_value(src, width, v)) {
+                LOG(L"[!] Failed to read source operand (256-bit)");
+                return;
+            }
+
+            __m256i result = emulate_permq_256(v, imm);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result (256-bit)");
+                return;
+            }
+            LOG(L"[+] VPERMQ (256-bit) executed, imm=" << std::hex << (int)imm);
+        }
+        else if (width == 512) {
+            __m512i v;
+            if (!read_operand_value(src, width, v)) {
+                LOG(L"[!] Failed to read source operand (512-bit)");
+                return;
+            }
+
+            __m512i result = emulate_permq_512(v, imm);
+
+            if (!write_operand_value(dst, width, result)) {
+                LOG(L"[!] Failed to write result (512-bit)");
+                return;
+            }
+            LOG(L"[+] VPERMQ (512-bit) executed, imm=" << std::hex << (int)imm);
+        }
+        else {
+            LOG(L"[!] Unsupported width in VPERMQ: " << (int)width << " (only 256/512 allowed)");
+        }
+    }
+
 
 
     void emulate_xorps(const ZydisDisassembledInstruction* instr) {
