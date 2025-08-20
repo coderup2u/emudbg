@@ -180,10 +180,10 @@ int wmain(int argc, wchar_t* argv[]) {
                     {
                         uint64_t dllBase = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
                         uint64_t dllSize = ntHeaders.OptionalHeader.SizeOfImage;
-
+                        std::wstring fileName = std::filesystem::path(lowerLoaded).filename().wstring();
                         if (isSystemModule) {
                             system_modules_ranges.emplace_back(dllBase, dllBase + dllSize);
-                            system_modules_names.push_back(lowerLoaded);
+                            system_modules_names.push_back(fileName);
                             LOG(L"[+] System DLL added to system_modules_ranges: " << lowerLoaded.c_str()
                                 << L" at 0x" << std::hex << dllBase
                                 << L" - size: 0x" << dllSize);

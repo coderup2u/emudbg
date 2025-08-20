@@ -2322,13 +2322,7 @@ private:
 #if analyze_ENABLED
         const uint64_t kuser_base = 0x00000007FFE0000;
         const uint64_t kuser_size = 0x1000;
-#if FUll_user_MODE
-        std::wstring dllName = GetSystemModuleNameFromAddress(address);
-        if (!dllName.empty() && (g_regs.rip != address)) {
-            LOG_analyze(YELLOW,
-                "[READ SYSTEM DLL] Reading From (" << dllName.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
-        }
-#endif
+
         // KUSER_SHARED_DATA
         if (address >= kuser_base && address < kuser_base + kuser_size) {
             uint64_t offset = address - kuser_base;
@@ -2350,6 +2344,13 @@ private:
         }
         if (address != g_regs.rip) {
         auto FunctionName = GetExportedFunctionNameByAddress(address);
+#if FUll_user_MODE
+        std::wstring dllName = GetSystemModuleNameFromAddress(address);
+        if (!dllName.empty() && FunctionName.empty() ) {
+            LOG_analyze(YELLOW,
+                "[READ SYSTEM DLL] Reading From (" << dllName.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+        }
+#endif
         if (!FunctionName.empty() ) {
             LOG_analyze(
                 YELLOW,
