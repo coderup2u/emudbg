@@ -1277,6 +1277,9 @@ public:
             { ZYDIS_MNEMONIC_SGDT, &CPU::emulate_sgdt },
             { ZYDIS_MNEMONIC_SAHF, &CPU::emulate_sahf },
             { ZYDIS_MNEMONIC_XLAT, &CPU::emulate_xlatb },
+            { ZYDIS_MNEMONIC_VPADDQ, &CPU::emulate_vpaddq },
+            { ZYDIS_MNEMONIC_VPSUBQ, &CPU::emulate_vpsubq },
+            { ZYDIS_MNEMONIC_VPOR, &CPU::emulate_vpor },
 
 
 
@@ -3106,6 +3109,65 @@ private:
         LOG(L"[+] SETLE => " << std::hex << static_cast<int>(value));
     }
 
+    void emulate_vpor(const ZydisDisassembledInstruction* instr) {
+
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size; 
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in VPOR: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value<__m128i>(src1, width, v1) ||
+                !read_operand_value<__m128i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in VPOR (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_or_si128(v1, v2); 
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in VPOR (128-bit)");
+                return;
+            }
+        }
+        else { 
+            __m256i v1, v2;
+            if (!read_operand_value<__m256i>(src1, width, v1) ||
+                !read_operand_value<__m256i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in VPOR (256-bit)");
+                return;
+            }
+
+#if defined(__AVX2__)
+            __m256i result = _mm256_or_si256(v1, v2);
+#else
+
+            __m128i lo = _mm_or_si128(
+                _mm256_castsi256_si128(v1),
+                _mm256_castsi256_si128(v2)
+            );
+            __m128i hi = _mm_or_si128(
+                _mm256_extracti128_si256(v1, 1),
+                _mm256_extracti128_si256(v2, 1)
+            );
+            __m256i result = _mm256_set_m128i(hi, lo);
+#endif
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in VPOR (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPOR executed");
+    }
+
 
     void emulate_pushfq(const ZydisDisassembledInstruction* instr) {
         g_regs.rsp.q -= 8;
@@ -3875,7 +3937,122 @@ private:
 
         LOG(L"[+] PSHUFB executed (legacy two-operand form)");
     }
+    void emulate_vpaddq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size; 
 
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpaddq: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value<__m128i>(src1, width, v1) ||
+                !read_operand_value<__m128i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in vpaddq (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_add_epi64(v1, v2);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpaddq (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i v1, v2;
+            if (!read_operand_value<__m256i>(src1, width, v1) ||
+                !read_operand_value<__m256i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in vpaddq (256-bit)");
+                return;
+            }
+
+#if defined(__AVX2__)
+            __m256i result = _mm256_add_epi64(v1, v2);
+#else
+            __m128i lo = _mm_add_epi64(
+                _mm256_castsi256_si128(v1),
+                _mm256_castsi256_si128(v2)
+            );
+            __m128i hi = _mm_add_epi64(
+                _mm256_extracti128_si256(v1, 1),
+                _mm256_extracti128_si256(v2, 1)
+            );
+            __m256i result = _mm256_set_m128i(hi, lo);
+#endif
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpaddq (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPADDQ executed");
+    }
+    void emulate_vpsubq(const ZydisDisassembledInstruction* instr) {
+
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size; 
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpsubq: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i v1, v2;
+            if (!read_operand_value<__m128i>(src1, width, v1) ||
+                !read_operand_value<__m128i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in vpsubq (128-bit)");
+                return;
+            }
+
+
+            __m128i result = _mm_sub_epi64(v1, v2);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpsubq (128-bit)");
+                return;
+            }
+        }
+        else { 
+            __m256i v1, v2;
+            if (!read_operand_value<__m256i>(src1, width, v1) ||
+                !read_operand_value<__m256i>(src2, width, v2)) {
+                LOG(L"[!] Failed to read source operands in vpsubq (256-bit)");
+                return;
+            }
+
+
+#if defined(__AVX2__)
+            __m256i result = _mm256_sub_epi64(v1, v2);
+#else
+
+            __m128i lo = _mm_sub_epi64(
+                _mm256_castsi256_si128(v1),
+                _mm256_castsi256_si128(v2)
+            );
+            __m128i hi = _mm_sub_epi64(
+                _mm256_extracti128_si256(v1, 1),
+                _mm256_extracti128_si256(v2, 1)
+            );
+            __m256i result = _mm256_set_m128i(hi, lo);
+#endif
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpsubq (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPSUBQ executed");
+    }
     void emulate_xadd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -3993,14 +4170,8 @@ private:
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
 
-        uint8_t width = 0;
+        uint8_t width = dst.size;
 
-        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-            if (dst.reg.value >= ZYDIS_REGISTER_XMM0 && dst.reg.value <= ZYDIS_REGISTER_XMM31)
-                width = 128;
-            else if (dst.reg.value >= ZYDIS_REGISTER_YMM0 && dst.reg.value <= ZYDIS_REGISTER_YMM31)
-                width = 256;
-        }
 
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported width in vpxor: " << (int)width);
@@ -4016,7 +4187,7 @@ private:
             }
 
             __m128i result = _mm_xor_si128(v1, v2);
-
+             
             if (!write_operand_value(dst, width, result)) {
                 LOG(L"[!] Failed to write result in vpxor");
                 return;
