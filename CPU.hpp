@@ -1294,6 +1294,7 @@ public:
             { ZYDIS_MNEMONIC_VPACKUSDW, &CPU::emulate_vpackusdw },
             { ZYDIS_MNEMONIC_VPMADDWD, &CPU::emulate_vpmaddwd },
             { ZYDIS_MNEMONIC_VPSADBW, &CPU::emulate_vpsadbw },
+            { ZYDIS_MNEMONIC_VPALIGNR, &CPU::emulate_vpalignr },
 
 
 
@@ -2372,16 +2373,28 @@ private:
         return _mm512_load_si512((__m512i*)res);
     }
 
+    template<int LANE_BYTES>
+    static void vpalignr_lane(uint8_t* dst, const uint8_t* src1, const uint8_t* src2, uint8_t imm) {
+        uint8_t buf[LANE_BYTES * 2];
+        memcpy(buf, src2, LANE_BYTES);
+        memcpy(buf + LANE_BYTES, src1, LANE_BYTES);
+
+        for (int i = 0; i < LANE_BYTES; ++i) {
+            if (i + imm < 2 * LANE_BYTES)
+                dst[i] = buf[i + imm];
+            else
+                dst[i] = 0;
+        }
+    }
+
     static inline int element_count_for_mode(int mode) {
         int op = mode & 0x3;
         return (op == _SIDD_UBYTE_OPS || op == _SIDD_SBYTE_OPS) ? 16 : 8;
     }
-
     static inline int element_size_for_mode(int mode) {
         int op = mode & 0x3;
         return (op == _SIDD_UBYTE_OPS || op == _SIDD_SBYTE_OPS) ? 1 : 2;
     }
-
     static inline bool cmp_elements(int64_t a, int64_t b, int mode_is_signed, int cmp_kind) {
         // cmp_kind: 0=EQUAL_ANY/EQUAL (used in pairwise), 1=RANGES (handled externally),
         // 2=EQUAL_EACH (same as 0) ; signature kept simple
@@ -7463,6 +7476,61 @@ private:
 
         LOG(L"[+] VPSADBW executed (" << width << L"-bit)");
     }
+    void emulate_vpalignr(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        const auto& imm = instr->operands[3];
+        auto width = dst.size;
+
+        uint8_t shift = static_cast<uint8_t>(imm.imm.value.u);
+
+        if (width == 128) {
+            __m128i a, b;
+            read_operand_value(src1, 128, a);
+            read_operand_value(src2, 128, b);
+
+            alignas(16) uint8_t out[16];
+            vpalignr_lane<16>(out, (uint8_t*)&a, (uint8_t*)&b, shift);
+            __m128i result = _mm_load_si128((__m128i*)out);
+            write_operand_value(dst, 128, result);
+        }
+        else if (width == 256) {
+            __m256i a, b;
+            read_operand_value(src1, 256, a);
+            read_operand_value(src2, 256, b);
+
+            alignas(32) uint8_t out[32];
+            vpalignr_lane<16>(out, (uint8_t*)&a, (uint8_t*)&b, shift); // lane 0
+            vpalignr_lane<16>(out + 16, (uint8_t*)&a + 16, (uint8_t*)&b + 16, shift); // lane 1
+
+            __m256i result = _mm256_load_si256((__m256i*)out);
+            write_operand_value(dst, 256, result);
+        }
+        else if (width == 512) {
+            __m512i a, b;
+            read_operand_value(src1, 512, a);
+            read_operand_value(src2, 512, b);
+
+            alignas(64) uint8_t out[64];
+            for (int lane = 0; lane < 4; ++lane) {
+                vpalignr_lane<16>(out + lane * 16,
+                    (uint8_t*)&a + lane * 16,
+                    (uint8_t*)&b + lane * 16,
+                    shift);
+            }
+
+            __m512i result = _mm512_load_si512((__m512i*)out);
+            write_operand_value(dst, 512, result);
+        }
+        else {
+            LOG(L"[!] Unsupported width in VPALIGNR");
+            return;
+        }
+
+        LOG(L"[+] VPALIGNR executed (" << width << L"-bit, shift=" << (int)shift << L")");
+    }
+
 
 
     void emulate_unpckhpd(const ZydisDisassembledInstruction* instr) {
