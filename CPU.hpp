@@ -1295,6 +1295,7 @@ public:
             { ZYDIS_MNEMONIC_VPMADDWD, &CPU::emulate_vpmaddwd },
             { ZYDIS_MNEMONIC_VPSADBW, &CPU::emulate_vpsadbw },
             { ZYDIS_MNEMONIC_VPALIGNR, &CPU::emulate_vpalignr },
+            { ZYDIS_MNEMONIC_VPGATHERDD, &CPU::emulate_vpgatherdd },
 
 
 
@@ -2750,6 +2751,9 @@ private:
             // Handle index
             if (op.mem.index != ZYDIS_REGISTER_NONE) {
                 uint64_t index_value = get_register_value<uint64_t>(op.mem.index);
+
+                if (op.mem.index >= ZYDIS_REGISTER_XMM0 && op.mem.index <= ZYDIS_REGISTER_YMM15)
+                    index_value = 0;
                 address += index_value * op.mem.scale;
             }
 
@@ -7530,6 +7534,61 @@ private:
 
         LOG(L"[+] VPALIGNR executed (" << width << L"-bit, shift=" << (int)shift << L")");
     }
+    void emulate_vpgatherdd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& mem_op = instr->operands[1];
+        const auto& mask_op = instr->operands[2];
+
+        __m256i mask_vec = get_register_value<__m256i>(mask_op.reg.value);
+        alignas(32) uint32_t mask_arr[8];
+        _mm256_storeu_si256((__m256i*)mask_arr, mask_vec);
+
+        __m256i zero_mask = _mm256_setzero_si256();
+        write_operand_value(mask_op, 256, zero_mask);
+
+        __m256i index_vec = get_register_value<__m256i>(mem_op.mem.index);
+        alignas(32) uint32_t indices[8];
+        _mm256_storeu_si256((__m256i*)indices, index_vec);
+
+        alignas(32) uint32_t result_arr[8];
+        __m256i prev_dst = get_register_value<__m256i>(dst.reg.value);
+        _mm256_storeu_si256((__m256i*)result_arr, prev_dst);
+
+        for (int i = 0; i < 8; i++) {
+            if (!(mask_arr[i] & 0x80000000)) {
+                continue; 
+            }
+
+            uint64_t base_val = 0;
+            if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                base_val = get_register_value<uint64_t>(mem_op.mem.base);
+                if (mem_op.mem.base == ZYDIS_REGISTER_RIP) {
+                    base_val += instr->info.length;
+                }
+            }
+
+            int64_t disp = mem_op.mem.disp.value;
+            uint64_t addr = base_val + static_cast<uint64_t>(indices[i]) * mem_op.mem.scale + disp;
+
+            if (!ReadMemory(addr, &result_arr[i], sizeof(uint32_t))) {
+                LOG(L"[!] Failed to read memory at lane " << i);
+                result_arr[i] = 0;
+            }
+        }
+
+        __m256i result = _mm256_loadu_si256((__m256i*)result_arr);
+        if (!write_operand_value(dst, 256, result)) {
+            LOG(L"[!] Failed to write result in VPGATHERDD");
+            return;
+        }
+
+        LOG(L"[+] VPGATHERDD executed (256-bit)");
+    }
+
+
+
+
+
 
 
 
