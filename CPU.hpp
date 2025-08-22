@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -9998,21 +9998,26 @@ private:
 
             LOG(L"[+] VMOVUPS (YMM) executed");
         }
-        else {
+        else { // 128-bit source -> zero-extend YMM
             __m128 val;
             if (!read_operand_value(src, 128, val)) {
                 LOG(L"[!] Failed to read source operand in VMOVUPS");
                 return;
             }
 
+
+            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            set_register_value(dstYMM, YMM{});
+
             if (!write_operand_value(dst, 128, val)) {
                 LOG(L"[!] Failed to write destination operand in VMOVUPS");
                 return;
             }
 
-            LOG(L"[+] VMOVUPS (XMM) executed");
+            LOG(L"[+] VMOVUPS (XMM -> YMM) executed, upper bits zeroed");
         }
     }
+
     void emulate_vpmovmskb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0]; // GPR
         const auto& src = instr->operands[1]; // XMM/YMM
@@ -10487,6 +10492,9 @@ private:
                 LOG(L"[!] Misaligned memory write in VMOVAPS (XMM)");
                 return;
             }
+
+            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            set_register_value(dstYMM, YMM{});
 
             if (!write_operand_value(dst, 128, val)) {
                 LOG(L"[!] Failed to write destination operand in VMOVAPS");
