@@ -1296,6 +1296,15 @@ public:
             { ZYDIS_MNEMONIC_VPSADBW, &CPU::emulate_vpsadbw },
             { ZYDIS_MNEMONIC_VPALIGNR, &CPU::emulate_vpalignr },
             { ZYDIS_MNEMONIC_VPGATHERDD, &CPU::emulate_vpgatherdd },
+            { ZYDIS_MNEMONIC_VCVTDQ2PS, &CPU::emulate_vcvtdq2ps },
+            { ZYDIS_MNEMONIC_VMULPS, &CPU::emulate_vmulps },
+            { ZYDIS_MNEMONIC_VADDPS, &CPU::emulate_vaddps },
+            { ZYDIS_MNEMONIC_VCVTPS2DQ, &CPU::emulate_vcvtps2dq },
+            { ZYDIS_MNEMONIC_VHADDPS, &CPU::emulate_vhaddps },
+            { ZYDIS_MNEMONIC_VPERMD, &CPU::emulate_vpermd },
+            { ZYDIS_MNEMONIC_VPMULLW, &CPU::emulate_vpmullw },
+            { ZYDIS_MNEMONIC_VPMULHW, &CPU::emulate_vpmulhw },
+            { ZYDIS_MNEMONIC_VPTEST, &CPU::emulate_vptest },
 
 
 
@@ -2751,9 +2760,6 @@ private:
             // Handle index
             if (op.mem.index != ZYDIS_REGISTER_NONE) {
                 uint64_t index_value = get_register_value<uint64_t>(op.mem.index);
-
-                if (op.mem.index >= ZYDIS_REGISTER_XMM0 && op.mem.index <= ZYDIS_REGISTER_YMM15)
-                    index_value = 0;
                 address += index_value * op.mem.scale;
             }
 
@@ -7584,6 +7590,488 @@ private:
 
         LOG(L"[+] VPGATHERDD executed (256-bit)");
     }
+    void emulate_vcvtdq2ps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256 && width != 512) {
+            LOG(L"[!] Unsupported width in vcvtdq2ps: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i a;
+            if (!read_operand_value<__m128i>(src, width, a)) {
+                LOG(L"[!] Failed to read operand in vcvtdq2ps (128-bit)");
+                return;
+            }
+
+            __m128 result = _mm_cvtepi32_ps(a);
+
+            if (!write_operand_value<__m128>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vcvtdq2ps (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i a;
+            if (!read_operand_value<__m256i>(src, width, a)) {
+                LOG(L"[!] Failed to read operand in vcvtdq2ps (256-bit)");
+                return;
+            }
+
+            __m256 result = _mm256_cvtepi32_ps(a);
+
+            if (!write_operand_value<__m256>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vcvtdq2ps (256-bit)");
+                return;
+            }
+        }
+        else { // 512
+            __m512i a;
+            if (!read_operand_value<__m512i>(src, width, a)) {
+                LOG(L"[!] Failed to read operand in vcvtdq2ps (512-bit)");
+                return;
+            }
+
+            __m512 result = _mm512_cvtepi32_ps(a);
+
+            if (!write_operand_value<__m512>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vcvtdq2ps (512-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VCVTDQ2PS executed (" << width << L"-bit)");
+    }
+    void emulate_vmulps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256 && width != 512) {
+            LOG(L"[!] Unsupported width in vmulps: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128 a, b;
+            if (!read_operand_value<__m128>(src1, width, a) ||
+                !read_operand_value<__m128>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vmulps (128-bit)");
+                return;
+            }
+
+            __m128 result = _mm_mul_ps(a, b);
+
+            if (!write_operand_value<__m128>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vmulps (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256 a, b;
+            if (!read_operand_value<__m256>(src1, width, a) ||
+                !read_operand_value<__m256>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vmulps (256-bit)");
+                return;
+            }
+
+            __m256 result = _mm256_mul_ps(a, b);
+
+            if (!write_operand_value<__m256>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vmulps (256-bit)");
+                return;
+            }
+        }
+        else { // 512
+            __m512 a, b;
+            if (!read_operand_value<__m512>(src1, width, a) ||
+                !read_operand_value<__m512>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vmulps (512-bit)");
+                return;
+            }
+
+            __m512 result = _mm512_mul_ps(a, b);
+
+            if (!write_operand_value<__m512>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vmulps (512-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VMULPS executed (" << width << L"-bit)");
+    }
+    void emulate_vaddps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256 && width != 512) {
+            LOG(L"[!] Unsupported width in vaddps: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128 a, b;
+            if (!read_operand_value<__m128>(src1, width, a) ||
+                !read_operand_value<__m128>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vaddps (128-bit)");
+                return;
+            }
+
+            __m128 result = _mm_add_ps(a, b);
+
+            if (!write_operand_value<__m128>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vaddps (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256 a, b;
+            if (!read_operand_value<__m256>(src1, width, a) ||
+                !read_operand_value<__m256>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vaddps (256-bit)");
+                return;
+            }
+
+            __m256 result = _mm256_add_ps(a, b);
+
+            if (!write_operand_value<__m256>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vaddps (256-bit)");
+                return;
+            }
+        }
+        else { // 512
+            __m512 a, b;
+            if (!read_operand_value<__m512>(src1, width, a) ||
+                !read_operand_value<__m512>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vaddps (512-bit)");
+                return;
+            }
+
+            __m512 result = _mm512_add_ps(a, b);
+
+            if (!write_operand_value<__m512>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vaddps (512-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VADDPS executed (" << width << L"-bit)");
+    }
+    void emulate_vcvtps2dq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256 && width != 512) {
+            LOG(L"[!] Unsupported width in vcvtps2dq: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128 a;
+            if (!read_operand_value<__m128>(src, width, a)) {
+                LOG(L"[!] Failed to read operand in vcvtps2dq (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_cvtps_epi32(a);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vcvtps2dq (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256 a;
+            if (!read_operand_value<__m256>(src, width, a)) {
+                LOG(L"[!] Failed to read operand in vcvtps2dq (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_cvtps_epi32(a);
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vcvtps2dq (256-bit)");
+                return;
+            }
+        }
+        else { // 512
+            __m512 a;
+            if (!read_operand_value<__m512>(src, width, a)) {
+                LOG(L"[!] Failed to read operand in vcvtps2dq (512-bit)");
+                return;
+            }
+
+            __m512i result = _mm512_cvtps_epi32(a);
+
+            if (!write_operand_value<__m512i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vcvtps2dq (512-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VCVTPS2DQ executed (" << width << L"-bit)");
+    }
+    void emulate_vhaddps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vhaddps: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128 a, b;
+            if (!read_operand_value<__m128>(src1, width, a) ||
+                !read_operand_value<__m128>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vhaddps (128-bit)");
+                return;
+            }
+
+            __m128 result = _mm_hadd_ps(a, b);
+
+            if (!write_operand_value<__m128>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vhaddps (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256 a, b;
+            if (!read_operand_value<__m256>(src1, width, a) ||
+                !read_operand_value<__m256>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vhaddps (256-bit)");
+                return;
+            }
+
+            __m256 result = _mm256_hadd_ps(a, b);
+
+            if (!write_operand_value<__m256>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vhaddps (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VHADDPS executed (" << width << L"-bit)");
+    }
+    void emulate_vpermd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& idx = instr->operands[1];
+        const auto& src = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 256 && width != 512) {
+            LOG(L"[!] Unsupported width in vpermd: " << (int)width);
+            return;
+        }
+
+        if (width == 256) {
+            __m256i a, i;
+            if (!read_operand_value<__m256i>(src, width, a) ||
+                !read_operand_value<__m256i>(idx, width, i)) {
+                LOG(L"[!] Failed to read operands in vpermd (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_permutevar8x32_epi32(a, i);
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpermd (256-bit)");
+                return;
+            }
+        }
+        else { // 512
+            __m512i a, i;
+            if (!read_operand_value<__m512i>(src, width, a) ||
+                !read_operand_value<__m512i>(idx, width, i)) {
+                LOG(L"[!] Failed to read operands in vpermd (512-bit)");
+                return;
+            }
+
+            __m512i result = _mm512_permutexvar_epi32(i, a);
+
+            if (!write_operand_value<__m512i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpermd (512-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPERMD executed (" << width << L"-bit)");
+    }
+    void emulate_vpmullw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256 && width != 512) {
+            LOG(L"[!] Unsupported width in vpmullw: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i a, b;
+            if (!read_operand_value<__m128i>(src1, width, a) ||
+                !read_operand_value<__m128i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vpmullw (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_mullo_epi16(a, b);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpmullw (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i a, b;
+            if (!read_operand_value<__m256i>(src1, width, a) ||
+                !read_operand_value<__m256i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vpmullw (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_mullo_epi16(a, b);
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpmullw (256-bit)");
+                return;
+            }
+        }
+        else { // 512
+            __m512i a, b;
+            if (!read_operand_value<__m512i>(src1, width, a) ||
+                !read_operand_value<__m512i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vpmullw (512-bit)");
+                return;
+            }
+
+            __m512i result = _mm512_mullo_epi16(a, b);
+
+            if (!write_operand_value<__m512i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpmullw (512-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPMULLW executed (" << width << L"-bit)");
+    }
+    void emulate_vpmulhw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256 && width != 512) {
+            LOG(L"[!] Unsupported width in vpmulhw: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128i a, b;
+            if (!read_operand_value<__m128i>(src1, width, a) ||
+                !read_operand_value<__m128i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vpmulhw (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_mulhi_epi16(a, b);
+
+            if (!write_operand_value<__m128i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpmulhw (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256i a, b;
+            if (!read_operand_value<__m256i>(src1, width, a) ||
+                !read_operand_value<__m256i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vpmulhw (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_mulhi_epi16(a, b);
+
+            if (!write_operand_value<__m256i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpmulhw (256-bit)");
+                return;
+            }
+        }
+        else { // 512-bit
+            __m512i a, b;
+            if (!read_operand_value<__m512i>(src1, width, a) ||
+                !read_operand_value<__m512i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vpmulhw (512-bit)");
+                return;
+            }
+
+            __m512i result = _mm512_mulhi_epi16(a, b);
+
+            if (!write_operand_value<__m512i>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vpmulhw (512-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VPMULHW executed (" << width << L"-bit)");
+    }
+    void emulate_vptest(const ZydisDisassembledInstruction* instr) {
+        const auto& src1 = instr->operands[0];
+        const auto& src2 = instr->operands[1];
+        auto width = src1.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vptest: " << (int)width);
+            return;
+        }
+
+        int zf = 0;
+        int cf = 0;
+
+        if (width == 128) {
+            __m128i a, b;
+            if (!read_operand_value<__m128i>(src1, width, a) ||
+                !read_operand_value<__m128i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vptest (128-bit)");
+                return;
+            }
+
+            zf = _mm_testz_si128(a, b);
+            cf = _mm_testc_si128(a, b);
+        }
+        else { // 256-bit
+            __m256i a, b;
+            if (!read_operand_value<__m256i>(src1, width, a) ||
+                !read_operand_value<__m256i>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vptest (256-bit)");
+                return;
+            }
+
+            zf = _mm256_testz_si256(a, b);
+            cf = _mm256_testc_si256(a, b);
+        }
+
+        g_regs.rflags.flags.ZF = zf ;
+        g_regs.rflags.flags.CF = cf ;
+        g_regs.rflags.flags.PF = 0;
+        g_regs.rflags.flags.SF = 0;
+        g_regs.rflags.flags.AF = 0;
+        g_regs.rflags.flags.OF = 0;
+
+        LOG(L"[+] VPTEST (" << width << "-bit) ZF=" << zf << " CF=" << cf << " PF=0 SF=0 AF=0 OF=0");
+    }
+
+
+
 
 
 
