@@ -9044,8 +9044,7 @@ private:
         uint64_t return_address = g_regs.rip + instr->info.length;
 
         // Push return address to stack
-        g_regs.rsp.q -= 8;
-        WriteMemory(g_regs.rsp.q, &return_address, 8);
+   
 
         // Determine call target
         const auto& op = instr->operands[0];
@@ -9068,7 +9067,8 @@ private:
             std::wcout << L"[!] Unsupported operand type for CALL" << std::endl;
             return;
         }
-
+     g_regs.rsp.q -= 8;
+        WriteMemory(g_regs.rsp.q, &return_address, 8);
         g_regs.rip = target_rip;
         LOG(L"[+] CALL => 0x" << std::hex << g_regs.rip);
     }
