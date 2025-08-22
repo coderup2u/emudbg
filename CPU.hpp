@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 1
+#define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -1305,6 +1305,8 @@ public:
             { ZYDIS_MNEMONIC_VPMULLW, &CPU::emulate_vpmullw },
             { ZYDIS_MNEMONIC_VPMULHW, &CPU::emulate_vpmulhw },
             { ZYDIS_MNEMONIC_VPTEST, &CPU::emulate_vptest },
+            { ZYDIS_MNEMONIC_VPMOVSXWD, &CPU::emulate_vpmovsxwd },
+            { ZYDIS_MNEMONIC_VPADDD, &CPU::emulate_vpaddd },
 
 
 
@@ -8068,6 +8070,126 @@ private:
         g_regs.rflags.flags.OF = 0;
 
         LOG(L"[+] VPTEST (" << width << "-bit) ZF=" << zf << " CF=" << cf << " PF=0 SF=0 AF=0 OF=0");
+    }
+    void emulate_vpmovsxwd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size;
+
+        if (width == 128) { // XMM
+            __m128i src_val;
+            if (!read_operand_value(src, 128, src_val)) {
+                LOG(L"[!] Failed to read source operand in VPMOVSXWD (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_cvtepi16_epi32(src_val);
+
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write destination operand in VPMOVSXWD (128-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPMOVSXWD (XMM) executed");
+        }
+        else if (width == 256) { // YMM
+            __m128i src_val;
+            if (!read_operand_value(src, 128, src_val)) {
+                LOG(L"[!] Failed to read source operand in VPMOVSXWD (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_cvtepi16_epi32(src_val);
+
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write destination operand in VPMOVSXWD (256-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPMOVSXWD (YMM) executed");
+        }
+        else if (width == 512) { // ZMM
+            __m256i src_val;
+            if (!read_operand_value(src, 256, src_val)) {
+                LOG(L"[!] Failed to read source operand in VPMOVSXWD (512-bit)");
+                return;
+            }
+
+            __m512i result = _mm512_cvtepi16_epi32(src_val);
+
+            if (!write_operand_value(dst, 512, result)) {
+                LOG(L"[!] Failed to write destination operand in VPMOVSXWD (512-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPMOVSXWD (ZMM) executed");
+        }
+        else {
+            LOG(L"[!] Unsupported width in VPMOVSXWD: " << width);
+        }
+    }
+    void emulate_vpaddd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+
+        uint32_t width = dst.size;
+
+        if (width == 128) { // XMM
+            __m128i a, b;
+            if (!read_operand_value(src1, 128, a) ||
+                !read_operand_value(src2, 128, b)) {
+                LOG(L"[!] Failed to read operands in VPADDD (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_add_epi32(a, b);
+
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write result in VPADDD (128-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPADDD (XMM) executed");
+        }
+        else if (width == 256) { // YMM
+            __m256i a, b;
+            if (!read_operand_value(src1, 256, a) ||
+                !read_operand_value(src2, 256, b)) {
+                LOG(L"[!] Failed to read operands in VPADDD (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_add_epi32(a, b);
+
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write result in VPADDD (256-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPADDD (YMM) executed");
+        }
+        else if (width == 512) { // ZMM
+            __m512i a, b;
+            if (!read_operand_value(src1, 512, a) ||
+                !read_operand_value(src2, 512, b)) {
+                LOG(L"[!] Failed to read operands in VPADDD (512-bit)");
+                return;
+            }
+
+            __m512i result = _mm512_add_epi32(a, b);
+
+            if (!write_operand_value(dst, 512, result)) {
+                LOG(L"[!] Failed to write result in VPADDD (512-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPADDD (ZMM) executed");
+        }
+        else {
+            LOG(L"[!] Unsupported width in VPADDD: " << width);
+        }
     }
 
 
