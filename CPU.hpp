@@ -9165,12 +9165,10 @@ private:
         uint32_t width = instr->info.operand_width;
         uint64_t val = 0;
 
-
         if (!read_operand_value(dst, width, val)) {
             LOG(L"[!] Failed to read destination operand in SHR");
             return;
         }
-
 
         uint8_t shift = 0;
         if (src.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
@@ -9188,47 +9186,34 @@ private:
             LOG(L"[!] Unsupported source operand type in SHR");
             return;
         }
+
         uint64_t old_msb = (val >> (width - 1)) & 1;
+
+
         if (shift == 0) {
-
-            g_regs.rflags.flags.CF = 0;
-            g_regs.rflags.flags.OF = 0;
-            g_regs.rflags.flags.ZF = (val == 0);
-            g_regs.rflags.flags.SF = 0;
-            g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(val));
-
+            LOG(L"[=] SHR shift == 0, flags unchanged (preserved)");
             return;
         }
-        else {
-            g_regs.rflags.flags.OF = old_msb;
-        }
 
-
-
-
+        g_regs.rflags.flags.OF = old_msb;
         g_regs.rflags.flags.CF = (val >> (shift - 1)) & 1;
 
         val >>= shift;
-
-
         val = zero_extend(val, width);
-
 
         if (!write_operand_value(dst, width, val)) {
             LOG(L"[!] Failed to write destination operand in SHR");
             return;
         }
 
-
         g_regs.rflags.flags.ZF = (val == 0);
         g_regs.rflags.flags.SF = 0;
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(val));
         g_regs.rflags.flags.AF = 0;
 
-
-
         LOG(L"[+] SHR => 0x" << std::hex << val);
     }
+
 
     void emulate_setnp(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
