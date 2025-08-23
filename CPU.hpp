@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -1311,6 +1311,9 @@ public:
             { ZYDIS_MNEMONIC_PADDW, &CPU::emulate_paddw },
             { ZYDIS_MNEMONIC_PADDB, &CPU::emulate_paddb },
             { ZYDIS_MNEMONIC_PMOVZXDQ, &CPU::emulate_pmovzxdq },
+            { ZYDIS_MNEMONIC_PSUBQ, &CPU::emulate_psubq },
+            { ZYDIS_MNEMONIC_VPMOVZXBW, &CPU::emulate_vpmovzxbw },
+            { ZYDIS_MNEMONIC_PMOVZXWD, &CPU::emulate_pmovzxwd },
    
 
 
@@ -9187,6 +9190,159 @@ private:
         LOG(L"[+] PMOVZXDQ executed on "
             << ZydisRegisterGetString(dst.reg.value)
             << L" => [" << std::hex << lo << L"," << hi << L"]");
+    }
+    void emulate_psubq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size; 
+
+        if (width == 128) { 
+            __m128i a, b;
+            if (!read_operand_value(dst, 128, a) ||
+                !read_operand_value(src, 128, b)) {
+                LOG(L"[!] Failed to read operands in PSUBQ (128-bit)");
+                return;
+            }
+            __m128i result = _mm_sub_epi64(a, b);
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write result in PSUBQ (128-bit)");
+                return;
+            }
+            LOG(L"[+] PSUBQ (XMM) executed");
+        }
+        else if (width == 256) { 
+            __m256i a, b;
+            if (!read_operand_value(dst, 256, a) ||
+                !read_operand_value(src, 256, b)) {
+                LOG(L"[!] Failed to read operands in PSUBQ (256-bit)");
+                return;
+            }
+            __m256i result = _mm256_sub_epi64(a, b);
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write result in PSUBQ (256-bit)");
+                return;
+            }
+            LOG(L"[+] PSUBQ (YMM) executed");
+        }
+        else if (width == 512) { 
+            __m512i a, b;
+            if (!read_operand_value(dst, 512, a) ||
+                !read_operand_value(src, 512, b)) {
+                LOG(L"[!] Failed to read operands in PSUBQ (512-bit)");
+                return;
+            }
+            __m512i result = _mm512_sub_epi64(a, b);
+            if (!write_operand_value(dst, 512, result)) {
+                LOG(L"[!] Failed to write result in PSUBQ (512-bit)");
+                return;
+            }
+            LOG(L"[+] PSUBQ (ZMM) executed");
+        }
+        else {
+            LOG(L"[!] Unsupported width in PSUBQ: " << width);
+        }
+    }
+    void emulate_vpmovzxbw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        if (dst.size != 128 && dst.size != 256 && dst.size != 512) {
+            LOG(L"[!] VPMOVZXBW unsupported dst width: " << dst.size);
+            return;
+        }
+
+        const uint32_t src_bits = static_cast<uint32_t>(src.size); 
+        const uint32_t dst_bits = static_cast<uint32_t>(dst.size); 
+        const uint32_t src_bytes = src_bits / 8;                   
+        const uint32_t dst_elems = src_bytes;                  
+
+
+        alignas(64) uint8_t  in_bytes[32] = { 0 };   
+        if (src_bits == 256) {
+            __m256i v;
+            if (!read_operand_value(src, 256, v)) { LOG(L"[!] VPMOVZXBW read src (256) failed"); return; }
+            _mm256_storeu_si256((__m256i*)in_bytes, v);
+        }
+        else {
+            __m128i v;
+
+            if (!read_operand_value(src, src_bits >= 128 ? 128 : src_bits, v)) { LOG(L"[!] VPMOVZXBW read src (<=128) failed"); return; }
+            _mm_storeu_si128((__m128i*)in_bytes, v);
+        }
+
+
+        alignas(64) uint16_t out_words[32] = { 0 }; 
+        for (uint32_t i = 0; i < dst_elems; ++i)
+            out_words[i] = static_cast<uint16_t>(in_bytes[i]); 
+
+        if (dst_bits == 128) {
+            __m128i r = _mm_loadu_si128((__m128i*)out_words); 
+            if (!write_operand_value(dst, 128, r)) { LOG(L"[!] VPMOVZXBW write dst (128) failed"); return; }
+            LOG(L"[+] VPMOVZXBW xmm <- m64/xmm-low executed");
+        }
+        else if (dst_bits == 256) {
+            __m256i r = _mm256_loadu_si256((__m256i*)out_words); 
+            if (!write_operand_value(dst, 256, r)) { LOG(L"[!] VPMOVZXBW write dst (256) failed"); return; }
+            LOG(L"[+] VPMOVZXBW ymm <- xmm/m128 executed");
+        }
+        else { 
+            __m512i r;
+            std::memcpy(&r, out_words, 64); 
+            if (!write_operand_value(dst, 512, r)) { LOG(L"[!] VPMOVZXBW write dst (512) failed"); return; }
+            LOG(L"[+] VPMOVZXBW zmm <- ymm/m256 executed");
+        }
+    }
+    void emulate_pmovzxwd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        if (dst.size != 128 && dst.size != 256 && dst.size != 512) {
+            LOG(L"[!] PMOVZXWD unsupported dst width: " << dst.size);
+            return;
+        }
+
+        const uint32_t src_bits = static_cast<uint32_t>(src.size); 
+        const uint32_t dst_bits = static_cast<uint32_t>(dst.size); 
+        const uint32_t src_bytes = src_bits / 8;                  
+        const uint32_t src_elems = src_bytes / 2;                  
+        const uint32_t dst_elems = src_elems;                     
+
+        alignas(64) uint8_t raw[32] = { 0 };
+        if (src_bits == 256) {
+            __m256i v;
+            if (!read_operand_value(src, 256, v)) { LOG(L"[!] PMOVZXWD read src (256) failed"); return; }
+            _mm256_storeu_si256((__m256i*)raw, v);
+        }
+        else {
+            __m128i v;
+            if (!read_operand_value(src, src_bits >= 128 ? 128 : src_bits, v)) { LOG(L"[!] PMOVZXWD read src (<=128) failed"); return; }
+            _mm_storeu_si128((__m128i*)raw, v);
+        }
+
+
+        const uint16_t* in_words = reinterpret_cast<const uint16_t*>(raw);
+        alignas(64) uint32_t out_dwords[16] = { 0 }; 
+        for (uint32_t i = 0; i < dst_elems; ++i)
+            out_dwords[i] = static_cast<uint32_t>(in_words[i]);
+
+    
+        if (dst_bits == 128) {
+            __m128i r = _mm_loadu_si128((__m128i*)out_dwords);
+            if (!write_operand_value(dst, 128, r)) { LOG(L"[!] PMOVZXWD write dst (128) failed"); return; }
+            LOG(L"[+] PMOVZXWD xmm <- m64/xmm-low executed");
+        }
+        else if (dst_bits == 256) {
+            __m256i r = _mm256_loadu_si256((__m256i*)out_dwords); // 8 dword
+            if (!write_operand_value(dst, 256, r)) { LOG(L"[!] PMOVZXWD write dst (256) failed"); return; }
+            LOG(L"[+] PMOVZXWD ymm <- xmm/m128 executed");
+        }
+        else { // 512
+            __m512i r;
+            std::memcpy(&r, out_dwords, 64);
+            if (!write_operand_value(dst, 512, r)) { LOG(L"[!] PMOVZXWD write dst (512) failed"); return; }
+            LOG(L"[+] PMOVZXWD zmm <- ymm/m256 executed");
+        }
     }
 
 
