@@ -1307,7 +1307,11 @@ public:
             { ZYDIS_MNEMONIC_VPTEST, &CPU::emulate_vptest },
             { ZYDIS_MNEMONIC_VPMOVSXWD, &CPU::emulate_vpmovsxwd },
             { ZYDIS_MNEMONIC_VPADDD, &CPU::emulate_vpaddd },
-
+            { ZYDIS_MNEMONIC_PADDD, &CPU::emulate_paddd },
+            { ZYDIS_MNEMONIC_PADDW, &CPU::emulate_paddw },
+            { ZYDIS_MNEMONIC_PADDB, &CPU::emulate_paddb },
+            { ZYDIS_MNEMONIC_PMOVZXDQ, &CPU::emulate_pmovzxdq },
+   
 
 
 
@@ -8191,7 +8195,171 @@ private:
             LOG(L"[!] Unsupported width in VPADDD: " << width);
         }
     }
+    void emulate_paddd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
 
+        uint32_t width = dst.size;
+
+        if (width == 128) { // XMM
+            __m128i a, b;
+            if (!read_operand_value(dst, 128, a) ||
+                !read_operand_value(src, 128, b)) {
+                LOG(L"[!] Failed to read operands in PADDD (128-bit)");
+                return;
+            }
+
+            __m128i result = _mm_add_epi32(a, b);
+
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write result in PADDD (128-bit)");
+                return;
+            }
+
+            LOG(L"[+] PADDD (XMM) executed");
+        }
+        else if (width == 256) { // YMM
+            __m256i a, b;
+            if (!read_operand_value(dst, 256, a) ||
+                !read_operand_value(src, 256, b)) {
+                LOG(L"[!] Failed to read operands in PADDD (256-bit)");
+                return;
+            }
+
+            __m256i result = _mm256_add_epi32(a, b);
+
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write result in PADDD (256-bit)");
+                return;
+            }
+
+            LOG(L"[+] PADDD (YMM) executed");
+        }
+        else if (width == 512) { // ZMM
+            __m512i a, b;
+            if (!read_operand_value(dst, 512, a) ||
+                !read_operand_value(src, 512, b)) {
+                LOG(L"[!] Failed to read operands in PADDD (512-bit)");
+                return;
+            }
+
+            __m512i result = _mm512_add_epi32(a, b);
+
+            if (!write_operand_value(dst, 512, result)) {
+                LOG(L"[!] Failed to write result in PADDD (512-bit)");
+                return;
+            }
+
+            LOG(L"[+] PADDD (ZMM) executed");
+        }
+        else {
+            LOG(L"[!] Unsupported width in PADDD: " << width);
+        }
+    }
+    void emulate_paddb(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size;
+
+        if (width == 128) { // XMM
+            __m128i a, b;
+            if (!read_operand_value(dst, 128, a) ||
+                !read_operand_value(src, 128, b)) {
+                LOG(L"[!] Failed to read operands in PADDB (128-bit)");
+                return;
+            }
+            __m128i result = _mm_add_epi8(a, b);
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write result in PADDB (128-bit)");
+                return;
+            }
+            LOG(L"[+] PADDB (XMM) executed");
+        }
+        else if (width == 256) { // YMM
+            __m256i a, b;
+            if (!read_operand_value(dst, 256, a) ||
+                !read_operand_value(src, 256, b)) {
+                LOG(L"[!] Failed to read operands in PADDB (256-bit)");
+                return;
+            }
+            __m256i result = _mm256_add_epi8(a, b);
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write result in PADDB (256-bit)");
+                return;
+            }
+            LOG(L"[+] PADDB (YMM) executed");
+        }
+        else if (width == 512) { // ZMM
+            __m512i a, b;
+            if (!read_operand_value(dst, 512, a) ||
+                !read_operand_value(src, 512, b)) {
+                LOG(L"[!] Failed to read operands in PADDB (512-bit)");
+                return;
+            }
+            __m512i result = _mm512_add_epi8(a, b);
+            if (!write_operand_value(dst, 512, result)) {
+                LOG(L"[!] Failed to write result in PADDB (512-bit)");
+                return;
+            }
+            LOG(L"[+] PADDB (ZMM) executed");
+        }
+        else {
+            LOG(L"[!] Unsupported width in PADDB: " << width);
+        }
+    }
+    void emulate_paddw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size;
+
+        if (width == 128) { // XMM
+            __m128i a, b;
+            if (!read_operand_value(dst, 128, a) ||
+                !read_operand_value(src, 128, b)) {
+                LOG(L"[!] Failed to read operands in PADDW (128-bit)");
+                return;
+            }
+            __m128i result = _mm_add_epi16(a, b);
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write result in PADDW (128-bit)");
+                return;
+            }
+            LOG(L"[+] PADDW (XMM) executed");
+        }
+        else if (width == 256) { // YMM
+            __m256i a, b;
+            if (!read_operand_value(dst, 256, a) ||
+                !read_operand_value(src, 256, b)) {
+                LOG(L"[!] Failed to read operands in PADDW (256-bit)");
+                return;
+            }
+            __m256i result = _mm256_add_epi16(a, b);
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write result in PADDW (256-bit)");
+                return;
+            }
+            LOG(L"[+] PADDW (YMM) executed");
+        }
+        else if (width == 512) { // ZMM
+            __m512i a, b;
+            if (!read_operand_value(dst, 512, a) ||
+                !read_operand_value(src, 512, b)) {
+                LOG(L"[!] Failed to read operands in PADDW (512-bit)");
+                return;
+            }
+            __m512i result = _mm512_add_epi16(a, b);
+            if (!write_operand_value(dst, 512, result)) {
+                LOG(L"[!] Failed to write result in PADDW (512-bit)");
+                return;
+            }
+            LOG(L"[+] PADDW (ZMM) executed");
+        }
+        else {
+            LOG(L"[!] Unsupported width in PADDW: " << width);
+        }
+    }
 
 
 
@@ -8987,6 +9155,38 @@ private:
         }
 
         LOG(L"[+] SHLD => 0x" << std::hex << result);
+    }
+    void emulate_pmovzxdq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER) {
+            LOG(L"[!] PMOVZXDQ destination must be XMM register");
+            return;
+        }
+
+        __m128i srcVal;
+        if (!read_operand_value(src, 128, srcVal)) {
+            LOG(L"[!] Failed to read source operand in PMOVZXDQ");
+            return;
+        }
+
+        alignas(16) uint32_t tmp[4];
+        _mm_store_si128((__m128i*)tmp, srcVal);
+
+        uint64_t lo = static_cast<uint64_t>(tmp[0]); 
+        uint64_t hi = static_cast<uint64_t>(tmp[1]); 
+
+        __m128i result = _mm_set_epi64x(hi, lo);
+
+        if (!write_operand_value(dst, 128, result)) {
+            LOG(L"[!] Failed to write destination in PMOVZXDQ");
+            return;
+        }
+
+        LOG(L"[+] PMOVZXDQ executed on "
+            << ZydisRegisterGetString(dst.reg.value)
+            << L" => [" << std::hex << lo << L"," << hi << L"]");
     }
 
 
