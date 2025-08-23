@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 1
+#define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -10592,7 +10592,6 @@ private:
 
         float val_dst = 0.0f, val_src = 0.0f;
 
-
         if (!read_operand_value(dst, 32, val_dst)) {
             LOG(L"[!] Failed to read destination operand in UCOMISS");
             return;
@@ -10603,29 +10602,29 @@ private:
             return;
         }
 
-        bool unordered = (_isnan(val_dst) || _isnan(val_src)); 
+        bool unordered = (_isnan(val_dst) || _isnan(val_src));
         bool equal = (val_dst == val_src);
         bool less = (val_dst < val_src);
 
-        g_regs.rflags.flags.ZF = 0;
-        g_regs.rflags.flags.PF = 0;
-        g_regs.rflags.flags.CF = 0;
+        // Flags according to Intel manual
+        g_regs.rflags.flags.ZF = unordered ? 1 : (equal ? 1 : 0);
+        g_regs.rflags.flags.PF = unordered ? 1 : 0;
+        g_regs.rflags.flags.CF = unordered ? 1 : (less ? 1 : 0);
 
-        if (unordered) {
-            g_regs.rflags.flags.ZF = 1;
-            g_regs.rflags.flags.PF = 1;
-            g_regs.rflags.flags.CF = 1;
-        }
-        else {
-            if (equal) g_regs.rflags.flags.ZF = 1;
-            if (less) g_regs.rflags.flags.CF = 1;
-        }
+        // Reset OF, SF, AF
+        g_regs.rflags.flags.OF = 0;
+        g_regs.rflags.flags.SF = 0;
+        g_regs.rflags.flags.AF = 0;
 
         LOG(L"[+] UCOMISS executed: dst=" << val_dst << L", src=" << val_src
             << L", ZF=" << g_regs.rflags.flags.ZF
             << L", PF=" << g_regs.rflags.flags.PF
-            << L", CF=" << g_regs.rflags.flags.CF);
+            << L", CF=" << g_regs.rflags.flags.CF
+            << L", OF=" << g_regs.rflags.flags.OF
+            << L", SF=" << g_regs.rflags.flags.SF
+            << L", AF=" << g_regs.rflags.flags.AF);
     }
+
 
     void emulate_pmovmskb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0]; 
