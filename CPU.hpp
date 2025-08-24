@@ -1314,6 +1314,8 @@ public:
             { ZYDIS_MNEMONIC_PSUBQ, &CPU::emulate_psubq },
             { ZYDIS_MNEMONIC_VPMOVZXBW, &CPU::emulate_vpmovzxbw },
             { ZYDIS_MNEMONIC_PMOVZXWD, &CPU::emulate_pmovzxwd },
+            { ZYDIS_MNEMONIC_VBLENDPS, &CPU::emulate_vblendps },
+            { ZYDIS_MNEMONIC_VFMADD213PS, &CPU::emulate_vfmadd213ps },
    
 
 
@@ -2419,6 +2421,35 @@ private:
         // 2=EQUAL_EACH (same as 0) ; signature kept simple
         if (mode_is_signed) return (a == b);
         else return ((uint64_t)a == (uint64_t)b);
+    }
+
+    inline __m128 blend_ps_runtime(__m128 a, __m128 b, int mask) {
+        alignas(16) float fa[4], fb[4], fr[4];
+        _mm_store_ps(fa, a);
+        _mm_store_ps(fb, b);
+
+        for (int i = 0; i < 4; i++) {
+            if (mask & (1 << i)) 
+                fr[i] = fb[i];
+            else                 
+                fr[i] = fa[i];
+        }
+        return _mm_load_ps(fr);
+    }
+
+
+    inline __m256 blend_ps_runtime(__m256 a, __m256 b, int mask) {
+        alignas(32) float fa[8], fb[8], fr[8];
+        _mm256_store_ps(fa, a);
+        _mm256_store_ps(fb, b);
+
+        for (int i = 0; i < 8; i++) {
+            if (mask & (1 << i))
+                fr[i] = fb[i];
+            else
+                fr[i] = fa[i];
+        }
+        return _mm256_load_ps(fr);
     }
 
     // ------------------- Internal State -------------------
@@ -7235,41 +7266,49 @@ private:
     void emulate_movss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
-        constexpr uint32_t scalar_width = 32; // 4 bytes
-
-        uint32_t scalar_value;
-
-        if (!read_operand_value(src, scalar_width, scalar_value)) {
-            LOG(L"[!] Failed to read source operand in movss");
-            return;
-        }
 
         if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-           
-            YMM dst_reg{};
+            __m128 dst_val = {};  
+            __m128 src_val = {};
 
-     
-            memcpy(dst_reg.xmm, &scalar_value, sizeof(scalar_value));
-
-  
-            memset(dst_reg.xmm + 4, 0, 12);
-            memset(dst_reg.ymmh, 0, 16);   
-
-            if (!write_operand_value(dst, 128, dst_reg)) {
-                LOG(L"[!] Failed to write destination register in movss");
-                return;
+            if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+                read_operand_value(dst, 128, dst_val);
+                read_operand_value(src, 128, src_val);
+                dst_val = _mm_move_ss(dst_val, src_val); 
             }
-        }
-        else {
-            // Memory write
-            if (!write_operand_value(dst, scalar_width, scalar_value)) {
-                LOG(L"[!] Failed to write memory destination in movss");
-                return;
+            else {
+                float mem_scalar = 0.0f;
+                read_operand_value(src, 32, mem_scalar);
+                src_val = _mm_load_ss(&mem_scalar);      
+                dst_val = _mm_move_ss(_mm_setzero_ps(), src_val); 
             }
+
+            write_operand_value(dst, 128, dst_val);
+        }
+        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+            __m128 src_val = {};
+
+            if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+                read_operand_value(src, 128, src_val);
+            }
+            else { 
+                float mem_scalar = 0.0f;
+                read_operand_value(src, 32, mem_scalar);
+                src_val = _mm_load_ss(&mem_scalar);
+            }
+
+            float mem_val;
+            _mm_store_ss(&mem_val, src_val);
+            write_operand_value(dst, 32, mem_val);
         }
 
-        LOG(L"[+] MOVSS executed with zero-extend");
+        LOG(L"[+] MOVSS executed (low 32-bit replaced, upper bits preserved or zeroed)");
     }
+
+
+
+
+
     void emulate_vpunpckhqdq(const ZydisDisassembledInstruction* instr) {
 
         const auto& dst = instr->operands[0];
@@ -8363,6 +8402,104 @@ private:
             LOG(L"[!] Unsupported width in PADDW: " << width);
         }
     }
+    void emulate_vblendps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        const auto& imm8 = instr->operands[3];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vblendps: " << (int)width);
+            return;
+        }
+
+        int mask;
+        if (!read_operand_value<int>(imm8, 8, mask)) {
+            LOG(L"[!] Failed to read immediate mask in vblendps");
+            return;
+        }
+
+        if (width == 128) {
+            __m128 a, b;
+            if (!read_operand_value<__m128>(src1, width, a) ||
+                !read_operand_value<__m128>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vblendps (128-bit)");
+                return;
+            }
+
+            __m128 result = blend_ps_runtime(a, b, mask);
+
+            if (!write_operand_value<__m128>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vblendps (128-bit)");
+                return;
+            }
+        }
+        else { 
+            __m256 a, b;
+            if (!read_operand_value<__m256>(src1, width, a) ||
+                !read_operand_value<__m256>(src2, width, b)) {
+                LOG(L"[!] Failed to read operands in vblendps (256-bit)");
+                return;
+            }
+
+            __m256 result = blend_ps_runtime(a, b, mask);
+
+            if (!write_operand_value<__m256>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vblendps (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VBLENDPS executed (" << width << L"-bit)");
+    }
+    void emulate_vfmadd213ps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vfmadd213ps: " << (int)width);
+            return;
+        }
+
+        if (width == 128) {
+            __m128 a, b, c;
+            if (!read_operand_value<__m128>(dst, width, a) ||
+                !read_operand_value<__m128>(src1, width, b) ||
+                !read_operand_value<__m128>(src2, width, c)) {
+                LOG(L"[!] Failed to read operands in vfmadd213ps (128-bit)");
+                return;
+            }
+
+            __m128 result = _mm_fmadd_ps(a, b, c);
+
+            if (!write_operand_value<__m128>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vfmadd213ps (128-bit)");
+                return;
+            }
+        }
+        else if (width == 256) {
+            __m256 a, b, c;
+            if (!read_operand_value<__m256>(dst, width, a) ||
+                !read_operand_value<__m256>(src1, width, b) ||
+                !read_operand_value<__m256>(src2, width, c)) {
+                LOG(L"[!] Failed to read operands in vfmadd213ps (256-bit)");
+                return;
+            }
+
+            __m256 result = _mm256_fmadd_ps(a, b, c);
+
+            if (!write_operand_value<__m256>(dst, width, result)) {
+                LOG(L"[!] Failed to write result in vfmadd213ps (256-bit)");
+                return;
+            }
+        }
+
+        LOG(L"[+] VFMADD213PS executed (" << width << L"-bit)");
+    }
+
 
 
 
@@ -10910,7 +11047,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-        uint32_t width = instr->info.length;
+        uint32_t width = dst.size;
 
         if (width == 256) {
             __m256 val;
@@ -11606,7 +11743,7 @@ private:
                                 if (ReadMemory(my_mange.address, readBuffer, my_mange.size)) {
                                     if (memcmp(readBuffer, my_mange.buffer, my_mange.size) != 0) {
 
-                                        std::wcout << L"readBuffer:" << std::endl;
+                                        std::wcout << L"what emulation write on memory :" << std::endl;
                                         for (size_t i = 0; i < my_mange.size; ++i) {
                                             std::wcout << std::hex
                                                 << std::setw(2)
@@ -11616,7 +11753,7 @@ private:
                                         }
                                         std::wcout << std::endl;
 
-                                        std::wcout << L"my_mange.buffer:" << std::endl;
+                                        std::wcout << L"what real cpu write on memory:" << std::endl;
                                         const char* buf = static_cast<const char*>(my_mange.buffer);
                                         for (size_t i = 0; i < my_mange.size; ++i) {
                                             std::wcout << std::hex
