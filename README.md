@@ -83,7 +83,7 @@ emudbg.exe <exe_path> [-m target.dll] [-b software|hardware]
 | `<exe_path>`     | ✅       | Path to the target executable you want to debug                   |
 | `-m <target.dll>`| ❌       | Wait for a specific DLL to load before setting breakpoints        |
 | `-b <type>`      | ❌       | Breakpoint type: `software` (default) or `hardware`               |
-
+| `-r <rva>`      | ❌       | Set a breakpoint at a Relative Virtual Address (RVA) inside the target module.           |
 
 ### 💡 Examples
 
