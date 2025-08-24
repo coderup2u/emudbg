@@ -3520,15 +3520,19 @@ private:
             break;
         }
         case 16: {
-            g_regs.rax.q = 0;
-            g_regs.rdx.q = 0;
-            uint32_t result = static_cast<uint16_t>(val1) * static_cast<uint16_t>(val2);
-            g_regs.rax.w = static_cast<uint16_t>(result & 0xFFFF);
+            uint16_t multiplicand = static_cast<uint16_t>(g_regs.rax.w); 
+            uint16_t src_val = static_cast<uint16_t>(val1);
+
+            uint32_t result = static_cast<uint32_t>(multiplicand) * static_cast<uint32_t>(src_val);
+
+            g_regs.rax.w = static_cast<uint16_t>(result & 0xFFFF); 
             g_regs.rdx.w = static_cast<uint16_t>((result >> 16) & 0xFFFF);
+
             result_low = result;
             result_high = result >> 16;
             break;
         }
+
         case 32: {
             g_regs.rax.q = 0;
             g_regs.rdx.q = 0;
