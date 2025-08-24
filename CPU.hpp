@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -1319,7 +1319,10 @@ public:
             { ZYDIS_MNEMONIC_PXOR, &CPU::emulate_pxor },
             { ZYDIS_MNEMONIC_PMOVSXWD, &CPU::emulate_pmovsxwd },
             { ZYDIS_MNEMONIC_PMOVSXWQ, &CPU::emulate_pmovsxwq },
-   
+            { ZYDIS_MNEMONIC_KMOVB, &CPU::emulate_kmovb },
+            { ZYDIS_MNEMONIC_KMOVW, &CPU::emulate_kmovw },
+            { ZYDIS_MNEMONIC_KMOVD, &CPU::emulate_kmovd },
+            { ZYDIS_MNEMONIC_KMOVQ, &CPU::emulate_kmovq },   
 
 
 
@@ -11238,8 +11241,18 @@ private:
 
         LOG(L"[+] PMOVSXWQ executed (16-bit -> 64-bit sign-extend)");
     }
-
-
+    void emulate_kmovb(const ZydisDisassembledInstruction* instr) {
+        LOG(L"[+] kmovb ");
+    }
+    void emulate_kmovw(const ZydisDisassembledInstruction* instr) {
+        LOG(L"[+] kmovw ");
+    }
+    void emulate_kmovd(const ZydisDisassembledInstruction* instr) {
+        LOG(L"[+] kmovd ");
+    }
+    void emulate_kmovq(const ZydisDisassembledInstruction* instr) {
+        LOG(L"[+] kmovq ");
+    }
     //----------------------- read / write instruction  -------------------------
     inline uint64_t zero_extend(uint64_t value, uint8_t width) {
         if (width >= 64) return value;
