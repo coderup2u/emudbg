@@ -107,6 +107,7 @@ struct RegState {
     GPR r8, r9, r10, r11, r12, r13, r14, r15;
     uint64_t rip;
     RFlags rflags;
+    uint64_t k[8];
     YMM ymm[16];
     uint64_t gs_base;
     uint64_t fs_base;
@@ -1319,6 +1320,10 @@ public:
             { ZYDIS_MNEMONIC_PXOR, &CPU::emulate_pxor },
             { ZYDIS_MNEMONIC_PMOVSXWD, &CPU::emulate_pmovsxwd },
             { ZYDIS_MNEMONIC_PMOVSXWQ, &CPU::emulate_pmovsxwq },
+            { ZYDIS_MNEMONIC_KMOVB, &CPU::emulate_kmovb },
+            { ZYDIS_MNEMONIC_KMOVW, &CPU::emulate_kmovw },
+            { ZYDIS_MNEMONIC_KMOVD, &CPU::emulate_kmovd },
+            { ZYDIS_MNEMONIC_KMOVQ, &CPU::emulate_kmovq },
    
 
 
@@ -1715,6 +1720,18 @@ public:
         }
         LOG(L"[+] YMM registers copied");
 
+
+        PBYTE pAvx512 = (PBYTE)pfnLocateXStateFeature(pCtx, XSTATE_MASK_AVX512, &featureLength);
+        if (!pAvx512 || featureLength < 64) {
+            LOG(L"[-] AVX512 feature not available");
+        }
+        else {
+            for (int i = 0; i < 8; i++) {
+                g_regs.k[i] = *(uint64_t*)(pAvx512 + i * 8); // k0..k7
+                LOG(L"[+] k" << i << L" = " << std::hex << g_regs.k[i]);
+            }
+        }
+
         free(buf);
         LOG(L"[+] Finished UpdateRegistersFromContextEx");
       
@@ -1845,6 +1862,15 @@ public:
             { ZYDIS_REGISTER_YMM13, &g_regs.ymm[13] },
             { ZYDIS_REGISTER_YMM14, &g_regs.ymm[14] },
             { ZYDIS_REGISTER_YMM15, &g_regs.ymm[15] },
+
+            { ZYDIS_REGISTER_K0, &g_regs.k[0] },
+            { ZYDIS_REGISTER_K1, &g_regs.k[1] },
+            { ZYDIS_REGISTER_K2, &g_regs.k[2] },
+            { ZYDIS_REGISTER_K3, &g_regs.k[3] },
+            { ZYDIS_REGISTER_K4, &g_regs.k[4] },
+            { ZYDIS_REGISTER_K5, &g_regs.k[5] },
+            { ZYDIS_REGISTER_K6, &g_regs.k[6] },
+            { ZYDIS_REGISTER_K7, &g_regs.k[7] },
         };
 
     }
@@ -1945,6 +1971,13 @@ public:
 
         LOG(L"[+] YMM registers applied");
 
+        PBYTE pAvx512 = (PBYTE)pfnLocateXStateFeature(pCtx, XSTATE_MASK_AVX512, &featureLength);
+        if (pAvx512 && featureLength >= 8 * sizeof(uint64_t)) {
+            for (int i = 0; i < 8; i++) {
+                *(uint64_t*)(pAvx512 + i * 8) = g_regs.k[i];
+                LOG(L"[+] k" << i << L" applied: " << std::hex << g_regs.k[i]);
+            }
+        }
 
         if (!SetThreadContext(hThread, pCtx)) {
             DWORD err = GetLastError();
@@ -11237,6 +11270,71 @@ private:
 
         LOG(L"[+] PMOVSXWQ executed (16-bit -> 64-bit sign-extend)");
     }
+    void emulate_kmovb(const ZydisDisassembledInstruction* instr)
+    {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        uint8_t val = 0;
+
+        if (!read_operand_value(src, 8, val)) {
+            LOG(L"[!] Failed to read source operand in KMOVB");
+            return;
+        }
+
+        int kreg_index = dst.reg.value - ZYDIS_REGISTER_K0;
+        g_regs.k[kreg_index] = (g_regs.k[kreg_index] & ~0xFF) | val;
+
+        LOG(L"[+] KMOVB executed, k" << kreg_index << L" = " << std::hex << g_regs.k[kreg_index]);
+    }
+    void emulate_kmovw(const ZydisDisassembledInstruction* instr)
+    {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        uint16_t val = 0;
+
+        if (!read_operand_value(src, 16, val)) {
+            LOG(L"[!] Failed to read source operand in KMOVW");
+            return;
+        }
+
+        int kreg_index = dst.reg.value - ZYDIS_REGISTER_K0;
+        g_regs.k[kreg_index] = (g_regs.k[kreg_index] & ~0xFFFF) | val;
+
+        LOG(L"[+] KMOVW executed, k" << kreg_index << L" = " << std::hex << g_regs.k[kreg_index]);
+    }
+    void emulate_kmovd(const ZydisDisassembledInstruction* instr)
+    {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        uint32_t val = 0;
+
+        if (!read_operand_value(src, 32, val)) {
+            LOG(L"[!] Failed to read source operand in KMOVD");
+            return;
+        }
+
+        int kreg_index = dst.reg.value - ZYDIS_REGISTER_K0;
+        g_regs.k[kreg_index] = (g_regs.k[kreg_index] & ~0xFFFFFFFF) | val;
+
+        LOG(L"[+] KMOVD executed, k" << kreg_index << L" = " << std::hex << g_regs.k[kreg_index]);
+    }
+    void emulate_kmovq(const ZydisDisassembledInstruction* instr)
+    {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        uint64_t val = 0;
+
+        if (!read_operand_value(src, 64, val)) {
+            LOG(L"[!] Failed to read source operand in KMOVQ");
+            return;
+        }
+
+        int kreg_index = dst.reg.value - ZYDIS_REGISTER_K0;
+        g_regs.k[kreg_index] = val;
+
+        LOG(L"[+] KMOVQ executed, k" << kreg_index << L" = " << std::hex << g_regs.k[kreg_index]);
+    }
+
 
 
     //----------------------- read / write instruction  -------------------------
