@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -1324,6 +1324,7 @@ public:
             { ZYDIS_MNEMONIC_KMOVD, &CPU::emulate_kmovd },
             { ZYDIS_MNEMONIC_KMOVQ, &CPU::emulate_kmovq },   
             { ZYDIS_MNEMONIC_ROUNDPS, &CPU::emulate_roundps },
+            { ZYDIS_MNEMONIC_VROUNDPS, &CPU::emulate_vroundps },
 
 
 
@@ -11293,6 +11294,47 @@ private:
         write_operand_value(dst, 256, oldYmm);
 
         LOG(L"[+] ROUNDPS executed (low 128-bit updated, upper 128-bit preserved)");
+    }
+    void emulate_vroundps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        int roundMode = instr->operands[2].imm.value.u;
+
+        __m256 val;
+        if (!read_operand_value(src, 256, val)) {
+            LOG(L"[!] Failed to read source operand for VROUNDPS");
+            return;
+        }
+
+        float tmp[8];
+        _mm256_storeu_ps(tmp, val);
+
+        auto round_float = [](float f, int mode) -> float {
+            switch (mode) {
+            case 0x00: return f;                  // Default (nearest)
+            case 0x01: return std::floorf(f);     // Floor
+            case 0x02: return std::ceilf(f);      // Ceil
+            case 0x03: return std::truncf(f);     // Trunc
+            case 0x08: return std::nearbyintf(f); // Nearest no-exception
+            default:   return f;
+            }
+            };
+
+        for (int i = 0; i < 8; i++) tmp[i] = round_float(tmp[i], roundMode);
+
+        __m256 result = _mm256_loadu_ps(tmp);
+
+
+        YMM oldYmm;
+        if (!read_operand_value(dst, 256, oldYmm)) {
+            LOG(L"[!] Failed to read destination YMM for VROUNDPS");
+            return;
+        }
+
+        memcpy(oldYmm.xmm, &result, 32); 
+        write_operand_value(dst, 256, oldYmm);
+
+        LOG(L"[+] VROUNDPS executed (full 256-bit YMM updated)");
     }
 
 
