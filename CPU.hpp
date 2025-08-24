@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 1
+#define DB_ENABLED 0
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -1317,6 +1317,8 @@ public:
             { ZYDIS_MNEMONIC_VBLENDPS, &CPU::emulate_vblendps },
             { ZYDIS_MNEMONIC_VFMADD213PS, &CPU::emulate_vfmadd213ps },
             { ZYDIS_MNEMONIC_PXOR, &CPU::emulate_pxor },
+            { ZYDIS_MNEMONIC_PMOVSXWD, &CPU::emulate_pmovsxwd },
+            { ZYDIS_MNEMONIC_PMOVSXWQ, &CPU::emulate_pmovsxwq },
    
 
 
@@ -11186,6 +11188,56 @@ private:
             g_regs.rip += instr->info.length;
         }
     }
+    void emulate_pmovsxwd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const auto width = dst.size;
+
+        if (width != 128) {
+            LOG(L"[!] Unsupported width in pmovsxwd: " << (int)width);
+            return;
+        }
+
+        __m128i src_val;
+        if (!read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read source operand in pmovsxwd");
+            return;
+        }
+
+        __m128i result = _mm_cvtepi16_epi32(src_val);
+
+        if (!write_operand_value(dst, 128, result)) {
+            LOG(L"[!] Failed to write result in pmovsxwd");
+            return;
+        }
+
+        LOG(L"[+] PMOVSXWD executed (16-bit -> 32-bit sign-extend)");
+    }
+    void emulate_pmovsxwq(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        const auto width = dst.size;
+
+        if (width != 128) {
+            LOG(L"[!] Unsupported width in pmovsxwq: " << (int)width);
+            return;
+        }
+
+        __m128i src_val;
+        if (!read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read source operand in pmovsxwq");
+            return;
+        }
+        __m128i result = _mm_cvtepi16_epi64(src_val);
+
+        if (!write_operand_value(dst, 128, result)) {
+            LOG(L"[!] Failed to write result in pmovsxwq");
+            return;
+        }
+
+        LOG(L"[+] PMOVSXWQ executed (16-bit -> 64-bit sign-extend)");
+    }
+
 
     //----------------------- read / write instruction  -------------------------
     inline uint64_t zero_extend(uint64_t value, uint8_t width) {
