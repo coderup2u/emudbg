@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -1316,6 +1316,7 @@ public:
             { ZYDIS_MNEMONIC_PMOVZXWD, &CPU::emulate_pmovzxwd },
             { ZYDIS_MNEMONIC_VBLENDPS, &CPU::emulate_vblendps },
             { ZYDIS_MNEMONIC_VFMADD213PS, &CPU::emulate_vfmadd213ps },
+            { ZYDIS_MNEMONIC_PXOR, &CPU::emulate_pxor },
    
 
 
@@ -3147,6 +3148,7 @@ private:
         }
     }
     // ------------------- Instruction Emulation -------------------
+
     void emulate_push(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         uint32_t width = op.size; // bits
@@ -3221,9 +3223,6 @@ private:
         UpdateRegistersFromContext();
         LOG(L"[+] FXRSTOR executed: restored FltSave to context");
     }
-
-
-
     void emulate_setl(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
@@ -3249,7 +3248,6 @@ private:
 
         LOG(L"[+] SETLE => " << std::hex << static_cast<int>(value));
     }
-
     void emulate_vpor(const ZydisDisassembledInstruction* instr) {
 
         const auto& dst = instr->operands[0];
@@ -3308,8 +3306,6 @@ private:
 
         LOG(L"[+] VPOR executed");
     }
-
-
     void emulate_pushfq(const ZydisDisassembledInstruction* instr) {
         g_regs.rsp.q -= 8;
 
@@ -3323,7 +3319,6 @@ private:
 
         LOG(L"[+] PUSHFQ (64-bit) 0x" << std::hex << image);
     }
-
     void emulate_pushf(const ZydisDisassembledInstruction* instr)
     {
 
@@ -3340,7 +3335,6 @@ private:
 
         LOG(L"[+] PUSHF (16-bit) 0x" << std::hex << flags16);
     }
-
     void emulate_pushfd(const ZydisDisassembledInstruction* instr)
     {
 
@@ -3356,8 +3350,6 @@ private:
 
         LOG(L"[+] PUSHFD (32-bit) 0x" << std::hex << eflags32);
     }
-
-
     void emulate_vzeroupper(const ZydisDisassembledInstruction* instr) {
         for (int i = 0; i < 16; i++) {
             memset(g_regs.ymm[i].ymmh, 0, 16);
@@ -3474,7 +3466,6 @@ private:
         LOG(L"[+] SQRTPD => sqrt([" << src_val.m128d_f64[0] << ", " << src_val.m128d_f64[1]
             << L"]) = [" << result.m128d_f64[0] << ", " << result.m128d_f64[1] << "]");
     }
-
     void emulate_mul(const ZydisDisassembledInstruction* instr) {
         const auto& operands = instr->operands;
         int operand_count = instr->info.operand_count_visible;
@@ -3602,7 +3593,6 @@ private:
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => " << std::dec << result_scalar);
     }
-
     void emulate_mulsd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];  // XMM register
         const auto& src = instr->operands[1];  // XMM register or memory
@@ -3628,7 +3618,6 @@ private:
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => " << std::dec << result_scalar);
     }
-
     void emulate_scasd(const ZydisDisassembledInstruction* instr) {
 
         uint32_t eax_val = static_cast<uint32_t>(g_regs.rax.d);  
@@ -3711,10 +3700,6 @@ private:
 
         write_operand_value<__m128>(dst, 128, dst_val);
     }
-
-
-
-
     void emulate_imul(const ZydisDisassembledInstruction* instr) {
         const auto& ops = instr->operands;
         int op_count = instr->info.operand_count_visible;
@@ -3805,7 +3790,6 @@ private:
             g_regs.rflags.flags.OF = of;
         }
     }
-
     void emulate_movdqu(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -4313,8 +4297,6 @@ private:
             LOG(L"[!] Unsupported vpshufd width: " << (int)width);
         }
     }
-
-
     void emulate_vpmuludq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
@@ -4361,7 +4343,27 @@ private:
 
         LOG(L"[+] VPMULUDQ executed successfully");
     }
+    void emulate_pxor(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
 
+        __m128i a, b;
+
+        if (!read_operand_value<__m128i>(dst, 128, a) ||
+            !read_operand_value<__m128i>(src, 128, b)) {
+            LOG(L"[!] Failed to read operands in PXOR");
+            return;
+        }
+
+        __m128i result = _mm_xor_si128(a, b);
+
+        if (!write_operand_value<__m128i>(dst, 128, result)) {
+            LOG(L"[!] Failed to write result in PXOR");
+            return;
+        }
+
+        LOG(L"[+] PXOR executed (128-bit XMM)");
+    }
     void emulate_cmovnle(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -4532,7 +4534,6 @@ private:
 
         LOG(L"[+] PCMPEQW executed");
     }
-
     void emulate_vpandn(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
@@ -4896,9 +4897,6 @@ private:
             LOG(L"[!] Unsupported width in VPERMQ: " << (int)width << " (only 256/512 allowed)");
         }
     }
-
-
-
     void emulate_xorps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -4962,8 +4960,6 @@ private:
             << dst_val_f32.m128_f32[2] << ", "
             << dst_val_f32.m128_f32[3] << "]");
     }
-
-
     void emulate_xor(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5008,7 +5004,6 @@ private:
             << ", PF=" << g_regs.rflags.flags.PF
             << ", AF=" << g_regs.rflags.flags.AF);
     }
-
     void emulate_cmovnl(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5046,7 +5041,6 @@ private:
 
         LOG(L"[+] SETNL => " << std::hex << static_cast<int>(value));
     }
-
     void emulate_comiss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5083,7 +5077,6 @@ private:
             << L", CF=" << g_regs.rflags.flags.CF
             << L", PF=" << g_regs.rflags.flags.PF);
     }
-
     void emulate_cdqe(const ZydisDisassembledInstruction* instr) {
 
         g_regs.rax.q = static_cast<int64_t>(static_cast<int32_t>(g_regs.rax.d));
@@ -5104,7 +5097,6 @@ private:
         LOG(L"[+] CQO => RAX = 0x" << std::hex << g_regs.rax.q
             << L", RDX = 0x" << g_regs.rdx.q);
     }
-
     void emulate_stosq(const ZydisDisassembledInstruction* instr) {
 
         WriteMemory(g_regs.rdi.q, &g_regs.rax.q, sizeof(uint64_t));
@@ -5205,7 +5197,6 @@ private:
             << ", new RDI = 0x" << g_regs.rdi.q
             << ", ZF = " << g_regs.rflags.flags.ZF);
     }
-
     void emulate_lzcnt(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5248,8 +5239,6 @@ private:
             << L", CF=" << g_regs.rflags.flags.CF
             << L", ZF=" << g_regs.rflags.flags.ZF);
     }
-
-
     void emulate_sbb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5298,7 +5287,6 @@ private:
         g_regs.rflags.flags.OF = (dst_sign != src_sign) && (dst_sign != res_sign);
         g_regs.rflags.flags.AF = ((dst_val ^ src_val ^ result) & 0x10) != 0;
     }
-
     void emulate_setbe(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
@@ -5324,7 +5312,6 @@ private:
 
         LOG(L"[+] SETBE => " << std::dec << (int)result);
     }
-
     void emulate_cmovnbe(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5351,7 +5338,6 @@ private:
             LOG(L"[+] CMOVNBE: condition not met (no move)");
         }
     }
-
     void emulate_movsx(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5401,7 +5387,6 @@ private:
             << L" (" << dst_width << L" bits) => "
             << ZydisRegisterGetString(dst.reg.value));
     }
-
     void emulate_cmovns(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5429,8 +5414,6 @@ private:
             LOG(L"[+] CMOVNS: condition not met (no move, SF=1)");
         }
     }
-
-
     void emulate_movaps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5451,8 +5434,6 @@ private:
                 ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
                 : L"[mem]"));
     }
-
-
     void emulate_and(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5486,7 +5467,6 @@ private:
 
         LOG(L"[+] AND => 0x" << std::hex << result);
     }
-
     void emulate_or(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5518,8 +5498,6 @@ private:
 
         LOG(L"[+] OR => 0x" << std::hex << result);
     }
-
-
     void emulate_sgdt(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
@@ -5531,9 +5509,7 @@ private:
         LOG_analyze(BLUE, "[+] SGDT executed at: 0x" << std::hex << g_regs.rip
             << " — GDTR written");
     }
-
     void emulate_prefetchw(const ZydisDisassembledInstruction* instr) {}
-
     void emulate_vinsertf128(const ZydisDisassembledInstruction* instr) {
         if (instr->info.operand_count < 3 || instr->info.operand_count > 4) {
             LOG(L"[!] vinsertf128 expects 3 or 4 operands");
@@ -5606,7 +5582,6 @@ private:
             << L", " << src2_str
             << L", imm=" << std::dec << (int)imm);
     }
-
     void emulate_vmovdqa(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5643,7 +5618,6 @@ private:
 
         LOG(L"[+] VMOVDQA executed");
     }
-
     void emulate_vpcmpeqq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
@@ -5726,7 +5700,6 @@ private:
 
         LOG(L"[+] SETNO => " << std::hex << static_cast<int>(value));
     }
-
     void emulate_jo(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
@@ -5743,7 +5716,6 @@ private:
             g_regs.rip += instr->info.length;
         }
     }
-
     void emulate_cmpxchg(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5818,8 +5790,6 @@ private:
 
         LOG(L"[+] POP => 0x" << std::hex << value << " (" << width << "-bit)");
     }
-
-
     void emulate_popfq(const ZydisDisassembledInstruction* instr) {
 
         uint64_t value = 0;
@@ -5831,14 +5801,10 @@ private:
 #endif
         LOG(L"[+] POPfq => 0x" << std::hex << value);
     }
-
-
-
     void emulate_cmc(const ZydisDisassembledInstruction* instr) {
         g_regs.rflags.flags.CF = !g_regs.rflags.flags.CF;
         LOG(L"[+] CMC => CF toggled, new CF = " << g_regs.rflags.flags.CF);
     }
-
     void emulate_add(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5877,8 +5843,6 @@ private:
 
         LOG(L"[+] ADD => 0x" << std::hex << result);
     }
-
-
     void emulate_adc(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -5922,13 +5886,10 @@ private:
 
         LOG(L"[+] ADC => 0x" << std::hex << result);
     }
-
-
     void emulate_stc(const ZydisDisassembledInstruction* instr) {
         g_regs.rflags.flags.CF = 1;
         LOG(L"[+] STC executed: CF set to 1");
     }
-
     void emulate_setb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         uint8_t width = instr->info.operand_width;
@@ -6044,8 +6005,6 @@ private:
 
         LOG(L"[+] RSQRTPS executed (approx like hardware)");
     }
-
-
     void emulate_bt(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -6072,7 +6031,6 @@ private:
 
         LOG(L"[+] BT => CF = " << g_regs.rflags.flags.CF);
     }
-
     void emulate_btr(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -6141,7 +6099,6 @@ private:
             << L", index=" << std::dec << index
             << L", ZF=" << g_regs.rflags.flags.ZF);
     }
-
     void emulate_div(const ZydisDisassembledInstruction* instr) {
         const auto& src = instr->operands[0];
         uint32_t width = instr->info.operand_width;
@@ -6235,7 +6192,6 @@ private:
         LOG(L"[+] BSWAP executed: 0x" << std::hex << value << L" -> 0x" << result
             << L" (" << ZydisRegisterGetString(op.reg.value) << L")");
     }
-
     void emulate_rcr(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -6298,7 +6254,6 @@ private:
 
         LOG(L"[+] RCR => 0x" << std::hex << val);
     }
-
     void emulate_rcl(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -6400,13 +6355,10 @@ private:
             LOG(L"[!] Unsupported width in VPAND: " << width);
         }
     }
-
-
     void emulate_clc(const ZydisDisassembledInstruction* instr) {
         g_regs.rflags.flags.CF = 0;
         LOG(L"[+] CLC => CF=0");
     }
-
     void emulate_jnb(const ZydisDisassembledInstruction* instr) {
         uint64_t target = 0;
         const auto& op = instr->operands[0];
@@ -6425,7 +6377,6 @@ private:
         }
         LOG(L"[+] JNB to => 0x" << std::hex << g_regs.rip);
     }
-
     void emulate_xgetbv(const ZydisDisassembledInstruction*) {
 #if analyze_ENABLED
         LOG_analyze(GREEN, "[+] xgetbv at [RIP:" << std::hex<< g_regs.rip << "]");
@@ -6462,7 +6413,6 @@ private:
         LOG(L"[+] ANDPS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0));
     }
-
     void emulate_cmovnb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -6560,8 +6510,6 @@ private:
         LOG(L"[+] CMOVLE executed: moved 0x" << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
-
-
     void emulate_divss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -6621,7 +6569,6 @@ private:
             << result.m128_f32[2] << L", "
             << result.m128_f32[3] << L"]");
     }
-
     void emulate_rdtsc(const ZydisDisassembledInstruction*) {
 #if DB_ENABLED
         is_rdtsc = 1;
@@ -6638,7 +6585,6 @@ private:
         LOG(L"[+] RDTSC => RAX=0x" << std::hex << g_regs.rax.q
             << L", RDX=0x" << g_regs.rdx.q);
     }
-
     void emulate_cmovz(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -6662,7 +6608,6 @@ private:
         LOG(L"[+] CMOVZ executed: moved 0x" << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
-
     void emulate_dec(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         uint8_t width = instr->info.operand_width;
@@ -6701,7 +6646,6 @@ private:
 
         LOG(L"[+] DEC => 0x" << std::hex << result);
     }
-
     void emulate_cmp(const ZydisDisassembledInstruction* instr) {
         const auto& op1 = instr->operands[0], op2 = instr->operands[1];
         uint32_t width = instr->info.operand_width;
@@ -6781,7 +6725,6 @@ private:
             << ", PF=" << g_regs.rflags.flags.PF
             << ", AF=" << g_regs.rflags.flags.AF);
     }
-
     void emulate_inc(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         uint32_t width = instr->info.operand_width;
@@ -6890,8 +6833,6 @@ private:
 
         LOG(L"[+] IDIV executed: divisor = " << divisor << ", overflow = " << overflow);
     }
-
-
     void emulate_jz(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         uint64_t target = 0;
@@ -6953,8 +6894,6 @@ private:
 
         LOG(L"[+] JNP to => 0x" << std::hex << g_regs.rip);
     }
-
-
     void emulate_movsxd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -7072,8 +7011,6 @@ private:
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => [" << dst_val_f64.m128d_f64[0] << L", " << dst_val_f64.m128d_f64[1] << L"]");
     }
-
-
     void emulate_jle(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         uint64_t target = 0;
@@ -7094,7 +7031,6 @@ private:
         }
         LOG(L"[+] JLE to => 0x" << std::hex << g_regs.rip);
     }
-
     void emulate_movups(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -7155,7 +7091,6 @@ private:
 
         LOG(L"[+] FNSTCW executed: stored FPU Control Word = 0x" << std::hex << cw_val);
     }
-
     void emulate_punpcklqdq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -7230,7 +7165,6 @@ private:
 
         LOG(L"[+] VPUNPCKLQDQ executed (" << width << L"-bit)");
     }
-
     void emulate_punpcklbw(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -7304,11 +7238,6 @@ private:
 
         LOG(L"[+] MOVSS executed (low 32-bit replaced, upper bits preserved or zeroed)");
     }
-
-
-
-
-
     void emulate_vpunpckhqdq(const ZydisDisassembledInstruction* instr) {
 
         const auto& dst = instr->operands[0];
@@ -8499,17 +8428,6 @@ private:
 
         LOG(L"[+] VFMADD213PS executed (" << width << L"-bit)");
     }
-
-
-
-
-
-
-
-
-
-
-
     void emulate_unpckhpd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -8542,7 +8460,6 @@ private:
             << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => High parts combined");
     }
-
     void emulate_cmpxchg16b(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0]; 
         if (dst.type != ZYDIS_OPERAND_TYPE_MEMORY) {
@@ -8593,7 +8510,6 @@ private:
             << L", mem_low=0x" << std::hex << mem_low
             << L", mem_high=0x" << std::hex << mem_high);
     }
-
     void emulate_shrd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -8683,8 +8599,6 @@ private:
 
         LOG(L"[+] SHRD => 0x" << std::hex << result);
     }
-
-
     void emulate_setnb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
@@ -8753,8 +8667,6 @@ private:
 
         LOG(L"[+] UNPCKLPS executed");
     }
-
-
     void emulate_jnz(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         uint64_t target = 0;
@@ -8774,7 +8686,6 @@ private:
 
         LOG(L"[+] JNZ to => 0x" << std::hex << g_regs.rip);
     }
-
     void emulate_nop(const ZydisDisassembledInstruction*) {
         LOG(L"[+] NOP");
     }
@@ -8783,7 +8694,6 @@ private:
         LOG( "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
         is_paused = 1;
     }
-
     void emulate_movq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -8883,7 +8793,6 @@ private:
 
         LOG(L"[!] Unsupported operand combination in movq");
     }
-
     void emulate_cmovbe(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -8929,8 +8838,6 @@ private:
 
         LOG(L"[+] MOVSQ executed: copied 8 bytes");
     }
-
-
     void emulate_cmovb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -8955,7 +8862,6 @@ private:
 
         LOG(L"[+] CMOVB executed successfully");
     }
-
     void emulate_cmovnz(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -8984,7 +8890,6 @@ private:
 
         LOG(L"[+] CMOVNZ: moved because ZF == 0");
     }
-
     void emulate_setnle(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
@@ -8995,8 +8900,6 @@ private:
 
         LOG(L"[+] SETNLE => " << std::hex << static_cast<int>(value));
     }
-
-
     void emulate_movdqa(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -9017,7 +8920,6 @@ private:
                 ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
                 : L"[mem]"));
     }
-
     void emulate_vmovd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -9042,8 +8944,6 @@ private:
             << ", "
             << (src.type == ZYDIS_OPERAND_TYPE_REGISTER ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0) : L"[mem]"));
     }
-
-
     void emulate_orps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -9068,7 +8968,6 @@ private:
                 ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
                 : L"[mem]"));
     }
-
     void emulate_cmovs(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0], src = instr->operands[1];
         uint8_t width = instr->info.operand_width;
@@ -9157,7 +9056,6 @@ private:
             << L" ZF=" << g_regs.rflags.flags.ZF
             << L" CF=" << g_regs.rflags.flags.CF);
     }
-
     void emulate_sub(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -9206,7 +9104,6 @@ private:
         // Log result
         LOG(L"[+] SUB => 0x" << std::hex << result);
     }
-
     void emulate_jnle(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
@@ -9481,8 +9378,6 @@ private:
             LOG(L"[+] PMOVZXWD zmm <- ymm/m256 executed");
         }
     }
-
-
     void emulate_movzx(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -9515,7 +9410,6 @@ private:
         LOG(L"[+] MOVZX => zero-extended 0x" << std::hex << extended
             << L" into " << ZydisRegisterGetString(dst.reg.value));
     }
-
     void emulate_jb(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
@@ -9532,7 +9426,6 @@ private:
             g_regs.rip += instr->info.length;
         }
     }
-
     void emulate_call(const ZydisDisassembledInstruction* instr) {
         uint64_t return_address = g_regs.rip + instr->info.length;
 
@@ -9565,7 +9458,6 @@ private:
         g_regs.rip = target_rip;
         LOG(L"[+] CALL => 0x" << std::hex << g_regs.rip);
     }
-
     void emulate_ret(const ZydisDisassembledInstruction*) {
         uint64_t ret_addr = 0;
         ReadMemory(g_regs.rsp.q, &ret_addr, 8);
@@ -9573,7 +9465,6 @@ private:
         g_regs.rip = ret_addr;
         LOG(L"[+] RET to => 0x" << std::hex << ret_addr);
     }
-
     void emulate_shl(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -9649,8 +9540,6 @@ private:
 
         LOG(L"[+] SHL => 0x" << std::hex << result);
     }
-
-
     void emulate_shr(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -9706,8 +9595,6 @@ private:
 
         LOG(L"[+] SHR => 0x" << std::hex << val);
     }
-
-
     void emulate_setnp(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
@@ -9720,7 +9607,6 @@ private:
 
         LOG(L"[+] SETNP => " << std::hex << static_cast<int>(value));
     }
-
     void emulate_stosb(const ZydisDisassembledInstruction* instr) {
         uint8_t al_val = static_cast<uint8_t>(g_regs.rax.l);
         uint64_t dest = g_regs.rdi.q;
@@ -9737,7 +9623,6 @@ private:
             << L" to [RDI] = 0x" << dest
             << L", new RDI = 0x" << g_regs.rdi.q);
     }
-
     void emulate_movsb(const ZydisDisassembledInstruction* instr) {
         uint64_t src = g_regs.rsi.q;
         uint64_t dest = g_regs.rdi.q;
@@ -9763,8 +9648,6 @@ private:
             << L", new RSI = 0x" << g_regs.rsi.q
             << L", new RDI = 0x" << g_regs.rdi.q);
     }
-
-
     void emulate_jbe(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
@@ -9781,7 +9664,6 @@ private:
             g_regs.rip += instr->info.length;
         }
     }
-
     void emulate_jnbe(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
@@ -9798,7 +9680,6 @@ private:
             g_regs.rip += instr->info.length;
         }
     }
-
     void emulate_movsd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -9883,8 +9764,6 @@ private:
             LOG(L"[!] Unsupported MOVSD operand combination");
         }
     }
-
-
     void emulate_psrldq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& imm = instr->operands[1];
@@ -9924,7 +9803,6 @@ private:
 
         LOG(L"[+] PSRLDQ xmm, imm8 executed");
     }
-
     void emulate_sar(const ZydisDisassembledInstruction* instr) {
         auto& dst = instr->operands[0];
         auto& src = instr->operands[1];
@@ -9988,7 +9866,6 @@ private:
             << L" ZF=" << g_regs.rflags.flags.ZF
             << L" PF=" << g_regs.rflags.flags.PF);
     }
-
     void emulate_lahf(const ZydisDisassembledInstruction* instr) {
         bool long_mode = (g_regs.rip >> 32) != 0; 
 
@@ -10042,8 +9919,6 @@ private:
         LOG(L"[+] SAHF <= AL=0x" << std::hex << static_cast<int>(al)
             << L" (RFLAGS=0x" << g_regs.rflags.value << L")");
     }
-
-
     void emulate_cpuid(const ZydisDisassembledInstruction*) {
 #if DB_ENABLED
         is_cpuid = 1;
@@ -10150,7 +10025,6 @@ private:
             LOG(L"[!] Unsupported width in VPMASKMOVD: " << width);
         }
     }
-
     void emulate_test(const ZydisDisassembledInstruction* instr) {
         const auto& op1 = instr->operands[0];
         const auto& op2 = instr->operands[1];
@@ -10212,8 +10086,6 @@ private:
 
         LOG(L"[+] NOT => 0x" << std::hex << result);
     }
-
-
     void emulate_neg(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         uint8_t width = instr->info.operand_width; // 8,16,32,64
@@ -10236,7 +10108,6 @@ private:
 
         LOG(L"[+] NEG executed => 0x" << std::hex << result << L" (width: " << (int)width << L")");
     }
-
     void emulate_movd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -10334,8 +10205,6 @@ private:
             LOG(L"[!] Unsupported MOVD operand combination");
         }
     }
-
-
     void emulate_movlhps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -10377,8 +10246,6 @@ private:
             LOG(L"[!] Unsupported MOVLHPS operand combination");
         }
     }
-
-
     void emulate_jmp(const ZydisDisassembledInstruction* instr) {
         const auto& src = instr->operands[0];
         uint64_t val = 0;
@@ -10394,7 +10261,6 @@ private:
 
         LOG(L"[+] JMP => 0x" << std::hex << g_regs.rip);
     }
-
     void emulate_xchg(const ZydisDisassembledInstruction* instr) {
         const auto& op1 = instr->operands[0], op2 = instr->operands[1];
         uint8_t width = instr->info.operand_width;
@@ -10457,8 +10323,6 @@ private:
 
         LOG(L"[+] CVTTSD2SI executed: " << std::fixed << src_double << " -> " << result_int);
     }
-
-
     void emulate_rol(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -10560,7 +10424,6 @@ private:
 
         LOG(L"[+] PADDQ executed");
     }
-
     void emulate_xlatb(const ZydisDisassembledInstruction* instr) {
         uint64_t table_base = g_regs.rbx.q; 
         uint8_t al = g_regs.rax.l;
@@ -10576,8 +10439,6 @@ private:
         LOG(L"[+] XLATB => AL=0x" << std::hex << static_cast<int>(new_value)
             << L" (RAX=0x" << g_regs.rax.q << L")");
     }
-
-
     void emulate_vmovups(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -10617,7 +10478,6 @@ private:
             LOG(L"[+] VMOVUPS (XMM -> YMM) executed, upper bits zeroed");
         }
     }
-
     void emulate_vpmovmskb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0]; // GPR
         const auto& src = instr->operands[1]; // XMM/YMM
@@ -10722,7 +10582,6 @@ private:
             LOG(L"[!] Unsupported operand types for MOVHPD");
         }
     }
-
     void emulate_ucomiss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -10761,8 +10620,6 @@ private:
             << L", SF=" << g_regs.rflags.flags.SF
             << L", AF=" << g_regs.rflags.flags.AF);
     }
-
-
     void emulate_pmovmskb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0]; 
         const auto& src = instr->operands[1];
@@ -10805,7 +10662,6 @@ private:
             LOG(L"[!] Unsupported source size in PMOVMSKB: " << src_size_bits << " bits");
         }
     }
-
     void emulate_vmovdqu(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -10847,7 +10703,6 @@ private:
 
         LOG(L"[+] VMOVNTDQ executed (non-temporal hint ignored in emulation)");
     }
-
     void emulate_setnbe(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
@@ -10867,7 +10722,6 @@ private:
 
         LOG(L"[+] SETNBE => " << value);
     }
-
     void emulate_ror(const ZydisDisassembledInstruction* instr) {
         auto& dst = instr->operands[0];
         auto& src = instr->operands[1];
@@ -10918,7 +10772,6 @@ private:
         LOG("OF : " << g_regs.rflags.flags.OF);
         LOG(L"[+] ROR => 0x" << std::hex << result);
     }
-
     void emulate_jnl(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
@@ -10935,7 +10788,6 @@ private:
             g_regs.rip += instr->info.length;
         }
     }
-
     void emulate_cmovl(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -10960,7 +10812,6 @@ private:
         LOG(L"[+] CMOVL executed: moved 0x" << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
-
     void emulate_cmovo(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -10984,13 +10835,10 @@ private:
         LOG(L"[+] CMOVO executed: moved 0x" << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
-
-  
     void emulate_cbw(const ZydisDisassembledInstruction* instr) {
         g_regs.rax.q = static_cast<int16_t>(static_cast<int8_t>(g_regs.rax.l));
         LOG(L"[+] CBW => AL->AX/RAX = 0x" << std::hex << g_regs.rax.q);
     }
-
     void emulate_cwde(const ZydisDisassembledInstruction* instr) {
         g_regs.rax.q = static_cast<int32_t>(static_cast<int16_t>(g_regs.rax.w));
         LOG(L"[+] CWDE => AX->EAX/RAX = 0x" << std::hex << g_regs.rax.q);
@@ -11005,7 +10853,6 @@ private:
         g_regs.rsi.q += g_regs.rflags.flags.DF ? -1 : 1;
         LOG(L"[+] LODSB executed: AL = 0x" << std::hex << (uint32_t)value << L", RSI = 0x" << g_regs.rsi.q);
     }
-
     void emulate_lodsw(const ZydisDisassembledInstruction* instr) {
         uint16_t value = 0;
         if (!ReadMemory(g_regs.rsi.q, &value, 16)) {
@@ -11016,7 +10863,6 @@ private:
         g_regs.rsi.q += g_regs.rflags.flags.DF ? -2 : 2;
         LOG(L"[+] LODSW executed: AX = 0x" << std::hex << value << L", RSI = 0x" << g_regs.rsi.q);
     }
-
     void emulate_lodsd(const ZydisDisassembledInstruction* instr) {
         uint32_t value = 0;
         if (!ReadMemory(g_regs.rsi.q, &value, 32)) {
@@ -11027,7 +10873,6 @@ private:
         g_regs.rsi.q += g_regs.rflags.flags.DF ? -4 : 4;
         LOG(L"[+] LODSD executed: EAX = 0x" << std::hex << value << L", RSI = 0x" << g_regs.rsi.q);
     }
-
     void emulate_lodsq(const ZydisDisassembledInstruction* instr) {
         uint64_t value = 0;
         if (!ReadMemory(g_regs.rsi.q, &value, 64)) {
@@ -11038,11 +10883,6 @@ private:
         g_regs.rsi.q += g_regs.rflags.flags.DF ? -8 : 8;
         LOG(L"[+] LODSQ executed: RAX = 0x" << std::hex << g_regs.rax.q << L", RSI = 0x" << g_regs.rsi.q);
     }
-
-
-
-
-
     void emulate_vmovaps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
@@ -11103,7 +10943,6 @@ private:
             LOG(L"[+] VMOVAPS (XMM) executed");
         }
     }
-
     void emulate_bsr(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];  
         const auto& src = instr->operands[1];  
@@ -11148,7 +10987,6 @@ private:
         g_regs.rflags.flags.PF = !parity(index);
         LOG(L"[+] BSR: Found highest set bit index = " << index << L", ZF=0");
     }
-
     void emulate_setns(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         uint8_t value = !g_regs.rflags.flags.SF;
@@ -11158,7 +10996,6 @@ private:
 
         LOG(L"[+] SETNS => " << std::hex << static_cast<int>(value));
     }
-
     void emulate_setnz(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         uint8_t value = !g_regs.rflags.flags.ZF;
@@ -11224,8 +11061,6 @@ private:
         LOG(L"[+] LEAVE executed: RSP=" << std::hex << g_regs.rsp.q
             << L", RBP=" << g_regs.rbp.q);
     }
-
-
     void emulate_jl(const ZydisDisassembledInstruction* instr) {
         uint64_t target = 0;
         const auto& op = instr->operands[0];
@@ -11246,7 +11081,6 @@ private:
 
         LOG(L"[+] JL to => 0x" << std::hex << g_regs.rip);
     }
-
     void emulate_setz(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         uint8_t value = g_regs.rflags.flags.ZF;
@@ -11282,7 +11116,6 @@ private:
 
         LOG(L"[+] SETP => " << std::hex << static_cast<int>(value));
     }
-
     void emulate_pcmpistri(const ZydisDisassembledInstruction* instr) {
         const auto& src1 = instr->operands[0];
         const auto& src2 = instr->operands[1];
@@ -11337,8 +11170,6 @@ private:
             << ", ZF=" << g_regs.rflags.flags.ZF
             << ", CF=" << g_regs.rflags.flags.CF);
     }
-
-
     void emulate_jns(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
@@ -11355,7 +11186,6 @@ private:
             g_regs.rip += instr->info.length;
         }
     }
-
 
     //----------------------- read / write instruction  -------------------------
     inline uint64_t zero_extend(uint64_t value, uint8_t width) {
