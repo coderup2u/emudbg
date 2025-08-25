@@ -1332,8 +1332,12 @@ public:
             { ZYDIS_MNEMONIC_VBROADCASTSS, &CPU::emulate_vbroadcastss },
             { ZYDIS_MNEMONIC_VBROADCASTSD, &CPU::emulate_vbroadcastsd },
             { ZYDIS_MNEMONIC_VBROADCASTF128, &CPU::emulate_vbroadcastf128 },
+            { ZYDIS_MNEMONIC_PMINUB, &CPU::emulate_pminub },
+            { ZYDIS_MNEMONIC_PMINUW, &CPU::emulate_pminuw },
+            { ZYDIS_MNEMONIC_VPMINUB, &CPU::emulate_vpminub },
+            { ZYDIS_MNEMONIC_VPMINUW, &CPU::emulate_vpminuw },
 
-            
+    
         };
 
 
@@ -11728,6 +11732,218 @@ private:
             LOG(L"[!] Unsupported destination width for VBROADCASTF128: " << width);
         }
     }
+    void emulate_pminub(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size;
+
+        if (width != 128) {
+            LOG(L"[!] Unsupported width in PMINUB: " << width);
+            return;
+        }
+
+        __m128i dstVal;
+        if (!read_operand_value(dst, 128, dstVal)) {
+            LOG(L"[!] Failed to read destination operand for PMINUB");
+            return;
+        }
+
+        __m128i srcVal;
+        if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+            srcVal = get_register_value<__m128i>(src.reg.value);
+        }
+        else if (src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+            if (!read_operand_value(src, 128, srcVal)) {
+                LOG(L"[!] Failed to read memory source operand for PMINUB");
+                return;
+            }
+        }
+        else {
+            LOG(L"[!] Unsupported source operand type for PMINUB");
+            return;
+        }
+
+        __m128i result = _mm_min_epu8(dstVal, srcVal);
+
+        if (!write_operand_value(dst, 128, result)) {
+            LOG(L"[!] Failed to write result for PMINUB");
+            return;
+        }
+
+        LOG(L"[+] PMINUB executed (XMM), byte-wise min computed");
+    }
+    void emulate_pminuw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size;
+
+        if (width != 128) {
+            LOG(L"[!] Unsupported width in PMINUW: " << width);
+            return;
+        }
+
+
+        __m128i dstVal;
+        if (!read_operand_value(dst, 128, dstVal)) {
+            LOG(L"[!] Failed to read destination operand for PMINUW");
+            return;
+        }
+
+        __m128i srcVal;
+        if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+            srcVal = get_register_value<__m128i>(src.reg.value);
+        }
+        else if (src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+            if (!read_operand_value(src, 128, srcVal)) {
+                LOG(L"[!] Failed to read memory source operand for PMINUW");
+                return;
+            }
+        }
+        else {
+            LOG(L"[!] Unsupported source operand type for PMINUW");
+            return;
+        }
+
+        __m128i result = _mm_min_epu16(dstVal, srcVal);
+
+
+        if (!write_operand_value(dst, 128, result)) {
+            LOG(L"[!] Failed to write result for PMINUW");
+            return;
+        }
+
+        LOG(L"[+] PMINUW executed (XMM), word-wise min computed");
+    }
+    void emulate_vpminub(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+
+        uint32_t width = dst.size;
+
+        if (width == 128) {
+            __m128i a = get_register_value<__m128i>(src1.reg.value);
+            __m128i b;
+
+            if (src2.type == ZYDIS_OPERAND_TYPE_REGISTER)
+                b = get_register_value<__m128i>(src2.reg.value);
+            else if (src2.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+                if (!read_operand_value(src2, 128, b)) {
+                    LOG(L"[!] Failed to read memory source operand for VPMINUB (XMM)");
+                    return;
+                }
+            }
+            else {
+                LOG(L"[!] Unsupported source operand type for VPMINUB (XMM)");
+                return;
+            }
+
+            __m128i result = _mm_min_epu8(a, b);
+
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write destination operand for VPMINUB (XMM)");
+                return;
+            }
+
+            LOG(L"[+] VPMINUB executed (XMM), byte-wise min computed");
+        }
+        else if (width == 256) {
+            __m256i a = get_register_value<__m256i>(src1.reg.value);
+            __m256i b;
+
+            if (src2.type == ZYDIS_OPERAND_TYPE_REGISTER)
+                b = get_register_value<__m256i>(src2.reg.value);
+            else if (src2.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+                if (!read_operand_value(src2, 256, b)) {
+                    LOG(L"[!] Failed to read memory source operand for VPMINUB (YMM)");
+                    return;
+                }
+            }
+            else {
+                LOG(L"[!] Unsupported source operand type for VPMINUB (YMM)");
+                return;
+            }
+
+            __m256i result = _mm256_min_epu8(a, b);
+
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write destination operand for VPMINUB (YMM)");
+                return;
+            }
+
+            LOG(L"[+] VPMINUB executed (YMM), byte-wise min computed");
+        }
+        else {
+            LOG(L"[!] Unsupported width for VPMINUB: " << width);
+        }
+    }
+    void emulate_vpminuw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+
+        uint32_t width = dst.size;
+
+        if (width == 128) {
+            __m128i a = get_register_value<__m128i>(src1.reg.value);
+            __m128i b;
+
+            if (src2.type == ZYDIS_OPERAND_TYPE_REGISTER)
+                b = get_register_value<__m128i>(src2.reg.value);
+            else if (src2.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+                if (!read_operand_value(src2, 128, b)) {
+                    LOG(L"[!] Failed to read memory source operand for VPMINUW (XMM)");
+                    return;
+                }
+            }
+            else {
+                LOG(L"[!] Unsupported source operand type for VPMINUW (XMM)");
+                return;
+            }
+
+            __m128i result = _mm_min_epu16(a, b);
+
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write destination operand for VPMINUW (XMM)");
+                return;
+            }
+
+            LOG(L"[+] VPMINUW executed (XMM), word-wise min computed");
+        }
+        else if (width == 256) {
+            __m256i a = get_register_value<__m256i>(src1.reg.value);
+            __m256i b;
+
+            if (src2.type == ZYDIS_OPERAND_TYPE_REGISTER)
+                b = get_register_value<__m256i>(src2.reg.value);
+            else if (src2.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+                if (!read_operand_value(src2, 256, b)) {
+                    LOG(L"[!] Failed to read memory source operand for VPMINUW (YMM)");
+                    return;
+                }
+            }
+            else {
+                LOG(L"[!] Unsupported source operand type for VPMINUW (YMM)");
+                return;
+            }
+
+            __m256i result = _mm256_min_epu16(a, b);
+
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write destination operand for VPMINUW (YMM)");
+                return;
+            }
+
+            LOG(L"[+] VPMINUW executed (YMM), word-wise min computed");
+        }
+        else {
+            LOG(L"[!] Unsupported width for VPMINUW: " << width);
+        }
+    }
+
+
 
 
 
