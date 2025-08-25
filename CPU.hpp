@@ -1329,6 +1329,9 @@ public:
             { ZYDIS_MNEMONIC_VMOVAPD, &CPU::emulate_vmovapd },
             { ZYDIS_MNEMONIC_VMOVUPD, &CPU::emulate_vmovupd },
             { ZYDIS_MNEMONIC_VEXTRACTF128, &CPU::emulate_vextractf128 },
+            { ZYDIS_MNEMONIC_VBROADCASTSS, &CPU::emulate_vbroadcastss },
+            { ZYDIS_MNEMONIC_VBROADCASTSD, &CPU::emulate_vbroadcastsd },
+            { ZYDIS_MNEMONIC_VBROADCASTF128, &CPU::emulate_vbroadcastf128 },
 
             
         };
@@ -11623,6 +11626,107 @@ private:
         }
 
         LOG(L"[+] VEXTRACTF128 executed (lane " << lane << " extracted to XMM)");
+    }
+    void emulate_vbroadcastss(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size;
+
+        float value = 0.0f;
+        if (!read_operand_value(src, 32, value)) {
+            LOG(L"[!] Failed to read source operand for VBROADCASTSS");
+            return;
+        }
+
+        if (width == 128) {
+            __m128 result = _mm_set1_ps(value); 
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write destination operand for VBROADCASTSS (XMM)");
+                return;
+            }
+            LOG(L"[+] VBROADCASTSS executed (XMM), value=" << value);
+        }
+        else if (width == 256) {
+            __m256 result = _mm256_set1_ps(value); 
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write destination operand for VBROADCASTSS (YMM)");
+                return;
+            }
+            LOG(L"[+] VBROADCASTSS executed (YMM), value=" << value);
+        }
+        else {
+            LOG(L"[!] Unsupported width in VBROADCASTSS: " << width);
+        }
+    }
+    void emulate_vbroadcastsd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size; 
+
+        double value = 0.0;
+        if (!read_operand_value(src, 64, value)) { 
+            LOG(L"[!] Failed to read source operand for VBROADCASTSD");
+            return;
+        }
+
+        if (width == 256) {
+            __m256d result = _mm256_set1_pd(value); 
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write destination operand for VBROADCASTSD (YMM)");
+                return;
+            }
+            LOG(L"[+] VBROADCASTSD executed (YMM), value=" << value);
+        }
+        else if (width == 128) { 
+            __m128d result = _mm_set1_pd(value); 
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write destination operand for VBROADCASTSD (XMM)");
+                return;
+            }
+            LOG(L"[+] VBROADCASTSD executed (XMM), value=" << value);
+        }
+        else {
+            LOG(L"[!] Unsupported width in VBROADCASTSD: " << width);
+        }
+    }
+    void emulate_vbroadcastf128(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size; 
+
+        if (width == 256) {
+
+            if (src.size == 128) {
+                if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+            
+                    __m128 src_val = get_register_value<__m128>(src.reg.value);
+                    __m256 result = _mm256_broadcast_ps(&src_val);
+                    write_operand_value(dst, 256, result);
+                    LOG(L"[+] VBROADCASTF128 executed (float), source=XMM, dest=YMM");
+                }
+                else if (src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+                 
+                    __m128d src_val;
+                    if (!read_operand_value(src, 128, src_val)) {
+                        LOG(L"[!] Failed to read source operand for VBROADCASTF128 (memory)");
+                        return;
+                    }
+                    __m256d result = _mm256_broadcast_pd(&src_val);
+                    write_operand_value(dst, 256, result);
+                    LOG(L"[+] VBROADCASTF128 executed (double), source=mem, dest=YMMd");
+                }
+            }
+            else {
+                LOG(L"[!] Unsupported source size for VBROADCASTF128: " << src.size);
+                return;
+            }
+        }
+        else {
+            LOG(L"[!] Unsupported destination width for VBROADCASTF128: " << width);
+        }
     }
 
 
