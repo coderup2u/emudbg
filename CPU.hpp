@@ -1336,6 +1336,7 @@ public:
             { ZYDIS_MNEMONIC_PMINUW, &CPU::emulate_pminuw },
             { ZYDIS_MNEMONIC_VPMINUB, &CPU::emulate_vpminub },
             { ZYDIS_MNEMONIC_VPMINUW, &CPU::emulate_vpminuw },
+            { ZYDIS_MNEMONIC_VPADDW, &CPU::emulate_vpaddw },
 
     
         };
@@ -11942,6 +11943,35 @@ private:
             LOG(L"[!] Unsupported width for VPMINUW: " << width);
         }
     }
+    void emulate_vpaddw(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        auto width = dst.size;
+
+        __m256i a, b;
+
+        if (!read_operand_value(src1, width, a)) {
+            LOG(L"[!] Failed to read first source operand in VPADDW");
+            return;
+        }
+
+
+        if (!read_operand_value(src2, width, b)) {
+            LOG(L"[!] Failed to read second source operand in VPADDW");
+            return;
+        }
+
+        __m256i result = _mm256_add_epi16(a, b);
+
+        if (!write_operand_value(dst, width, result)) {
+            LOG(L"[!] Failed to write destination operand in VPADDW");
+            return;
+        }
+
+        LOG(L"[+] VPADDW executed");
+    }
+
 
 
 
