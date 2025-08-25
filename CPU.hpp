@@ -1325,10 +1325,10 @@ public:
             { ZYDIS_MNEMONIC_KMOVQ, &CPU::emulate_kmovq },   
             { ZYDIS_MNEMONIC_ROUNDPS, &CPU::emulate_roundps },
             { ZYDIS_MNEMONIC_VROUNDPS, &CPU::emulate_vroundps },
-
-
-
-
+            { ZYDIS_MNEMONIC_VPERMILPS, &CPU::emulate_vpermilps },
+            { ZYDIS_MNEMONIC_VMOVAPD, &CPU::emulate_vmovapd },
+            { ZYDIS_MNEMONIC_VMOVUPD, &CPU::emulate_vmovupd },
+            { ZYDIS_MNEMONIC_VEXTRACTF128, &CPU::emulate_vextractf128 },
 
             
         };
@@ -2458,6 +2458,34 @@ private:
                 fr[i] = fa[i];
         }
         return _mm256_load_ps(fr);
+    }
+
+
+    inline __m128 emulate_permute_ps(__m128 a, uint8_t imm) {
+        alignas(16) float src[4];
+        alignas(16) float dst[4];
+        _mm_store_ps(src, a);
+
+        for (int i = 0; i < 4; i++) {
+            int sel = (imm >> (2 * i)) & 0x3; 
+            dst[i] = src[sel];
+        }
+
+        return _mm_load_ps(dst);
+    }
+    inline __m256 emulate_permute_ps_256(__m256 a, uint8_t imm) {
+        alignas(32) float src[8];
+        alignas(32) float dst[8];
+        _mm256_store_ps(src, a);
+
+        for (int blk = 0; blk < 2; blk++) {
+            for (int i = 0; i < 4; i++) {
+                int sel = (imm >> (2 * i)) & 0x3;
+                dst[blk * 4 + i] = src[blk * 4 + sel];
+            }
+        }
+
+        return _mm256_load_ps(dst);
     }
 
     // ------------------- Internal State -------------------
@@ -11340,6 +11368,264 @@ private:
 
         LOG(L"[+] VROUNDPS executed (full 256-bit YMM updated)");
     }
+    void emulate_vpermilps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+
+        const uint32_t width = dst.size; // 128 or 256
+        if (width != 128 && width != 256) {
+            LOG(L"[!] Unsupported width in vpermilps: " << (int)width);
+            return;
+        }
+
+        bool isImmForm = (src2.type == ZYDIS_OPERAND_TYPE_IMMEDIATE);
+
+        if (width == 128) {
+            __m128 a{};
+            if (!read_operand_value(src1, 128, a)) {
+                LOG(L"[!] Failed to read source in vpermilps (128-bit)");
+                return;
+            }
+
+            __m128 r{};
+            if (isImmForm) {
+                uint8_t imm = (uint8_t)src2.imm.value.u;
+                r = emulate_permute_ps(a, imm);
+                LOG(L"[+] VPERMILPS (XMM imm) executed, imm=0x" << std::hex << (int)imm);
+            }
+            else {
+                __m128i c{};
+                if (!read_operand_value(src2, 128, c)) {
+                    LOG(L"[!] Failed to read control in vpermilps (128-bit var)");
+                    return;
+                }
+                r = _mm_permutevar_ps(a, c);
+                LOG(L"[+] VPERMILPS (XMM var) executed");
+            }
+
+        if (!write_operand_value(dst, 128, r)) {
+            LOG(L"[!] Failed to write dst in vpermilps (128)");
+            return;
+        }
+        }
+        else if (width == 256) {
+            __m256 a{};
+            if (!read_operand_value(src1, 256, a)) {
+                LOG(L"[!] Failed to read source in vpermilps (256-bit)");
+                return;
+            }
+
+            __m256 r{};
+            if (isImmForm) {
+                uint8_t imm = (uint8_t)src2.imm.value.u;
+                r = emulate_permute_ps_256(a, imm);
+                LOG(L"[+] VPERMILPS (YMM imm) executed, imm=0x" << std::hex << (int)imm);
+            }
+            else {
+                __m256i c{};
+                if (!read_operand_value(src2, 256, c)) {
+                    LOG(L"[!] Failed to read control in vpermilps (256-bit var)");
+                    return;
+                }
+                r = _mm256_permutevar_ps(a, c);
+                LOG(L"[+] VPERMILPS (YMM var) executed");
+            }
+
+
+            if (!write_operand_value(dst, 256, r)) {
+                LOG(L"[!] Failed to write dst in vpermilps (256)");
+                return;
+            }
+        }
+    }
+    void emulate_vmovapd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size; 
+
+        if (width == 512) {
+            __m512d val;
+
+            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(src, 64, instr)) {
+                LOG(L"[!] Misaligned memory access in VMOVAPD (ZMM)");
+                return;
+            }
+
+            if (!read_operand_value(src, width, val)) {
+                LOG(L"[!] Failed to read source operand in VMOVAPD");
+                return;
+            }
+
+            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(dst, 64, instr)) {
+                LOG(L"[!] Misaligned memory write in VMOVAPD (ZMM)");
+                return;
+            }
+
+            if (!write_operand_value(dst, width, val)) {
+                LOG(L"[!] Failed to write destination operand in VMOVAPD");
+                return;
+            }
+
+            LOG(L"[+] VMOVAPD (ZMM) executed");
+        }
+        else if (width == 256) {
+            __m256d val;
+
+            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(src, 32, instr)) {
+                LOG(L"[!] Misaligned memory access in VMOVAPD (YMM)");
+                return;
+            }
+
+            if (!read_operand_value(src, width, val)) {
+                LOG(L"[!] Failed to read source operand in VMOVAPD");
+                return;
+            }
+
+            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(dst, 32, instr)) {
+                LOG(L"[!] Misaligned memory write in VMOVAPD (YMM)");
+                return;
+            }
+
+            if (!write_operand_value(dst, width, val)) {
+                LOG(L"[!] Failed to write destination operand in VMOVAPD");
+                return;
+            }
+
+            LOG(L"[+] VMOVAPD (YMM) executed");
+        }
+        else if (width == 128) {
+            __m128d val;
+
+            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(src, 16, instr)) {
+                LOG(L"[!] Misaligned memory access in VMOVAPD (XMM)");
+                return;
+            }
+
+            if (!read_operand_value(src, width, val)) {
+                LOG(L"[!] Failed to read source operand in VMOVAPD");
+                return;
+            }
+
+            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(dst, 16, instr)) {
+                LOG(L"[!] Misaligned memory write in VMOVAPD (XMM)");
+                return;
+            }
+
+
+            if (dst.type == ZYDIS_REGCLASS_XMM) {
+                ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+                set_register_value(dstYMM, YMM{});
+            }
+
+            if (!write_operand_value(dst, width, val)) {
+                LOG(L"[!] Failed to write destination operand in VMOVAPD");
+                return;
+            }
+
+            LOG(L"[+] VMOVAPD (XMM) executed");
+        }
+        else {
+            LOG(L"[!] Unsupported width in VMOVAPD: " << width);
+        }
+    }
+    void emulate_vmovupd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size; 
+
+        if (width == 512) {
+            __m512d val;
+
+            if (!read_operand_value(src, width, val)) {
+                LOG(L"[!] Failed to read source operand in VMOVUPD (ZMM)");
+                return;
+            }
+
+            if (!write_operand_value(dst, width, val)) {
+                LOG(L"[!] Failed to write destination operand in VMOVUPD (ZMM)");
+                return;
+            }
+
+            LOG(L"[+] VMOVUPD (ZMM) executed");
+        }
+        else if (width == 256) {
+            __m256d val;
+
+            if (!read_operand_value(src, width, val)) {
+                LOG(L"[!] Failed to read source operand in VMOVUPD (YMM)");
+                return;
+            }
+
+            if (!write_operand_value(dst, width, val)) {
+                LOG(L"[!] Failed to write destination operand in VMOVUPD (YMM)");
+                return;
+            }
+
+            LOG(L"[+] VMOVUPD (YMM) executed");
+        }
+        else if (width == 128) {
+            __m128d val;
+
+            if (!read_operand_value(src, width, val)) {
+                LOG(L"[!] Failed to read source operand in VMOVUPD (XMM)");
+                return;
+            }
+
+            if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+                dst.reg.value >= ZYDIS_REGISTER_XMM0 &&
+                dst.reg.value <= ZYDIS_REGISTER_XMM31)
+            {
+                ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+                set_register_value(dstYMM, YMM{});
+            }
+
+            if (!write_operand_value(dst, width, val)) {
+                LOG(L"[!] Failed to write destination operand in VMOVUPD (XMM)");
+                return;
+            }
+
+            LOG(L"[+] VMOVUPD (XMM) executed");
+        }
+        else {
+            LOG(L"[!] Unsupported width in VMOVUPD: " << width);
+        }
+    }
+    void emulate_vextractf128(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        int lane = instr->operands[2].imm.value.u; 
+
+        if (lane != 0 && lane != 1) {
+            LOG(L"[!] Invalid lane for VEXTRACTF128: " << lane);
+            return;
+        }
+
+        YMM srcYmm;
+        if (!read_operand_value(src, 256, srcYmm)) {
+            LOG(L"[!] Failed to read source YMM for VEXTRACTF128");
+            return;
+        }
+
+        __m128 extracted;
+        extracted = _mm_loadu_ps(reinterpret_cast<const float*>(
+            lane == 0 ? srcYmm.xmm : srcYmm.ymmh
+            ));
+
+        ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+        set_register_value(dstYMM, YMM{});
+
+        if (!write_operand_value(dst, 128, extracted)) {
+            LOG(L"[!] Failed to write destination XMM for VEXTRACTF128");
+            return;
+        }
+
+        LOG(L"[+] VEXTRACTF128 executed (lane " << lane << " extracted to XMM)");
+    }
+
+
 
 
     //----------------------- read / write instruction  -------------------------
