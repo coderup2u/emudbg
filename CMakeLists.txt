@@ -8,6 +8,11 @@ if(MSVC)
     set_source_files_properties(asm_function.asm PROPERTIES LANGUAGE ASM_MASM)
 endif()
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    message(STATUS "Setting build type to Release by default")
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
+endif()
+
 # Create the main executable
 add_executable(emudbg "emudbg.cpp" "asm_function.asm")
 
