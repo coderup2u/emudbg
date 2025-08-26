@@ -31,7 +31,7 @@ Windows API functions are skipped through debugger stepping, allowing seamless e
     ```bash
     git clone --recurse-submodules https://github.com/mojtabafalleh/emudbg
     cd emudbg
-    cmake .
+    cmake -B build
     ```
 
 2. **Or download the latest prebuilt `emudbg.exe` from the [Releases](https://github.com/mojtabafalleh/emudbg/releases) page**
