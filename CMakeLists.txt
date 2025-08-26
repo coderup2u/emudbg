@@ -19,11 +19,3 @@ endif()
 # Link with your local static lib
 target_link_libraries(emudbg PRIVATE ${CMAKE_SOURCE_DIR}/libs/zydis_wrapper.lib)
 
-
-add_subdirectory(deps/zyemu)
-
-
-target_link_libraries(emudbg PRIVATE zyemu)
-
-
-target_include_directories(emudbg PRIVATE deps/zyemu)
