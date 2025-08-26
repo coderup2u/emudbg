@@ -20,35 +20,51 @@ int wmain(int argc, wchar_t* argv[]) {
     uint64_t targetRVA = 0;
     bool hasRVA = false;
     ReadGDTR(&gdtr);
+#if AUTO_PATCH_HW
+    std::wstring patchModule;       // -p <module_name>
+    std::wstring patchSection;      // -section <section_name>
+#endif
+
     for (int i = 1; i < argc; ++i) {
         std::wstring arg = argv[i];
-        if (arg == L"-m" && i + 1 < argc) {
-            targetModuleName = argv[++i];
-            waitForModule = true;
+
+#if AUTO_PATCH_HW
+        if (arg == L"-p" && i + 1 < argc) {
+            patchModule = argv[++i];
         }
-        else if (arg == L"-b" && i + 1 < argc) {
-            std::wstring type = argv[++i];
-            std::transform(type.begin(), type.end(), type.begin(), ::towlower);
-            if (type == L"hardware") bpType = BreakpointType::Hardware;
-            else if (type == L"software") bpType = BreakpointType::Software;
+        else if (arg == L"-section" && i + 1 < argc) {
+            patchSection = argv[++i];
+        }
+        else
+#endif
+            if (arg == L"-m" && i + 1 < argc) {
+                targetModuleName = argv[++i];
+                waitForModule = true;
+            }
+            else if (arg == L"-b" && i + 1 < argc) {
+                std::wstring type = argv[++i];
+                std::transform(type.begin(), type.end(), type.begin(), ::towlower);
+                if (type == L"hardware") bpType = BreakpointType::Hardware;
+                else if (type == L"software") bpType = BreakpointType::Software;
+                else {
+                    wprintf(L"[-] Invalid breakpoint type: %s\n", type.c_str());
+                    return 1;
+                }
+            }
+            else if ((arg == L"-r" || arg == L"-rva") && i + 1 < argc) {
+                std::wistringstream iss(argv[++i]);
+                iss >> std::hex >> targetRVA;
+                if (iss.fail()) {
+                    wprintf(L"[-] Invalid hex value for RVA: %s\n", argv[i]);
+                    return 1;
+                }
+                hasRVA = true;
+            }
             else {
-                wprintf(L"[-] Invalid breakpoint type: %s\n", type.c_str());
-                return 1;
+                exePath = arg;
             }
-        }
-        else if ((arg == L"-r" || arg == L"-rva") && i + 1 < argc) {
-            std::wistringstream iss(argv[++i]);
-            iss >> std::hex >> targetRVA;
-            if (iss.fail()) {
-                wprintf(L"[-] Invalid hex value for RVA: %s\n", argv[i]);
-                return 1;
-            }
-            hasRVA = true;
-        }
-        else {
-            exePath = arg;
-        }
     }
+
 
     if (exePath.empty()) {
         wprintf(L"Usage: %s <exe_path> [-m target.dll] [-b software|hardware]\n", argv[0]);
@@ -199,7 +215,7 @@ int wmain(int argc, wchar_t* argv[]) {
                             if (!hasRVA && !waitForModule) {
                                 auto modEntryRVA = GetEntryPointRVA(buffer);
                                 auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
-
+                              
                                 HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
                                 if (modEntryRVA)
                                     modTLSRVAs.push_back(modEntryRVA);

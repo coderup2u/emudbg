@@ -46,8 +46,8 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 #define FUll_user_MODE 1
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
-//using jit for emulation WIP
-#define Jit_ENABLED 0
+// Enable automatic patching of hardware checks
+#define AUTO_PATCH_HW 0
 //------------------------------------------
 
 
@@ -9819,6 +9819,9 @@ private:
 #endif
 #if analyze_ENABLED
         LOG_analyze(WHITE, "CPUID  at : 0x"<< std::hex <<g_regs.rip);
+#endif
+ #if AUTO_PATCH_HW
+        std::cout <<"CPUID : 0x"<< std::hex << g_regs.rip <<"  [Patched!]" << std::endl;
 #endif
         int cpu_info[4];
         int input_eax = static_cast<int>(g_regs.rax.q);
