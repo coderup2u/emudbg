@@ -21,6 +21,8 @@ if (CMAKE_VERSION VERSION_GREATER 3.12)
     set_property(TARGET emudbg PROPERTY CXX_STANDARD 20)
 endif()
 
-# Link with your local static lib
-target_link_libraries(emudbg PRIVATE ${CMAKE_SOURCE_DIR}/libs/zydis_wrapper.lib)
 
+target_link_libraries(emudbg PRIVATE
+    $<$<CONFIG:Debug>:${CMAKE_SOURCE_DIR}/libs/zydis_wrapper_d.lib>
+    $<$<CONFIG:Release>:${CMAKE_SOURCE_DIR}/libs/zydis_wrapper.lib>
+)
