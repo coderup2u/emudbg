@@ -625,70 +625,72 @@ bool IsInPatchRange(uint64_t addr) {
     
     return false;
 }
-bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size_t patchSize)
-{
-    std::wstring originalFilePath = patchModule_File_Path; 
+
+bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size_t patchSize) {
+    std::wstring originalFilePath = patchModule.empty() ? exePath : patchModule_File_Path;
+    std::wstring patchedFilePath = originalFilePath + L"_patched";
+
+
+    {
+        std::ifstream src(originalFilePath, std::ios::binary);
+        if (!src) {
+            std::wcerr << L"Failed to open original file for copying.\n";
+            return false;
+        }
+
+        std::ofstream dst(patchedFilePath, std::ios::binary);
+        if (!dst) {
+            std::wcerr << L"Failed to create patched file.\n";
+            return false;
+        }
+
+        dst << src.rdbuf();
+        src.close();
+        dst.close();
+    }
 
     if (!IsInPatchRange(memoryAddress)) {
         std::wcerr << L"Memory address is outside of patchable range.\n";
         return false;
     }
 
-
     uint64_t rva = memoryAddress - patch_modules_ranges.first;
 
-    IMAGE_SECTION_HEADER* section = nullptr;
+    IMAGE_SECTION_HEADER secHdr{};
+    bool found = false;
     for (auto& sec : sections) {
         uint64_t start = sec.VirtualAddress;
         uint64_t end = start + max(sec.Misc.VirtualSize, sec.SizeOfRawData);
         if (rva >= start && rva < end) {
-            section = &sec;
+            secHdr = sec;
+            found = true;
             break;
         }
     }
 
-    if (!section) {
+    if (!found) {
         std::wcerr << L"RVA is not inside any section.\n";
         return false;
     }
 
-    uint64_t fileOffset = (rva - section->VirtualAddress) + section->PointerToRawData;
+    uint64_t fileOffset = (rva - secHdr.VirtualAddress) + secHdr.PointerToRawData;
 
-    std::ifstream inFile(originalFilePath, std::ios::binary);
-    if (!inFile) {
-        std::wcerr << L"Failed to open input file.\n";
-        return false;
-    }
 
-    inFile.seekg(0, std::ios::end);
-    size_t fileSize = static_cast<size_t>(inFile.tellg());
-    inFile.seekg(0, std::ios::beg);
-
-    std::cout << "fileOffset : 0x" << std::hex << fileOffset << std::endl;
-    std::cout << "patchSize : 0x" << std::hex << patchSize << std::endl;
-    std::cout << "fileSize : 0x" << std::hex << fileSize << std::endl;
-
-    if (fileOffset + patchSize > fileSize) {
-        std::wcerr << L"Patch exceeds file size.\n";
-        return false;
-    }
-
-    std::vector<char> buffer(fileSize);
-    inFile.read(buffer.data(), fileSize);
-    inFile.close();
-
-    memcpy(buffer.data() + fileOffset, patchData, patchSize);
-
-    std::wstring newFileName = originalFilePath + L"_patched";
-    std::ofstream outFile(newFileName, std::ios::binary);
+    std::fstream outFile(patchedFilePath, std::ios::binary | std::ios::in | std::ios::out);
     if (!outFile) {
-        std::wcerr << L"Failed to create output file.\n";
+        std::wcerr << L"Failed to open patched file for writing.\n";
         return false;
     }
 
-    outFile.write(buffer.data(), buffer.size());
-    outFile.close();
+    outFile.seekp(fileOffset, std::ios::beg);
+    outFile.write(patchData, patchSize);
 
+    if (!outFile) {
+        std::wcerr << L"Failed to write patch.\n";
+        return false;
+    }
+
+    outFile.close();
     return true;
 }
 
