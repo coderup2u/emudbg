@@ -58,6 +58,8 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 #define LOG(x)
 #endif
 
+std::wstring exePath;
+
 union GPR {
     uint64_t q;
     uint32_t d;
@@ -610,13 +612,74 @@ inline void SetConsoleColor(ConsoleColor color) {
 #if AUTO_PATCH_HW
 uint64_t patchSectionAddress = 0;
 std::wstring patchModule;
+std::wstring patchModule_File_Path;
 std::pair<uint64_t, uint64_t> patch_modules_ranges;
+const size_t patchOffsetFromInstruction = 5;
+ int patchDistance = 0;
 bool IsInPatchRange(uint64_t addr) {
 
         if (addr >= patch_modules_ranges.first && addr <= patch_modules_ranges.second)
             return true;
     
     return false;
+}
+bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size_t patchSize)
+{
+    std::wstring originalFilePath;
+    if (patchModule.empty())
+        originalFilePath = exePath;
+    else
+        originalFilePath = patchModule_File_Path;
+
+
+    if (!IsInPatchRange(memoryAddress)) {
+        std::wcerr << L"Memory address is outside of patchable range.\n";
+        return false;
+    }
+
+    uint64_t offsetInFile = memoryAddress - patch_modules_ranges.first;
+
+
+    size_t pos = originalFilePath.find_last_of(L"\\/");
+    std::wstring justName = (pos == std::wstring::npos) ? originalFilePath : originalFilePath.substr(pos + 1);
+    std::wstring newFileName = justName + L"_patched";
+
+    std::ifstream inFile(originalFilePath, std::ios::binary);
+    if (!inFile) {
+        std::wcerr << L"Failed to open input file.\n";
+        return false;
+    }
+
+    inFile.seekg(0, std::ios::end);
+    size_t fileSize = static_cast<size_t>(inFile.tellg());
+    inFile.seekg(0, std::ios::beg);
+
+    char* buffer = new char[fileSize];
+    inFile.read(buffer, fileSize);
+    inFile.close();
+
+
+    if (offsetInFile + patchSize > fileSize) {
+        std::wcerr << L"Patch exceeds file size.\n";
+        delete[] buffer;
+        return false;
+    }
+
+    memcpy(buffer + offsetInFile, patchData, patchSize);
+
+
+    std::ofstream outFile(newFileName, std::ios::binary);
+    if (!outFile) {
+        std::wcerr << L"Failed to create output file.\n";
+        delete[] buffer;
+        return false;
+    }
+    outFile.write(buffer, fileSize);
+    outFile.close();
+
+    delete[] buffer;
+    std::wcout << L"File patched and saved as: " << newFileName << L"\n";
+    return true;
 }
 
 

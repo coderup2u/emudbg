@@ -14,7 +14,7 @@ int wmain(int argc, wchar_t* argv[]) {
         return 1;
     }
 
-    std::wstring exePath;
+
     std::wstring targetModuleName;
     bool waitForModule = false;
     uint64_t targetRVA = 0;
@@ -151,7 +151,7 @@ int wmain(int argc, wchar_t* argv[]) {
                     std::transform(lowerPatchTarget.begin(), lowerPatchTarget.end(), lowerPatchTarget.begin(), ::towlower);
                     if ((lowerLoaded.find(lowerPatchTarget) != std::wstring::npos) && patchSectionAddress == 0 && !patchSection.empty()) {
                         uint64_t dllBase = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
-
+                        patchModule_File_Path = lowerLoaded;
 
                         IMAGE_DOS_HEADER dosHdr{};
                         ReadProcessMemory(pi.hProcess, ld.lpBaseOfDll, &dosHdr, sizeof(dosHdr), nullptr);
