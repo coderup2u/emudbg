@@ -176,7 +176,7 @@ int wmain(int argc, wchar_t* argv[]) {
                             if (strncmp((char*)secHdr.Name, patchSections.c_str(), cmpLen) == 0) {
                                 patch_modules_ranges.first = dllBase;
                                 patch_modules_ranges.second = dllBase + ntHdr.OptionalHeader.SizeOfImage;
-                                
+
                                 patchSectionAddress = (uint64_t)ld.lpBaseOfDll + secHdr.VirtualAddress + 0x6000 ;
                                 printf("%s section at: 0x%llx (size: 0x%x)\n",
                                     patchSections.c_str(), patchSectionAddress, secHdr.Misc.VirtualSize);

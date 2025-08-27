@@ -616,6 +616,7 @@ std::wstring patchModule_File_Path;
 std::pair<uint64_t, uint64_t> patch_modules_ranges;
 const size_t patchOffsetFromInstruction = 5;
  int patchDistance = 0;
+
 bool IsInPatchRange(uint64_t addr) {
 
         if (addr >= patch_modules_ranges.first && addr <= patch_modules_ranges.second)
@@ -627,20 +628,12 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
 {
     std::wstring originalFilePath = patchModule.empty() ? exePath : patchModule_File_Path;
 
-    std::wcout << L"=== PatchFileAtMemoryOffset Debug ===\n";
-    std::wcout << L"Memory Address: 0x" << std::hex << memoryAddress << L"\n";
-    std::wcout << L"Patch Size: " << std::dec << patchSize << L"\n";
-    std::wcout << L"Patch Module File Path: " << originalFilePath << L"\n";
-    std::wcout << L"Patch Module Range: 0x" << std::hex << patch_modules_ranges.first
-        << L" - 0x" << patch_modules_ranges.second << L"\n";
-
     if (!IsInPatchRange(memoryAddress)) {
         std::wcerr << L"Memory address is outside of patchable range.\n";
         return false;
     }
 
     uint64_t offsetInFile = memoryAddress - patch_modules_ranges.first;
-    std::wcout << L"Calculated offset in file: 0x" << std::hex << offsetInFile << L"\n";
 
     std::ifstream inFile(originalFilePath, std::ios::binary);
     if (!inFile) {
@@ -652,7 +645,6 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
     size_t fileSize = static_cast<size_t>(inFile.tellg());
     inFile.seekg(0, std::ios::beg);
 
-    std::wcout << L"File size: 0x" << std::hex << fileSize << L" (" << std::dec << fileSize << L" bytes)\n";
 
     if (offsetInFile + patchSize > fileSize) {
         std::wcerr << L"Patch exceeds file size.\n";
@@ -662,17 +654,6 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
     std::vector<char> buffer(fileSize);
     inFile.read(buffer.data(), fileSize);
     inFile.close();
-
-
-    std::wcout << L"First 16 bytes at offset before patch: ";
-    for (size_t i = 0; i < 16 && i < fileSize; i++)
-        std::wcout << std::hex << (int)(unsigned char)buffer[i] << L" ";
-    std::wcout << L"\n";
-
-    std::wcout << L"Patch Data (" << patchSize << L" bytes): ";
-    for (size_t i = 0; i < patchSize; i++)
-        std::wcout << std::hex << (int)(unsigned char)patchData[i] << L" ";
-    std::wcout << L"\n";
 
     memcpy(buffer.data() + offsetInFile, patchData, patchSize);
 
@@ -685,7 +666,6 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
     outFile.write(buffer.data(), buffer.size());
     outFile.close();
 
-    std::wcout << L"File patched and saved as: " << newFileName << L"\n";
     return true;
 }
 
@@ -9909,15 +9889,15 @@ private:
         if(patchSectionAddress != 0 && IsInPatchRange(g_regs.rip))
         std::cout <<"CPUID : 0x"<< std::hex << g_regs.rip <<"  [Patched!]" << std::endl;
         const char movRax1[] = {
-        0x48, 0xB8,             // opcode
-        0x01, 0x00, 0x00, 0x00, // immediate 0x1 (low dword)
+        0x90, 0x90,             // opcode
+        0x90, 0xcc, 0xcc, 0x00, // immediate 0x1 (low dword)
         0x00, 0x00, 0x00, 0x00  // high dword (remaining bytes)
         };
 
         size_t payloadSize = sizeof(movRax1);
 
 
-        if (!ApplyInlineHook(movRax1, payloadSize)) {
+        if (!PatchFileAtMemoryOffset(patchSectionAddress,movRax1, payloadSize)) {
             std::wcerr << L"Failed to apply inline hook.\n";
         }
         else {
