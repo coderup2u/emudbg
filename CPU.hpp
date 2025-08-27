@@ -663,13 +663,12 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
     inFile.read(buffer.data(), fileSize);
     inFile.close();
 
-    // ??? ????? ??? ???? ??? ?? patch
+
     std::wcout << L"First 16 bytes at offset before patch: ";
     for (size_t i = 0; i < 16 && i < fileSize; i++)
         std::wcout << std::hex << (int)(unsigned char)buffer[i] << L" ";
     std::wcout << L"\n";
 
-    // ??? patchData
     std::wcout << L"Patch Data (" << patchSize << L" bytes): ";
     for (size_t i = 0; i < patchSize; i++)
         std::wcout << std::hex << (int)(unsigned char)patchData[i] << L" ";
