@@ -173,6 +173,7 @@ int wmain(int argc, wchar_t* argv[]) {
                                 &secHdr, sizeof(secHdr), nullptr);
 
                             size_t cmpLen = min(patchSections.size(), (size_t)IMAGE_SIZEOF_SHORT_NAME);
+                            sections.push_back(secHdr);
                             if (strncmp((char*)secHdr.Name, patchSections.c_str(), cmpLen) == 0) {
                                 patch_modules_ranges.first = dllBase;
                                 patch_modules_ranges.second = dllBase + ntHdr.OptionalHeader.SizeOfImage;
@@ -401,6 +402,7 @@ int wmain(int argc, wchar_t* argv[]) {
             for (DWORD i = 0; i < numberOfSections; i++) {
                 IMAGE_SECTION_HEADER secHdr{};
                 ReadProcessMemory(pi.hProcess, (LPCVOID)(baseAddress + sectionOffset + i * sizeof(secHdr)), &secHdr, sizeof(secHdr), nullptr);
+                sections.push_back(secHdr);
                 if (strncmp((char*)secHdr.Name, (char*)patchSections.c_str(), patchSection.size()) == 0) {
                     patch_modules_ranges.first = baseAddress;
                     patch_modules_ranges.second = baseAddress + ntHdr.OptionalHeader.SizeOfImage;

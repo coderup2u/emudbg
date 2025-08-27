@@ -614,6 +614,7 @@ uint64_t patchSectionAddress = 0;
 std::wstring patchModule;
 std::wstring patchModule_File_Path;
 std::pair<uint64_t, uint64_t> patch_modules_ranges;
+std::vector<IMAGE_SECTION_HEADER> sections;
 const size_t patchOffsetFromInstruction = 5;
  int patchDistance = 0;
 
@@ -626,14 +627,32 @@ bool IsInPatchRange(uint64_t addr) {
 }
 bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size_t patchSize)
 {
-    std::wstring originalFilePath = patchModule.empty() ? exePath : patchModule_File_Path;
+    std::wstring originalFilePath = patchModule_File_Path; 
 
     if (!IsInPatchRange(memoryAddress)) {
         std::wcerr << L"Memory address is outside of patchable range.\n";
         return false;
     }
 
-    uint64_t offsetInFile = memoryAddress - patch_modules_ranges.first;
+
+    uint64_t rva = memoryAddress - patch_modules_ranges.first;
+
+    IMAGE_SECTION_HEADER* section = nullptr;
+    for (auto& sec : sections) {
+        uint64_t start = sec.VirtualAddress;
+        uint64_t end = start + max(sec.Misc.VirtualSize, sec.SizeOfRawData);
+        if (rva >= start && rva < end) {
+            section = &sec;
+            break;
+        }
+    }
+
+    if (!section) {
+        std::wcerr << L"RVA is not inside any section.\n";
+        return false;
+    }
+
+    uint64_t fileOffset = (rva - section->VirtualAddress) + section->PointerToRawData;
 
     std::ifstream inFile(originalFilePath, std::ios::binary);
     if (!inFile) {
@@ -645,8 +664,11 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
     size_t fileSize = static_cast<size_t>(inFile.tellg());
     inFile.seekg(0, std::ios::beg);
 
+    std::cout << "fileOffset : 0x" << std::hex << fileOffset << std::endl;
+    std::cout << "patchSize : 0x" << std::hex << patchSize << std::endl;
+    std::cout << "fileSize : 0x" << std::hex << fileSize << std::endl;
 
-    if (offsetInFile + patchSize > fileSize) {
+    if (fileOffset + patchSize > fileSize) {
         std::wcerr << L"Patch exceeds file size.\n";
         return false;
     }
@@ -655,7 +677,7 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
     inFile.read(buffer.data(), fileSize);
     inFile.close();
 
-    memcpy(buffer.data() + offsetInFile, patchData, patchSize);
+    memcpy(buffer.data() + fileOffset, patchData, patchSize);
 
     std::wstring newFileName = originalFilePath + L"_patched";
     std::ofstream outFile(newFileName, std::ios::binary);
@@ -663,6 +685,7 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
         std::wcerr << L"Failed to create output file.\n";
         return false;
     }
+
     outFile.write(buffer.data(), buffer.size());
     outFile.close();
 
@@ -9886,23 +9909,25 @@ private:
         LOG_analyze(WHITE, "CPUID  at : 0x"<< std::hex <<g_regs.rip);
 #endif
  #if AUTO_PATCH_HW
-        if(patchSectionAddress != 0 && IsInPatchRange(g_regs.rip))
-        std::cout <<"CPUID : 0x"<< std::hex << g_regs.rip <<"  [Patched!]" << std::endl;
-        const char movRax1[] = {
-        0x90, 0x90,             // opcode
-        0x90, 0xcc, 0xcc, 0x00, // immediate 0x1 (low dword)
-        0x00, 0x00, 0x00, 0x00  // high dword (remaining bytes)
+        if (patchSectionAddress != 0 && IsInPatchRange(g_regs.rip)) {
+      const char movRax1[] = {
+        0x12, 0x34,             // opcode
+        0x56, 0x78, 0xcc, 0x00, // immediate 0x1 (low dword)
+        0x00, 0x00, 0xcc, 0x00  // high dword (remaining bytes)
         };
 
         size_t payloadSize = sizeof(movRax1);
 
 
-        if (!PatchFileAtMemoryOffset(patchSectionAddress,movRax1, payloadSize)) {
+        if (!PatchFileAtMemoryOffset(g_regs.rip,movRax1, payloadSize)) {
             std::wcerr << L"Failed to apply inline hook.\n";
         }
         else {
             std::wcout << L"Patch applied: mov rax, 0x1\n";
         }
+        }
+
+  
 #endif
         int cpu_info[4];
         int input_eax = static_cast<int>(g_regs.rax.q);
