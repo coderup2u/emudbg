@@ -606,6 +606,22 @@ inline void SetConsoleColor(ConsoleColor color) {
 #else
 #define LOG_analyze(color, x)
 #endif
+
+#if AUTO_PATCH_HW
+uint64_t patchSectionAddress = 0;
+std::wstring patchModule;
+std::pair<uint64_t, uint64_t> patch_modules_ranges;
+bool IsInPatchRange(uint64_t addr) {
+
+        if (addr >= patch_modules_ranges.first && addr <= patch_modules_ranges.second)
+            return true;
+    
+    return false;
+}
+
+
+#endif
+
 // ----------------------- Break point helper ------------------
 
 bool SetHardwareBreakpointAuto(HANDLE hThread, uint64_t address) {
@@ -9821,6 +9837,7 @@ private:
         LOG_analyze(WHITE, "CPUID  at : 0x"<< std::hex <<g_regs.rip);
 #endif
  #if AUTO_PATCH_HW
+        if(patchSectionAddress != 0 && IsInPatchRange(g_regs.rip))
         std::cout <<"CPUID : 0x"<< std::hex << g_regs.rip <<"  [Patched!]" << std::endl;
 #endif
         int cpu_info[4];

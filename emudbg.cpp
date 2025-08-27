@@ -21,7 +21,6 @@ int wmain(int argc, wchar_t* argv[]) {
     bool hasRVA = false;
     ReadGDTR(&gdtr);
 #if AUTO_PATCH_HW
-    std::wstring patchModule;       // -p <module_name>
     std::wstring patchSection;      // -section <section_name>
 #endif
 
@@ -34,6 +33,7 @@ int wmain(int argc, wchar_t* argv[]) {
         }
         else if (arg == L"-section" && i + 1 < argc) {
             patchSection = argv[++i];
+
         }
         else
 #endif
@@ -62,6 +62,7 @@ int wmain(int argc, wchar_t* argv[]) {
             }
             else {
                 exePath = arg;
+
             }
     }
 
@@ -145,6 +146,47 @@ int wmain(int argc, wchar_t* argv[]) {
                     std::transform(lowerLoaded.begin(), lowerLoaded.end(), lowerLoaded.begin(), ::towlower);
                     std::wstring lowerTarget = targetModuleName;
                     std::transform(lowerTarget.begin(), lowerTarget.end(), lowerTarget.begin(), ::towlower);
+#if AUTO_PATCH_HW
+                    std::wstring lowerPatchTarget = patchModule;
+                    std::transform(lowerPatchTarget.begin(), lowerPatchTarget.end(), lowerPatchTarget.begin(), ::towlower);
+                    if ((lowerLoaded.find(lowerPatchTarget) != std::wstring::npos) && patchSectionAddress == 0 && !patchSection.empty()) {
+                        uint64_t dllBase = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
+
+
+                        IMAGE_DOS_HEADER dosHdr{};
+                        ReadProcessMemory(pi.hProcess, ld.lpBaseOfDll, &dosHdr, sizeof(dosHdr), nullptr);
+
+                        IMAGE_NT_HEADERS64 ntHdr{};
+                        ReadProcessMemory(pi.hProcess, (LPCVOID)((uint64_t)ld.lpBaseOfDll + dosHdr.e_lfanew), &ntHdr, sizeof(ntHdr), nullptr);
+
+                        DWORD numberOfSections = ntHdr.FileHeader.NumberOfSections;
+                        DWORD sectionOffset = dosHdr.e_lfanew +
+                            offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
+                            ntHdr.FileHeader.SizeOfOptionalHeader;
+
+                        std::string patchSections(patchSection.begin(), patchSection.end());
+
+                        for (DWORD i = 0; i < numberOfSections; i++) {
+                            IMAGE_SECTION_HEADER secHdr{};
+                            ReadProcessMemory(pi.hProcess,
+                                (LPCVOID)((uint64_t)ld.lpBaseOfDll + sectionOffset + i * sizeof(secHdr)),
+                                &secHdr, sizeof(secHdr), nullptr);
+
+                            size_t cmpLen = min(patchSections.size(), (size_t)IMAGE_SIZEOF_SHORT_NAME);
+                            if (strncmp((char*)secHdr.Name, patchSections.c_str(), cmpLen) == 0) {
+                                patch_modules_ranges.first = dllBase;
+                                patch_modules_ranges.second = dllBase + ntHdr.OptionalHeader.SizeOfImage;
+                                
+                                patchSectionAddress = (uint64_t)ld.lpBaseOfDll + secHdr.VirtualAddress;
+                                printf("%s section at: 0x%llx (size: 0x%x)\n",
+                                    patchSections.c_str(), patchSectionAddress, secHdr.Misc.VirtualSize);
+                                break;
+                            }
+                        }
+                    }
+
+
+#endif
 
                     if (hasRVA && waitForModule && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
                         moduleBase = (uint64_t)ld.lpBaseOfDll;
@@ -342,6 +384,38 @@ int wmain(int argc, wchar_t* argv[]) {
         case CREATE_PROCESS_DEBUG_EVENT: {
             auto& procInfo = dbgEvent.u.CreateProcessInfo;
             baseAddress = reinterpret_cast<uint64_t>(procInfo.lpBaseOfImage);
+#if AUTO_PATCH_HW
+            if (patchModule.empty() && !patchSection.empty() && patchSectionAddress == 0) {
+
+            IMAGE_DOS_HEADER dosHdr{};
+            ReadProcessMemory(pi.hProcess, (LPCVOID)baseAddress, &dosHdr, sizeof(dosHdr), nullptr);
+
+            IMAGE_NT_HEADERS64 ntHdr{};
+            ReadProcessMemory(pi.hProcess, (LPCVOID)(baseAddress + dosHdr.e_lfanew), &ntHdr, sizeof(ntHdr), nullptr);
+
+            DWORD numberOfSections = ntHdr.FileHeader.NumberOfSections;
+            DWORD sectionOffset = dosHdr.e_lfanew +
+                offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
+                ntHdr.FileHeader.SizeOfOptionalHeader;
+            std::string patchSections(patchSection.begin(), patchSection.end());
+            for (DWORD i = 0; i < numberOfSections; i++) {
+                IMAGE_SECTION_HEADER secHdr{};
+                ReadProcessMemory(pi.hProcess, (LPCVOID)(baseAddress + sectionOffset + i * sizeof(secHdr)), &secHdr, sizeof(secHdr), nullptr);
+                if (strncmp((char*)secHdr.Name, (char*)patchSections.c_str(), patchSection.size()) == 0) {
+                    patch_modules_ranges.first = baseAddress;
+                    patch_modules_ranges.second = baseAddress + ntHdr.OptionalHeader.SizeOfImage;
+                    patchSectionAddress = baseAddress + secHdr.VirtualAddress;
+                    printf("%s section at: 0x%llx (size: 0x%x)\n", patchSections.c_str(), patchSectionAddress, secHdr.Misc.VirtualSize);
+                    break;
+                }
+            }
+            }
+         
+
+#endif
+
+
+
             valid_ranges.emplace_back(baseAddress, baseAddress + optionalHeader.SizeOfImage);
 
             HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
