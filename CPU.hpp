@@ -615,8 +615,7 @@ std::wstring patchModule;
 std::wstring patchModule_File_Path;
 std::pair<uint64_t, uint64_t> patch_modules_ranges;
 std::vector<IMAGE_SECTION_HEADER> sections;
-const size_t patchOffsetFromInstruction = 5;
- int patchDistance = 0;
+
 
 bool IsInPatchRange(uint64_t addr) {
 
@@ -1465,7 +1464,18 @@ public:
                 my_mange.is_write = 0;
                 g_regs.rflags.flags.TF = 1;
 #endif
-
+#if AUTO_PATCH_HW
+                if (is_patch_cpuid)
+                    patchDistance++;
+                if (patchDistance == patchOffsetFromInstruction) {
+                    is_patch_cpuid = 0;
+                    patchDistance = 0;
+                    const std::vector<uint8_t>& patch  = BuildCpuidPatch(g_regs.rax.q, g_regs.rbx.q, g_regs.rcx.q, g_regs.rdx.q);
+                    char*  buffer = new char[patch.size()];
+                    std::memcpy(buffer, patch.data(), patch.size());
+                    ApplyInlineHook(buffer , patch.size());
+                }
+#endif
 
                 const ZydisDisassembledInstruction* op = disasm.GetInstr();
                 instr = op->info;
@@ -2092,7 +2102,11 @@ private:
     uint64_t address;
     std::unordered_map<ZydisMnemonic, void (CPU::*)(const ZydisDisassembledInstruction*)> dispatch_table;
     std::unordered_map<ZydisRegister, void* > reg_lookup;
-
+#if AUTO_PATCH_HW
+    const size_t patchOffsetFromInstruction = 5;
+    int patchDistance = 0;
+    bool is_patch_cpuid = 0;
+#endif
     //----------------------- MATH ------------------------------
 
     struct uint128_t {
@@ -9992,24 +10006,8 @@ private:
 #endif
  #if AUTO_PATCH_HW
         if (patchSectionAddress != 0 && IsInPatchRange(g_regs.rip)) {
-      const char movRax1[] = {
-        0x12, 0x34,             // opcode
-        0x56, 0x78, 0xcc, 0x00, // immediate 0x1 (low dword)
-        0x00, 0x00, 0xcc, 0x00  // high dword (remaining bytes)
-        };
-
-        size_t payloadSize = sizeof(movRax1);
-
-
-        if (!ApplyInlineHook(movRax1, payloadSize)) {
-            std::wcerr << L"Failed to apply inline hook.\n";
+            is_patch_cpuid = 1;
         }
-        else {
-            std::wcout << L"Patch applied: mov rax, 0x1\n";
-        }
-        }
-
-  
 #endif
         int cpu_info[4];
         int input_eax = static_cast<int>(g_regs.rax.q);
@@ -12536,6 +12534,25 @@ private:
             << std::hex << patchSectionAddress << L"\n";
 
         return true;
+    }
+    
+      std::vector<uint8_t> BuildCpuidPatch(uint64_t rax, uint64_t rbx, uint64_t rcx, uint64_t rdx){
+        std::vector<uint8_t> code;
+
+        auto emitMovRegImm64 = [&](uint8_t opcode, uint64_t imm) {
+            code.push_back(0x48);       // REX.W
+            code.push_back(opcode);     // MOV reg, imm64
+            for (int i = 0; i < 8; i++) {
+                code.push_back((imm >> (i * 8)) & 0xFF);
+            }
+            };
+
+        emitMovRegImm64(0xB8, rax); // RAX
+        emitMovRegImm64(0xBB, rbx); // RBX
+        emitMovRegImm64(0xB9, rcx); // RCX
+        emitMovRegImm64(0xBA, rdx); // RDX
+
+        return code;
     }
 
 #endif
