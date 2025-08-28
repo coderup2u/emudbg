@@ -610,6 +610,7 @@ inline void SetConsoleColor(ConsoleColor color) {
 #endif
 
 #if AUTO_PATCH_HW
+const size_t patchOffsetFromInstruction = 4;
 uint64_t patchSectionAddress = 0;
 std::wstring patchModule;
 std::wstring patchModule_File_Path;
@@ -1465,16 +1466,19 @@ public:
                 g_regs.rflags.flags.TF = 1;
 #endif
 #if AUTO_PATCH_HW
-                if (is_patch_cpuid)
-                    patchDistance++;
-                if (patchDistance == patchOffsetFromInstruction) {
-                    is_patch_cpuid = 0;
-                    patchDistance = 0;
-                    const std::vector<uint8_t>& patch  = BuildCpuidPatch(g_regs.rax.q, g_regs.rbx.q, g_regs.rcx.q, g_regs.rdx.q);
-                    char*  buffer = new char[patch.size()];
-                    std::memcpy(buffer, patch.data(), patch.size());
-                    ApplyInlineHook(buffer , patch.size());
-                }
+                //if (is_patch_cpuid)
+                //    patchDistance++;
+                //if (patchDistance == patchOffsetFromInstruction) {
+                //    is_patch_cpuid = 0;
+                //    patchDistance = 0;
+                //    const std::vector<uint8_t>& patch  = BuildCpuidPatch(g_regs.rax.q, g_regs.rbx.q, g_regs.rcx.q, g_regs.rdx.q);
+                //    char*  buffer = new char[patch.size()];
+                //    std::memcpy(buffer, patch.data(), patch.size());
+                //    ApplyInlineHook(buffer , patch.size());
+                //}
+
+
+
 #endif
 
                 const ZydisDisassembledInstruction* op = disasm.GetInstr();
@@ -2103,7 +2107,6 @@ private:
     std::unordered_map<ZydisMnemonic, void (CPU::*)(const ZydisDisassembledInstruction*)> dispatch_table;
     std::unordered_map<ZydisRegister, void* > reg_lookup;
 #if AUTO_PATCH_HW
-    const size_t patchOffsetFromInstruction = 5;
     int patchDistance = 0;
     bool is_patch_cpuid = 0;
 #endif
@@ -2853,6 +2856,11 @@ private:
 
     template<typename T>
     bool AccessEffectiveMemory(const ZydisDecodedOperand& op, T* inout, bool write) {
+#if AUTO_PATCH_HW 
+
+        bool is_address_RIP_relative = 0;
+        bool is_DS = 0;
+#endif
         if (op.type != ZYDIS_OPERAND_TYPE_MEMORY) return false;
 
         uint64_t address = 0;
@@ -2861,11 +2869,17 @@ private:
         if (op.mem.base == ZYDIS_REGISTER_NONE && op.mem.index == ZYDIS_REGISTER_NONE) {
             address = op.mem.disp.has_displacement ? op.mem.disp.value : 0;
             LOG(L"[+] Absolute memory addressing");
+
         }
         else {
             // Handle RIP-relative addressing
             if (op.mem.base == ZYDIS_REGISTER_RIP) {
                 address = g_regs.rip + instr.length;
+            #if AUTO_PATCH_HW 
+
+                            is_address_RIP_relative = 1;
+
+            #endif
                 //  LOG(L"[+] RIP-relative base : " << std::hex << address);
             }
             else if (op.mem.base != ZYDIS_REGISTER_NONE) {
@@ -2896,6 +2910,7 @@ private:
             break;
         default:
             // No segment override or unhandled segment
+
             break;
         }
 
@@ -2904,6 +2919,57 @@ private:
 
         // Access memory
         bool success = write ? WriteMemory(address, inout, sizeof(T)) : ReadMemory(address, inout, sizeof(T));
+#if AUTO_PATCH_HW
+        if (is_address_RIP_relative && !write && success) {
+
+            if (!PatchFileSingle(patchSectionAddress,
+                reinterpret_cast<const char*>(inout),
+                sizeof(T))) {
+                std::wcerr << L"Failed to write patch data to patched file.\n";
+
+            }
+
+
+            size_t disp_offset = instr.raw.disp.offset;          
+            size_t disp_size = instr.raw.disp.size / 8;           
+
+            uint64_t instr_start = g_regs.rip;           
+            uint64_t instr_end = instr_start + instr.length;
+
+
+            std::int64_t new_disp = static_cast<std::int64_t>(patchSectionAddress)
+                - static_cast<std::int64_t>(instr_end);
+
+            std::int64_t min_disp = -(1LL << (disp_size * 8 - 1));
+            std::int64_t max_disp = ((1LL << (disp_size * 8 - 1)) - 1);
+            if (new_disp < min_disp || new_disp > max_disp) {
+                std::wcerr << L"New RIP-relative displacement doesn't fit in " << disp_size << L" bytes.\n";
+
+            }
+            else {
+
+                std::vector<uint8_t> disp_bytes(disp_size);
+                for (size_t i = 0; i < disp_size; ++i) {
+                    disp_bytes[i] = static_cast<uint8_t>((static_cast<uint64_t>(new_disp) >> (8 * i)) & 0xFFu);
+                }
+
+                uint64_t disp_mem_address = instr_start + disp_offset;
+
+                if (!PatchFileSingle(
+                    disp_mem_address,
+                    reinterpret_cast<const char*>(disp_bytes.data()),
+                    disp_size)) {
+                    std::wcerr << L"Failed to write new displacement to patched file.\n";
+                }
+                else {
+    
+                    patchSectionAddress += sizeof(T);
+                    std::cout << "integrity check patched! at 0x" << std::hex << g_regs.rip << std::endl;
+                }
+            }
+        }
+#endif
+
 
         if (!success) {
             std::cerr << std::hex << std::setfill('0');
