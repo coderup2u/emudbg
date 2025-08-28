@@ -12516,6 +12516,9 @@ private:
 
         trampoline.insert(trampoline.end(), payloadBuffer, payloadBuffer + payloadSize);
 
+        size_t padCount = 8;
+        trampoline.insert(trampoline.end(), padCount, (char)0x90); 
+
 
         char jumpBack[jmpSize];
         int32_t relBack = (int32_t)((g_regs.rip + stolenSize) - (patchSectionAddress + trampoline.size() + jmpSize));
