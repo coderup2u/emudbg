@@ -12450,39 +12450,91 @@ private:
 
 #endif DB_ENABLED
 #if AUTO_PATCH_HW
+
     bool ApplyInlineHook(const char* payloadBuffer, size_t payloadSize)
     {
-        const size_t jmpSize = 5;
+        const size_t jmpSize = 5; 
 
         if (!IsInPatchRange(g_regs.rip)) {
             std::wcerr << L"RIP is outside patchable range.\n";
             return false;
         }
 
+
+        BYTE buffer[32] = { 0 };
+        SIZE_T bytesRead = 0;
+        if (!ReadProcessMemory(pi.hProcess, (LPCVOID)g_regs.rip, buffer, sizeof(buffer), &bytesRead) || bytesRead == 0) {
+            DWORD err = GetLastError();
+            std::wcerr << L"[!] Failed to read memory at 0x" << std::hex << g_regs.rip
+                << L", GetLastError = " << std::dec << err << L"\n";
+            return false;
+        }
+
+
+        Zydis disasm(true);
+        size_t offset = 0;
+        size_t stolenSize = 0;
+        std::vector<uint8_t> stolenBytes;
+
+        while (stolenSize < jmpSize && offset < bytesRead) {
+            if (!disasm.Disassemble(g_regs.rip + offset, buffer + offset, bytesRead - offset)) {
+                std::wcerr << L"Disassembly failed at offset " << std::hex << offset << L"\n";
+                return false;
+            }
+
+            const ZydisDisassembledInstruction* op = disasm.GetInstr();
+            stolenBytes.insert(stolenBytes.end(), buffer + offset, buffer + offset + op->info.length);
+
+            offset += op->info.length;
+            stolenSize += op->info.length;
+        }
+
+        if (stolenSize < jmpSize) {
+            std::wcerr << L"Not enough bytes to patch safely.\n";
+            return false;
+        }
+
+
         char jumpToPatch[jmpSize];
         int32_t relToPatch = (int32_t)(patchSectionAddress - (g_regs.rip + jmpSize));
         jumpToPatch[0] = (char)0xE9;
         memcpy(jumpToPatch + 1, &relToPatch, sizeof(relToPatch));
 
-        if (!PatchFileSingle(g_regs.rip, jumpToPatch, jmpSize)) return false;
 
- 
-        if (!PatchFileSingle(patchSectionAddress, payloadBuffer, payloadSize)) return false;
+        std::vector<char> hookPatch(stolenSize, (char)0x90);
+        memcpy(hookPatch.data(), jumpToPatch, jmpSize);
+
+        if (!PatchFileSingle(g_regs.rip, hookPatch.data(), stolenSize))
+            return false;
+
+
+        std::vector<char> trampoline;
+
+
+        trampoline.insert(trampoline.end(), stolenBytes.begin(), stolenBytes.end());
+
+
+        trampoline.insert(trampoline.end(), payloadBuffer, payloadBuffer + payloadSize);
+
 
         char jumpBack[jmpSize];
-        int32_t relBack = (int32_t)((g_regs.rip + jmpSize) - (patchSectionAddress + payloadSize + jmpSize));
+        int32_t relBack = (int32_t)((g_regs.rip + stolenSize) - (patchSectionAddress + trampoline.size() + jmpSize));
         jumpBack[0] = (char)0xE9;
         memcpy(jumpBack + 1, &relBack, sizeof(relBack));
+        trampoline.insert(trampoline.end(), jumpBack, jumpBack + jmpSize);
 
-        if (!PatchFileSingle(patchSectionAddress + payloadSize, jumpBack, jmpSize)) return false;
 
+        if (!PatchFileSingle(patchSectionAddress, trampoline.data(), trampoline.size()))
+            return false;
 
-        patchSectionAddress += payloadSize + jmpSize; 
+        patchSectionAddress += trampoline.size();
 
         std::wcout << L"Inline hook applied successfully. Next patchSectionAddress: 0x"
             << std::hex << patchSectionAddress << L"\n";
+
         return true;
     }
+
 #endif
 
 
