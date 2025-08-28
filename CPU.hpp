@@ -625,11 +625,15 @@ bool IsInPatchRange(uint64_t addr) {
     
     return false;
 }
+struct PatchInfo {
+    uint64_t memoryAddress;
+    const char* patchData;
+    size_t patchSize;
+};
 
-bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size_t patchSize) {
+bool PatchFileAtMemoryOffsets(const std::vector<PatchInfo>& patches) {
     std::wstring originalFilePath = patchModule.empty() ? exePath : patchModule_File_Path;
     std::wstring patchedFilePath = originalFilePath + L"_patched";
-
 
     {
         std::ifstream src(originalFilePath, std::ios::binary);
@@ -645,9 +649,84 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
         }
 
         dst << src.rdbuf();
-        src.close();
-        dst.close();
     }
+
+    std::fstream outFile(patchedFilePath, std::ios::binary | std::ios::in | std::ios::out);
+    if (!outFile) {
+        std::wcerr << L"Failed to open patched file for writing.\n";
+        return false;
+    }
+
+    for (const auto& patch : patches) {
+        if (!IsInPatchRange(patch.memoryAddress)) {
+            std::wcerr << L"Memory address 0x" << std::hex << patch.memoryAddress
+                << L" is outside of patchable range.\n";
+            continue; 
+        }
+
+        uint64_t rva = patch.memoryAddress - patch_modules_ranges.first;
+
+        IMAGE_SECTION_HEADER secHdr{};
+        bool found = false;
+        for (auto& sec : sections) {
+            uint64_t start = sec.VirtualAddress;
+            uint64_t end = start + max(sec.Misc.VirtualSize, sec.SizeOfRawData);
+            if (rva >= start && rva < end) {
+                secHdr = sec;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            std::wcerr << L"RVA for address 0x" << std::hex << patch.memoryAddress
+                << L" is not inside any section.\n";
+            continue;
+        }
+
+        uint64_t fileOffset = (rva - secHdr.VirtualAddress) + secHdr.PointerToRawData;
+        std::cout << "Patching at fileOffset: 0x" << std::hex << fileOffset << std::endl;
+
+        outFile.seekp(fileOffset, std::ios::beg);
+        outFile.write(patch.patchData, patch.patchSize);
+
+        if (!outFile) {
+            std::wcerr << L"Failed to write patch at address 0x"
+                << std::hex << patch.memoryAddress << L".\n";
+            return false;
+        }
+    }
+
+    outFile.close();
+    return true;
+}
+bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patchSize) {
+    std::wstring baseFilePath = patchModule.empty() ? exePath : patchModule_File_Path;
+    std::wstring patchedFilePath = baseFilePath + L"_patched";
+
+
+    std::ifstream checkPatched(patchedFilePath, std::ios::binary);
+    if (!checkPatched.good()) {
+
+        std::ifstream src(baseFilePath, std::ios::binary);
+        if (!src) {
+            std::wcerr << L"Failed to open original file.\n";
+            return false;
+        }
+
+        std::ofstream dst(patchedFilePath, std::ios::binary);
+        if (!dst) {
+            std::wcerr << L"Failed to create patched file.\n";
+            return false;
+        }
+
+        dst << src.rdbuf();
+        std::wcout << L"Created patched file: " << patchedFilePath << std::endl;
+    }
+    else {
+        std::wcout << L"Patched file already exists, applying new patch on it.\n";
+    }
+    checkPatched.close();
 
     if (!IsInPatchRange(memoryAddress)) {
         std::wcerr << L"Memory address is outside of patchable range.\n";
@@ -674,7 +753,7 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
     }
 
     uint64_t fileOffset = (rva - secHdr.VirtualAddress) + secHdr.PointerToRawData;
-
+    std::cout << "fileOffset : 0x" << std::hex << fileOffset << std::endl;
 
     std::fstream outFile(patchedFilePath, std::ios::binary | std::ios::in | std::ios::out);
     if (!outFile) {
@@ -691,6 +770,7 @@ bool PatchFileAtMemoryOffset(uint64_t memoryAddress, const char* patchData, size
     }
 
     outFile.close();
+    std::wcout << L"Patch applied successfully.\n";
     return true;
 }
 
@@ -9921,7 +10001,7 @@ private:
         size_t payloadSize = sizeof(movRax1);
 
 
-        if (!PatchFileAtMemoryOffset(g_regs.rip,movRax1, payloadSize)) {
+        if (!ApplyInlineHook(movRax1, payloadSize)) {
             std::wcerr << L"Failed to apply inline hook.\n";
         }
         else {
@@ -12384,17 +12464,17 @@ private:
         jumpToPatch[0] = (char)0xE9;
         memcpy(jumpToPatch + 1, &relToPatch, sizeof(relToPatch));
 
-        if (!PatchFileAtMemoryOffset(g_regs.rip, jumpToPatch, jmpSize)) return false;
+        if (!PatchFileSingle(g_regs.rip, jumpToPatch, jmpSize)) return false;
 
  
-        if (!PatchFileAtMemoryOffset(patchSectionAddress, payloadBuffer, payloadSize)) return false;
+        if (!PatchFileSingle(patchSectionAddress, payloadBuffer, payloadSize)) return false;
 
         char jumpBack[jmpSize];
         int32_t relBack = (int32_t)((g_regs.rip + jmpSize) - (patchSectionAddress + payloadSize + jmpSize));
         jumpBack[0] = (char)0xE9;
         memcpy(jumpBack + 1, &relBack, sizeof(relBack));
 
-        if (!PatchFileAtMemoryOffset(patchSectionAddress + payloadSize, jumpBack, jmpSize)) return false;
+        if (!PatchFileSingle(patchSectionAddress + payloadSize, jumpBack, jmpSize)) return false;
 
 
         patchSectionAddress += payloadSize + jmpSize; 
