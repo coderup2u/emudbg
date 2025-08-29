@@ -612,6 +612,8 @@ inline void SetConsoleColor(ConsoleColor color) {
 #if AUTO_PATCH_HW
 const size_t patchOffsetFromInstruction = 4;
 uint64_t patchSectionAddress = 0;
+uint64_t patchSectionAddressbase  = 0;
+ size_t patchSection_SIZE = 0;
 std::wstring patchModule;
 std::wstring patchModule_File_Path;
 std::pair<uint64_t, uint64_t> patch_modules_ranges;
@@ -704,7 +706,6 @@ bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patch
     std::wstring baseFilePath = patchModule.empty() ? exePath : patchModule_File_Path;
     std::wstring patchedFilePath = baseFilePath + L"_patched";
 
-
     std::ifstream checkPatched(patchedFilePath, std::ios::binary);
     if (!checkPatched.good()) {
 
@@ -753,7 +754,6 @@ bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patch
     }
 
     uint64_t fileOffset = (rva - secHdr.VirtualAddress) + secHdr.PointerToRawData;
-    std::cout << "fileOffset : 0x" << std::hex << fileOffset << std::endl;
 
     std::fstream outFile(patchedFilePath, std::ios::binary | std::ios::in | std::ios::out);
     if (!outFile) {
@@ -1466,16 +1466,16 @@ public:
                 g_regs.rflags.flags.TF = 1;
 #endif
 #if AUTO_PATCH_HW
-                //if (is_patch_cpuid)
-                //    patchDistance++;
-                //if (patchDistance == patchOffsetFromInstruction) {
-                //    is_patch_cpuid = 0;
-                //    patchDistance = 0;
-                //    const std::vector<uint8_t>& patch  = BuildCpuidPatch(g_regs.rax.q, g_regs.rbx.q, g_regs.rcx.q, g_regs.rdx.q);
-                //    char*  buffer = new char[patch.size()];
-                //    std::memcpy(buffer, patch.data(), patch.size());
-                //    ApplyInlineHook(buffer , patch.size());
-                //}
+                if (is_patch_cpuid)
+                    patchDistance++;
+                if (patchDistance == patchOffsetFromInstruction) {
+                    is_patch_cpuid = 0;
+                    patchDistance = 0;
+                    const std::vector<uint8_t>& patch  = BuildCpuidPatch(g_regs.rax.q, g_regs.rbx.q, g_regs.rcx.q, g_regs.rdx.q);
+                    char*  buffer = new char[patch.size()];
+                    std::memcpy(buffer, patch.data(), patch.size());
+                    ApplyInlineHook(buffer , patch.size());
+                }
 
 
 
@@ -2920,7 +2920,7 @@ private:
         // Access memory
         bool success = write ? WriteMemory(address, inout, sizeof(T)) : ReadMemory(address, inout, sizeof(T));
 #if AUTO_PATCH_HW
-        if (is_address_RIP_relative && !write && success) {
+        if (is_address_RIP_relative && !write && IsInPatchRange(g_regs.rip) && success && !(address > patchSectionAddressbase && address < patchSectionAddressbase + patchSection_SIZE)) {
 
             if (!PatchFileSingle(patchSectionAddress,
                 reinterpret_cast<const char*>(inout),
