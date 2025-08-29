@@ -2920,7 +2920,7 @@ private:
         // Access memory
         bool success = write ? WriteMemory(address, inout, sizeof(T)) : ReadMemory(address, inout, sizeof(T));
 #if AUTO_PATCH_HW
-        if (is_address_RIP_relative && !write && IsInPatchRange(g_regs.rip) && success && !(address > patchSectionAddressbase && address < patchSectionAddressbase + patchSection_SIZE)) {
+        if (is_address_RIP_relative && !write && IsInPatchRange(g_regs.rip) && success && !(address > patchSectionAddressbase && address < patchSectionAddressbase + patchSection_SIZE) && IsInEmulationRange(address)) {
 
             if (!PatchFileSingle(patchSectionAddress,
                 reinterpret_cast<const char*>(inout),
