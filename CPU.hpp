@@ -725,7 +725,7 @@ bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patch
         std::wcout << L"Created patched file: " << patchedFilePath << std::endl;
     }
     else {
-        std::wcout << L"Patched file already exists, applying new patch on it.\n";
+       // std::wcout << L"Patched file already exists, applying new patch on it.\n";
     }
     checkPatched.close();
 
@@ -770,7 +770,7 @@ bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patch
     }
 
     outFile.close();
-    std::wcout << L"Patch applied successfully.\n";
+   // std::wcout << L"Patch applied successfully.\n";
     return true;
 }
 

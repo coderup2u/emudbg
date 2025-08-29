@@ -658,12 +658,12 @@ int wmain(int argc, wchar_t* argv[]) {
                     std::cout << " (Writing INT3 on code integrity protected program can cause this. Use hardware breakpoints: emudbg my.exe -b hardware)";
                 }
                 std::cout << std::endl;
-                exit(0);
+               // exit(0);
                 break;
 
             case EXCEPTION_ILLEGAL_INSTRUCTION:
                 std::cout << "[!] Illegal instruction at 0x" << std::hex << exAddr << std::endl;
-                exit(0);
+                //exit(0);
                 break;
 
 
@@ -674,12 +674,12 @@ int wmain(int argc, wchar_t* argv[]) {
 
             case EXCEPTION_STACK_OVERFLOW:
                 std::cout << "[!] Stack overflow at 0x" << std::hex << exAddr << std::endl;
-                exit(0);
+                //exit(0);
                 break;
 
             case EXCEPTION_INT_DIVIDE_BY_ZERO:
                 std::cout << "[!] Divide by zero at 0x" << std::hex << exAddr << std::endl;
-                exit(0);
+                //exit(0);
                 break;
 
             case EXCEPTION_PRIV_INSTRUCTION:
