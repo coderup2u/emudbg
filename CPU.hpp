@@ -1401,6 +1401,7 @@ public:
             { ZYDIS_MNEMONIC_VPERM2F128, &CPU::emulate_vperm2f128 },
             { ZYDIS_MNEMONIC_VPERM2I128, &CPU::emulate_vperm2i128 },
             { ZYDIS_MNEMONIC_VINSERTI128, &CPU::emulate_vinserti128 },
+            { ZYDIS_MNEMONIC_VEXTRACTI128, &CPU::emulate_vextracti128 },
 
     
         };
@@ -12587,6 +12588,55 @@ private:
         }
 
         LOG(L"[+] VINSERTI128 executed, imm=" << (int)imm8);
+    }
+    void emulate_vextracti128(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0]; 
+        const auto& src = instr->operands[1]; 
+        uint32_t width = dst.size;
+
+        if (width != 128) {
+            LOG(L"[!] Unsupported width in VEXTRACTI128: " << width);
+            return;
+        }
+
+        uint8_t imm8 = 0;
+        bool has_imm = instr->info.operand_count_visible > 2 &&
+            instr->operands[2].type == ZYDIS_OPERAND_TYPE_IMMEDIATE;
+        if (has_imm) {
+            imm8 = instr->operands[2].imm.value.u & 0xFF;
+        }
+
+        __m256i val;
+        if (!read_operand_value<__m256i>(src, 256, val)) {
+            LOG(L"[!] Failed to read source operand for VEXTRACTI128");
+            return;
+        }
+
+        alignas(32) int64_t temp[4];
+        _mm256_store_si256((__m256i*)temp, val);
+
+        alignas(16) int64_t out[2];
+
+
+        if ((imm8 & 0x1) == 0) {
+            out[0] = temp[0];
+            out[1] = temp[1];
+        }
+        else {
+            out[0] = temp[2];
+            out[1] = temp[3];
+        }
+
+        __m128i result = _mm_load_si128((__m128i*)out);
+        ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+        set_register_value(dstYMM, YMM{});
+
+        if (!write_operand_value<__m128i>(dst, 128, result)) {
+            LOG(L"[!] Failed to write destination operand for VEXTRACTI128");
+            return;
+        }
+
+        LOG(L"[+] VEXTRACTI128 executed, imm=" << (int)imm8);
     }
 
 
