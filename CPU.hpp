@@ -2189,7 +2189,9 @@ public:
 
                     if (!IsInEmulationRange(address)) {
 #if analyze_ENABLED
-                        LOG_analyze( CYAN ,"Executing function: " << GetExportedFunctionNameByAddress(address).c_str() << " via [0x"<< std::hex << g_regs.rip <<"]");
+                        std::string fuction_name = GetExportedFunctionNameByAddress(address);
+                        if (!fuction_name.empty())
+                        LOG_analyze( CYAN ,"Executing function: " << fuction_name.c_str() << " via [0x"<< std::hex << g_regs.rip <<"]");
 
                         uint8_t buffer[16] = {};
                         if (ReadMemory(address, buffer, sizeof(buffer))) {
