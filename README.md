@@ -61,7 +61,7 @@ Windows API functions are skipped through debugger stepping, allowing seamless e
     //Multithread_the_MultiThread
     #define Multithread_the_MultiThread 0
     
-   // Enable automatic patching of hardware checks
+   // Enable automatic patching of hardware checks (not working yet )
     #define AUTO_PATCH_HW 0
     //------------------------------------------
     ```
