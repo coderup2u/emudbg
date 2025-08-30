@@ -35,11 +35,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -1395,6 +1395,10 @@ public:
             { ZYDIS_MNEMONIC_VPMINUB, &CPU::emulate_vpminub },
             { ZYDIS_MNEMONIC_VPMINUW, &CPU::emulate_vpminuw },
             { ZYDIS_MNEMONIC_VPADDW, &CPU::emulate_vpaddw },
+            { ZYDIS_MNEMONIC_VTESTPS, &CPU::emulate_vtestps },
+            { ZYDIS_MNEMONIC_VTESTPD, &CPU::emulate_vtestpd },
+            { ZYDIS_MNEMONIC_VPERMILPD, &CPU::emulate_vpermilpd },
+            { ZYDIS_MNEMONIC_VPERM2F128, &CPU::emulate_vperm2f128 },
 
     
         };
@@ -12077,6 +12081,341 @@ private:
         }
 
         LOG(L"[+] VPADDW executed");
+    }
+    void emulate_vtestps(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size;
+
+        if (width == 128) {
+            __m128 v_dst, v_src;
+            if (!read_operand_value<__m128>(dst, width, v_dst) ||
+                !read_operand_value<__m128>(src, width, v_src)) {
+                LOG(L"[!] Failed to read operands in VTESTPS (128-bit)");
+                return;
+            }
+
+            __m128 and_mask = _mm_and_ps(v_dst, v_src);         
+            __m128 nand_mask = _mm_andnot_ps(v_dst, v_src);       
+
+
+            __m128i sign_mask = _mm_set1_epi32(0x80000000);
+
+            bool zf = _mm_testz_si128(_mm_castps_si128(and_mask), sign_mask);
+            bool cf = _mm_testz_si128(_mm_castps_si128(nand_mask), sign_mask);
+
+            g_regs.rflags.flags.ZF = zf;
+            g_regs.rflags.flags.CF = cf;
+
+            g_regs.rflags.flags.AF = 0;
+            g_regs.rflags.flags.OF = 0;
+            g_regs.rflags.flags.PF = 0;
+            g_regs.rflags.flags.SF = 0;
+
+            LOG(L"[+] VTESTPS (128-bit) executed, ZF=" << zf << " CF=" << cf);
+        }
+        else if (width == 256) {
+            __m256 v_dst, v_src;
+            if (!read_operand_value<__m256>(dst, width, v_dst) ||
+                !read_operand_value<__m256>(src, width, v_src)) {
+                LOG(L"[!] Failed to read operands in VTESTPS (256-bit)");
+                return;
+            }
+
+            __m256 and_mask = _mm256_and_ps(v_dst, v_src);    
+            __m256 nand_mask = _mm256_andnot_ps(v_dst, v_src);  
+
+            __m256i sign_mask = _mm256_set1_epi32(0x80000000);
+
+            bool zf = _mm256_testz_si256(_mm256_castps_si256(and_mask), sign_mask);
+            bool cf = _mm256_testz_si256(_mm256_castps_si256(nand_mask), sign_mask);
+
+            g_regs.rflags.flags.ZF = zf;
+            g_regs.rflags.flags.CF = cf;
+
+            g_regs.rflags.flags.AF = 0;
+            g_regs.rflags.flags.OF = 0;
+            g_regs.rflags.flags.PF = 0;
+            g_regs.rflags.flags.SF = 0;
+
+            LOG(L"[+] VTESTPS (256-bit) executed, ZF=" << zf << " CF=" << cf);
+        }
+        else {
+            LOG(L"[!] Unsupported operand width in VTESTPS: " << width);
+        }
+    }
+    void emulate_vtestpd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+
+        uint32_t width = dst.size;
+
+        if (width == 128) {
+            __m128d v_dst, v_src;
+            if (!read_operand_value<__m128d>(dst, width, v_dst) ||
+                !read_operand_value<__m128d>(src, width, v_src)) {
+                LOG(L"[!] Failed to read operands in VTESTPD (128-bit)");
+                return;
+            }
+
+            __m128d and_mask = _mm_and_pd(v_dst, v_src);       
+            __m128d nand_mask = _mm_andnot_pd(v_dst, v_src);     
+
+
+            __m128i sign_mask = _mm_set1_epi64x(0x8000000000000000ULL);
+
+            bool zf = _mm_testz_si128(_mm_castpd_si128(and_mask), sign_mask);
+            bool cf = _mm_testz_si128(_mm_castpd_si128(nand_mask), sign_mask);
+
+            g_regs.rflags.flags.ZF = zf;
+            g_regs.rflags.flags.CF = cf;
+            g_regs.rflags.flags.AF = 0;
+            g_regs.rflags.flags.OF = 0;
+            g_regs.rflags.flags.PF = 0;
+            g_regs.rflags.flags.SF = 0;
+
+            LOG(L"[+] VTESTPD (128-bit) executed, ZF=" << zf << " CF=" << cf);
+        }
+        else if (width == 256) {
+            __m256d v_dst, v_src;
+            if (!read_operand_value<__m256d>(dst, width, v_dst) ||
+                !read_operand_value<__m256d>(src, width, v_src)) {
+                LOG(L"[!] Failed to read operands in VTESTPD (256-bit)");
+                return;
+            }
+
+            __m256d and_mask = _mm256_and_pd(v_dst, v_src);      
+            __m256d nand_mask = _mm256_andnot_pd(v_dst, v_src); 
+
+            __m256i sign_mask = _mm256_set1_epi64x(0x8000000000000000ULL);
+
+            bool zf = _mm256_testz_si256(_mm256_castpd_si256(and_mask), sign_mask);
+            bool cf = _mm256_testz_si256(_mm256_castpd_si256(nand_mask), sign_mask);
+
+            g_regs.rflags.flags.ZF = zf;
+            g_regs.rflags.flags.CF = cf;
+            g_regs.rflags.flags.AF = 0;
+            g_regs.rflags.flags.OF = 0;
+            g_regs.rflags.flags.PF = 0;
+            g_regs.rflags.flags.SF = 0;
+
+            LOG(L"[+] VTESTPD (256-bit) executed, ZF=" << zf << " CF=" << cf);
+        }
+        else {
+            LOG(L"[!] Unsupported operand width in VTESTPD: " << width);
+        }
+    }
+    void emulate_vpermilpd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
+        uint32_t width = dst.size;
+
+
+        uint8_t imm8 = 0;
+        bool has_imm = instr->info.operand_count_visible > 2 &&
+            instr->operands[2].type == ZYDIS_OPERAND_TYPE_IMMEDIATE;
+        if (has_imm) {
+            imm8 = instr->operands[2].imm.value.u & 0xFF;
+        }
+
+        if (width == 128) {
+            __m128d v_src;
+            if (!read_operand_value<__m128d>(src, width, v_src)) {
+                LOG(L"[!] Failed to read src in VPERMILPD (128-bit)");
+                return;
+            }
+
+            __m128d result;
+            if (has_imm) {
+
+                alignas(16) double vals[2];
+                _mm_storeu_pd(vals, v_src);
+
+                double out[2];
+                out[0] = vals[(imm8 >> 0) & 1];
+                out[1] = vals[(imm8 >> 1) & 1];
+                result = _mm_loadu_pd(out);
+
+                LOG(L"SRC: [" << vals[0] << " " << vals[1] << "]");
+                LOG(L"RESULT: [" << out[0] << " " << out[1] << "]");
+            }
+            else {
+
+                __m128i control;
+                if (!read_operand_value<__m128i>(instr->operands[2], width, control)) {
+                    LOG(L"[!] Failed to read control operand in VPERMILPD (128-bit)");
+                    return;
+                }
+                result = _mm_permutevar_pd(v_src, control);
+            }
+
+            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            set_register_value(dstYMM, YMM{});
+
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write destination operand in VPERMILPD (128-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPERMILPD (128-bit) executed, imm=" << (int)imm8);
+        }
+        else if (width == 256) {
+            __m256d v_src;
+            if (!read_operand_value<__m256d>(src, width, v_src)) {
+                LOG(L"[!] Failed to read src in VPERMILPD (256-bit)");
+                return;
+            }
+
+            __m256d result;
+            if (has_imm) {
+      
+                alignas(32) double vals[4];
+                _mm256_storeu_pd(vals, v_src);
+
+                double out[4];
+                out[0] = vals[(imm8 >> 0) & 1];
+                out[1] = vals[(imm8 >> 1) & 1];
+                out[2] = vals[2 + ((imm8 >> 2) & 1)];
+                out[3] = vals[2 + ((imm8 >> 3) & 1)];
+                result = _mm256_loadu_pd(out);
+
+                LOG(L"SRC: [" << vals[0] << " " << vals[1] << " " << vals[2] << " " << vals[3] << "]");
+                LOG(L"RESULT: [" << out[0] << " " << out[1] << " " << out[2] << " " << out[3] << "]");
+            }
+            else {
+             
+                __m256i control;
+                if (!read_operand_value<__m256i>(instr->operands[2], width, control)) {
+                    LOG(L"[!] Failed to read control operand in VPERMILPD (256-bit)");
+                    return;
+                }
+                result = _mm256_permutevar_pd(v_src, control);
+            }
+
+            if (!write_operand_value<__m256d>(dst, width, result)) {
+                LOG(L"[!] Failed to write destination operand in VPERMILPD (256-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPERMILPD (256-bit) executed, imm=" << (int)imm8);
+        }
+        else {
+            LOG(L"[!] Unsupported width in VPERMILPD: " << width);
+        }
+    }
+    void emulate_vperm2f128(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        uint32_t width = dst.size;
+
+        uint8_t imm8 = 0;
+        bool has_imm = instr->info.operand_count_visible > 3 &&
+            instr->operands[3].type == ZYDIS_OPERAND_TYPE_IMMEDIATE;
+        if (has_imm) {
+            imm8 = instr->operands[3].imm.value.u & 0xFF;
+        }
+
+        if (width == 128) {
+            __m128d v_src1, v_src2;
+            if (!read_operand_value<__m128d>(src1, width, v_src1) ||
+                !read_operand_value<__m128d>(src2, width, v_src2)) {
+                LOG(L"[!] Failed to read src operands in VPERM2F128 (128-bit)");
+                return;
+            }
+
+            __m128d result;
+            if (has_imm) {
+                alignas(16) double s1[2], s2[2], out[2];
+                _mm_storeu_pd(s1, v_src1);
+                _mm_storeu_pd(s2, v_src2);
+
+
+                switch (imm8 & 0x3) {
+                case 0: out[0] = s1[0]; out[1] = s1[1]; break;
+                case 1: out[0] = s1[0]; out[1] = s1[1]; break;
+                case 2: out[0] = s2[0]; out[1] = s2[1]; break;
+                case 3: out[0] = s2[0]; out[1] = s2[1]; break;
+                }
+                if (imm8 & 0x8) out[0] = out[1] = 0.0;
+
+                result = _mm_loadu_pd(out);
+            }
+            else {
+                __m128i control;
+                if (!read_operand_value<__m128i>(src2, width, control)) {
+                    LOG(L"[!] Failed to read control operand in VPERM2F128 (128-bit)");
+                    return;
+                }
+                result = _mm_permutevar_pd(v_src1, control);
+            }
+
+            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            set_register_value(dstYMM, YMM{});
+
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write destination operand in VPERM2F128 (128-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPERM2F128 (128-bit) executed, imm=" << (int)imm8);
+        }
+
+        else if (width == 256) {
+            __m256d v_src1, v_src2;
+            if (!read_operand_value<__m256d>(src1, width, v_src1) ||
+                !read_operand_value<__m256d>(src2, width, v_src2)) {
+                LOG(L"[!] Failed to read src operands in VPERM2F128 (256-bit)");
+                return;
+            }
+
+            __m256d result;
+            if (has_imm) {
+                alignas(32) double s1[4], s2[4], out[4];
+                _mm256_storeu_pd(s1, v_src1);
+                _mm256_storeu_pd(s2, v_src2);
+
+
+                switch (imm8 & 0x3) {
+                case 0: out[0] = s1[0]; out[1] = s1[1]; break;
+                case 1: out[0] = s1[2]; out[1] = s1[3]; break;
+                case 2: out[0] = s2[0]; out[1] = s2[1]; break;
+                case 3: out[0] = s2[2]; out[1] = s2[3]; break;
+                }
+          
+                switch ((imm8 >> 4) & 0x3) {
+                case 0: out[2] = s1[0]; out[3] = s1[1]; break;
+                case 1: out[2] = s1[2]; out[3] = s1[3]; break;
+                case 2: out[2] = s2[0]; out[3] = s2[1]; break;
+                case 3: out[2] = s2[2]; out[3] = s2[3]; break;
+                }
+
+                if (imm8 & 0x8) { out[0] = out[1] = 0.0; }
+                if (imm8 & 0x80) { out[2] = out[3] = 0.0; }
+
+                result = _mm256_loadu_pd(out);
+            }
+            else {
+                __m256i control;
+                if (!read_operand_value<__m256i>(src2, width, control)) {
+                    LOG(L"[!] Failed to read control operand in VPERM2F128 (256-bit)");
+                    return;
+                }
+                result = _mm256_permutevar_pd(v_src1, control);
+            }
+
+            if (!write_operand_value<__m256d>(dst, width, result)) {
+                LOG(L"[!] Failed to write destination operand in VPERM2F128 (256-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPERM2F128 (256-bit) executed, imm=" << (int)imm8);
+        }
+
+        else {
+            LOG(L"[!] Unsupported width in VPERM2F128: " << width);
+        }
     }
 
 
