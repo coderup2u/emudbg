@@ -183,6 +183,269 @@ uint64_t kernelBase_address;
 #include <psapi.h>  
 uint64_t ntdllBase = 0;
 bool is_first_time = 1;
+
+
+typedef enum _NT_PRODUCT_TYPE
+{
+    NtProductWinNt = 1,
+    NtProductLanManNt,
+    NtProductServer
+} NT_PRODUCT_TYPE, * PNT_PRODUCT_TYPE;
+
+
+
+typedef struct _KSYSTEM_TIME
+{
+    ULONG LowPart;
+    LONG High1Time;
+    LONG High2Time;
+} KSYSTEM_TIME, * PKSYSTEM_TIME;
+
+typedef enum _ALTERNATIVE_ARCHITECTURE_TYPE
+{
+    StandardDesign,
+    NEC98x86,
+    EndAlternatives
+} ALTERNATIVE_ARCHITECTURE_TYPE;
+#define PROCESSOR_FEATURE_MAX 64
+
+typedef struct _KUSER_SHARED_DATA {
+    ULONG                         TickCountLowDeprecated;
+    ULONG                         TickCountMultiplier;
+    KSYSTEM_TIME                  InterruptTime;
+    KSYSTEM_TIME                  SystemTime;
+    KSYSTEM_TIME                  TimeZoneBias;
+    USHORT                        ImageNumberLow;
+    USHORT                        ImageNumberHigh;
+    WCHAR                         NtSystemRoot[260];
+    ULONG                         MaxStackTraceDepth;
+    ULONG                         CryptoExponent;
+    ULONG                         TimeZoneId;
+    ULONG                         LargePageMinimum;
+    ULONG                         AitSamplingValue;
+    ULONG                         AppCompatFlag;
+    ULONGLONG                     RNGSeedVersion;
+    ULONG                         GlobalValidationRunlevel;
+    LONG                          TimeZoneBiasStamp;
+    ULONG                         NtBuildNumber;
+    NT_PRODUCT_TYPE               NtProductType;
+    BOOLEAN                       ProductTypeIsValid;
+    BOOLEAN                       Reserved0[1];
+    USHORT                        NativeProcessorArchitecture;
+    ULONG                         NtMajorVersion;
+    ULONG                         NtMinorVersion;
+    BOOLEAN                       ProcessorFeatures[PROCESSOR_FEATURE_MAX];
+    ULONG                         Reserved1;
+    ULONG                         Reserved3;
+    ULONG                         TimeSlip;
+    ALTERNATIVE_ARCHITECTURE_TYPE AlternativeArchitecture;
+    ULONG                         BootId;
+    LARGE_INTEGER                 SystemExpirationDate;
+    ULONG                         SuiteMask;
+    BOOLEAN                       KdDebuggerEnabled;
+    union {
+        UCHAR MitigationPolicies;
+        struct {
+            UCHAR NXSupportPolicy : 2;
+            UCHAR SEHValidationPolicy : 2;
+            UCHAR CurDirDevicesSkippedForDlls : 2;
+            UCHAR Reserved : 2;
+        };
+    };
+    USHORT                        CyclesPerYield;
+    ULONG                         ActiveConsoleId;
+    ULONG                         DismountCount;
+    ULONG                         ComPlusPackage;
+    ULONG                         LastSystemRITEventTickCount;
+    ULONG                         NumberOfPhysicalPages;
+    BOOLEAN                       SafeBootMode;
+    union {
+        UCHAR VirtualizationFlags;
+        struct {
+            UCHAR ArchStartedInEl2 : 1;
+            UCHAR QcSlIsSupported : 1;
+        };
+    };
+    UCHAR                         Reserved12[2];
+    union {
+        ULONG SharedDataFlags;
+        struct {
+            ULONG DbgErrorPortPresent : 1;
+            ULONG DbgElevationEnabled : 1;
+            ULONG DbgVirtEnabled : 1;
+            ULONG DbgInstallerDetectEnabled : 1;
+            ULONG DbgLkgEnabled : 1;
+            ULONG DbgDynProcessorEnabled : 1;
+            ULONG DbgConsoleBrokerEnabled : 1;
+            ULONG DbgSecureBootEnabled : 1;
+            ULONG DbgMultiSessionSku : 1;
+            ULONG DbgMultiUsersInSessionSku : 1;
+            ULONG DbgStateSeparationEnabled : 1;
+            ULONG SpareBits : 21;
+        } DUMMYSTRUCTNAME2;
+    } DUMMYUNIONNAME2;
+    ULONG                         DataFlagsPad[1];
+    ULONGLONG                     TestRetInstruction;
+    LONGLONG                      QpcFrequency;
+    ULONG                         SystemCall;
+    ULONG                         Reserved2;
+    ULONGLONG                     FullNumberOfPhysicalPages;
+    ULONGLONG                     SystemCallPad[1];
+    union {
+        KSYSTEM_TIME TickCount;
+        ULONG64      TickCountQuad;
+        struct {
+            ULONG ReservedTickCountOverlay[3];
+            ULONG TickCountPad[1];
+        } DUMMYSTRUCTNAME;
+    } DUMMYUNIONNAME3;
+    ULONG                         Cookie;
+    ULONG                         CookiePad[1];
+    LONGLONG                      ConsoleSessionForegroundProcessId;
+    ULONGLONG                     TimeUpdateLock;
+    ULONGLONG                     BaselineSystemTimeQpc;
+    ULONGLONG                     BaselineInterruptTimeQpc;
+    ULONGLONG                     QpcSystemTimeIncrement;
+    ULONGLONG                     QpcInterruptTimeIncrement;
+    UCHAR                         QpcSystemTimeIncrementShift;
+    UCHAR                         QpcInterruptTimeIncrementShift;
+    USHORT                        UnparkedProcessorCount;
+    ULONG                         EnclaveFeatureMask[4];
+    ULONG                         TelemetryCoverageRound;
+    USHORT                        UserModeGlobalLogger[16];
+    ULONG                         ImageFileExecutionOptions;
+    ULONG                         LangGenerationCount;
+    ULONGLONG                     Reserved4;
+    ULONGLONG                     InterruptTimeBias;
+    ULONGLONG                     QpcBias;
+    ULONG                         ActiveProcessorCount;
+    UCHAR                         ActiveGroupCount;
+    UCHAR                         Reserved9;
+    union {
+        USHORT QpcData;
+        struct {
+            UCHAR QpcBypassEnabled;
+            UCHAR QpcReserved;
+        };
+    };
+    LARGE_INTEGER                 TimeZoneBiasEffectiveStart;
+    LARGE_INTEGER                 TimeZoneBiasEffectiveEnd;
+    XSTATE_CONFIGURATION          XState;
+    KSYSTEM_TIME                  FeatureConfigurationChangeStamp;
+    ULONG                         Spare;
+    ULONG64                       UserPointerAuthMask;
+    XSTATE_CONFIGURATION          XStateArm64;
+    ULONG                         Reserved10[210];
+} KUSER_SHARED_DATA, * PKUSER_SHARED_DATA;
+
+extern KUSER_SHARED_DATA g_kuser_shared_data;
+
+
+struct OffsetName {
+    size_t offset;
+    const char* name;
+};
+
+#define FIELD_INFO(field) {offsetof(KUSER_SHARED_DATA, field), #field}
+
+OffsetName kuser_offsets[] = {
+    FIELD_INFO(TickCountLowDeprecated),
+    FIELD_INFO(TickCountMultiplier),
+    FIELD_INFO(InterruptTime),
+    FIELD_INFO(SystemTime),
+    FIELD_INFO(TimeZoneBias),
+    FIELD_INFO(ImageNumberLow),
+    FIELD_INFO(ImageNumberHigh),
+    FIELD_INFO(NtSystemRoot),
+    FIELD_INFO(MaxStackTraceDepth),
+    FIELD_INFO(CryptoExponent),
+    FIELD_INFO(TimeZoneId),
+    FIELD_INFO(LargePageMinimum),
+    FIELD_INFO(AitSamplingValue),
+    FIELD_INFO(AppCompatFlag),
+    FIELD_INFO(RNGSeedVersion),
+    FIELD_INFO(GlobalValidationRunlevel),
+    FIELD_INFO(TimeZoneBiasStamp),
+    FIELD_INFO(NtBuildNumber),
+    FIELD_INFO(NtProductType),
+    FIELD_INFO(ProductTypeIsValid),
+    FIELD_INFO(NativeProcessorArchitecture),
+    FIELD_INFO(NtMajorVersion),
+    FIELD_INFO(NtMinorVersion),
+    FIELD_INFO(ProcessorFeatures),
+    FIELD_INFO(Reserved1),
+    FIELD_INFO(Reserved3),
+    FIELD_INFO(TimeSlip),
+    FIELD_INFO(AlternativeArchitecture),
+    FIELD_INFO(BootId),
+    FIELD_INFO(SystemExpirationDate),
+    FIELD_INFO(SuiteMask),
+    FIELD_INFO(KdDebuggerEnabled),
+    FIELD_INFO(MitigationPolicies),
+    FIELD_INFO(CyclesPerYield),
+    FIELD_INFO(ActiveConsoleId),
+    FIELD_INFO(DismountCount),
+    FIELD_INFO(ComPlusPackage),
+    FIELD_INFO(LastSystemRITEventTickCount),
+    FIELD_INFO(NumberOfPhysicalPages),
+    FIELD_INFO(SafeBootMode),
+    FIELD_INFO(VirtualizationFlags),
+    FIELD_INFO(Reserved12),
+    FIELD_INFO(SharedDataFlags),
+    FIELD_INFO(DataFlagsPad),
+    FIELD_INFO(TestRetInstruction),
+    FIELD_INFO(QpcFrequency),
+    FIELD_INFO(SystemCall),
+    FIELD_INFO(Reserved2),
+    FIELD_INFO(FullNumberOfPhysicalPages),
+    FIELD_INFO(SystemCallPad),
+    FIELD_INFO(TickCount),
+    FIELD_INFO(Cookie),
+    FIELD_INFO(CookiePad),
+    FIELD_INFO(ConsoleSessionForegroundProcessId),
+    FIELD_INFO(TimeUpdateLock),
+    FIELD_INFO(BaselineSystemTimeQpc),
+    FIELD_INFO(BaselineInterruptTimeQpc),
+    FIELD_INFO(QpcSystemTimeIncrement),
+    FIELD_INFO(QpcInterruptTimeIncrement),
+    FIELD_INFO(QpcSystemTimeIncrementShift),
+    FIELD_INFO(QpcInterruptTimeIncrementShift),
+    FIELD_INFO(UnparkedProcessorCount),
+    FIELD_INFO(EnclaveFeatureMask),
+    FIELD_INFO(TelemetryCoverageRound),
+    FIELD_INFO(UserModeGlobalLogger),
+    FIELD_INFO(ImageFileExecutionOptions),
+    FIELD_INFO(LangGenerationCount),
+    FIELD_INFO(Reserved4),
+    FIELD_INFO(InterruptTimeBias),
+    FIELD_INFO(QpcBias),
+    FIELD_INFO(ActiveProcessorCount),
+    FIELD_INFO(ActiveGroupCount),
+    FIELD_INFO(Reserved9),
+    FIELD_INFO(QpcData),
+    FIELD_INFO(TimeZoneBiasEffectiveStart),
+    FIELD_INFO(TimeZoneBiasEffectiveEnd),
+    FIELD_INFO(XState),
+    FIELD_INFO(FeatureConfigurationChangeStamp),
+    FIELD_INFO(Spare),
+    FIELD_INFO(UserPointerAuthMask),
+    FIELD_INFO(XStateArm64),
+    FIELD_INFO(Reserved10),
+};
+std::string get_kuser_field_name(uint64_t offset) {
+    std::string result = "Unknown";
+    for (size_t i = 0; i < sizeof(kuser_offsets) / sizeof(kuser_offsets[0]); ++i) {
+        if (offset == kuser_offsets[i].offset) {
+            return kuser_offsets[i].name;
+        }
+        else if (offset > kuser_offsets[i].offset) {
+            std::stringstream ss;
+            ss << kuser_offsets[i].name << " + 0x" << std::hex << (offset - kuser_offsets[i].offset);
+            result = ss.str();
+        }
+    }
+    return result;
+}
 bool compareGPR(const GPR& a, const GPR& b) {
     return a.q == b.q;
 }
@@ -364,92 +627,6 @@ std::string GetExportedFunctionNameByAddress(uint64_t addr) {
     return "";
 }
 
-static const std::map<uint64_t, std::string> kuser_shared_data_offsets = {
-    {0x000, "TickCountLowDeprecated"},                // ULONG
-    {0x004, "TickCountMultiplier"},                  // ULONG
-    {0x008, "InterruptTime"},                        // KSYSTEM_TIME
-    {0x010, "SystemTime"},                           // KSYSTEM_TIME
-    {0x018, "TimeZoneBias"},                         // KSYSTEM_TIME
-    {0x020, "ImageNumberLow"},                       // USHORT
-    {0x022, "ImageNumberHigh"},                      // USHORT
-    {0x024, "NtSystemRoot[260]"},                    // WCHAR[260]
-    {0x22C, "MaxStackTraceDepth"},                   // ULONG
-    {0x230, "CryptoExponent"},                       // ULONG
-    {0x234, "TimeZoneId"},                           // ULONG
-    {0x238, "LargePageMinimum"},                     // ULONG
-    {0x23C, "AitSamplingValue"},                     // ULONG
-    {0x240, "AppCompatFlag"},                        // ULONG
-    {0x244, "RNGSeedVersion"},                       // ULONGLONG
-    {0x24C, "GlobalValidationRunlevel"},             // ULONG
-    {0x250, "TimeZoneBiasStamp"},                    // LONG
-    {0x254, "NtBuildNumber"},                        // ULONG
-    {0x258, "NtProductType"},                        // NT_PRODUCT_TYPE (ULONG)
-    {0x25C, "ProductTypeIsValid"},                   // BOOLEAN
-    {0x25D, "Reserved0[1]"},                         // BOOLEAN
-    {0x25E, "NativeProcessorArchitecture"},          // USHORT
-    {0x260, "NtMajorVersion"},                       // ULONG
-    {0x264, "NtMinorVersion"},                       // ULONG
-    {0x268, "ProcessorFeatures[64]"},                // BOOLEAN[64]
-    {0x2A8, "Reserved1"},                            // ULONG
-    {0x2AC, "Reserved3"},                            // ULONG
-    {0x2B0, "TimeSlip"},                             // ULONG
-    {0x2B4, "AlternativeArchitecture"},              // ULONG
-    {0x2B8, "BootId"},                               // ULONG
-    {0x2C0, "SystemExpirationDate"},                 // LARGE_INTEGER
-    {0x2C8, "SuiteMask"},                            // ULONG
-    {0x2CC, "KdDebuggerEnabled"},                    // BOOLEAN
-    {0x2CD, "MitigationPolicies"},                   // UCHAR (bitfield)
-    {0x2CE, "CyclesPerYield"},                       // USHORT
-    {0x2D0, "ActiveConsoleId"},                      // ULONG
-    {0x2D4, "DismountCount"},                        // ULONG
-    {0x2D8, "ComPlusPackage"},                       // ULONG
-    {0x2DC, "LastSystemRITEventTickCount"},          // ULONG
-    {0x2E0, "NumberOfPhysicalPages"},                // ULONG
-    {0x2E4, "SafeBootMode"},                         // BOOLEAN
-    {0x2E5, "VirtualizationFlags"},                  // UCHAR
-    {0x2E6, "Reserved12[2]"},                        // UCHAR[2]
-    {0x2E8, "SharedDataFlags"},                      // ULONG (bitfield)
-    {0x2EC, "DataFlagsPad[1]"},                      // ULONG
-    {0x2F0, "TestRetInstruction"},                   // ULONGLONG
-    {0x2F8, "QpcFrequency"},                         // LONGLONG
-    {0x300, "SystemCall"},                           // ULONG
-    {0x304, "Reserved2"},                            // ULONG
-    {0x308, "FullNumberOfPhysicalPages"},            // ULONGLONG
-    {0x310, "SystemCallPad[1]"},                     // ULONGLONG
-    {0x318, "TickCount"},                            // KSYSTEM_TIME (union variant)
-    {0x324, "TickCountPad[1]"},                      // ULONG
-    {0x328, "Cookie"},                               // ULONG
-    {0x32C, "CookiePad[1]"},                         // ULONG
-    {0x330, "ConsoleSessionForegroundProcessId"},    // LONGLONG
-    {0x338, "TimeUpdateLock"},                       // ULONGLONG
-    {0x340, "BaselineSystemTimeQpc"},                // ULONGLONG
-    {0x348, "BaselineInterruptTimeQpc"},             // ULONGLONG
-    {0x350, "QpcSystemTimeIncrement"},               // ULONGLONG
-    {0x358, "QpcInterruptTimeIncrement"},            // ULONGLONG
-    {0x360, "QpcSystemTimeIncrementShift"},          // UCHAR
-    {0x361, "QpcInterruptTimeIncrementShift"},       // UCHAR
-    {0x362, "UnparkedProcessorCount"},               // USHORT
-    {0x364, "EnclaveFeatureMask[4]"},                // ULONG[4]
-    {0x374, "TelemetryCoverageRound"},               // ULONG
-    {0x378, "UserModeGlobalLogger[16]"},             // USHORT[16]
-    {0x398, "ImageFileExecutionOptions"},            // ULONG
-    {0x39C, "LangGenerationCount"},                  // ULONG
-    {0x3A0, "Reserved4"},                            // ULONGLONG
-    {0x3A8, "InterruptTimeBias"},                    // ULONGLONG
-    {0x3B0, "QpcBias"},                              // ULONGLONG
-    {0x3B8, "ActiveProcessorCount"},                 // ULONG
-    {0x3BC, "ActiveGroupCount"},                     // UCHAR
-    {0x3BD, "Reserved9"},                            // UCHAR
-    {0x3BE, "QpcData"},                              // USHORT (union)
-    {0x3C0, "TimeZoneBiasEffectiveStart"},           // LARGE_INTEGER
-    {0x3C8, "TimeZoneBiasEffectiveEnd"},             // LARGE_INTEGER
-    {0x3D0, "XState"},                               // XSTATE_CONFIGURATION (size varies)
-    {0x410, "FeatureConfigurationChangeStamp"},      // KSYSTEM_TIME
-    {0x418, "Spare"},                                // ULONG
-    {0x420, "UserPointerAuthMask"},                  // ULONG64
-    {0x428, "XStateArm64"},                          // XSTATE_CONFIGURATION
-    {0x468, "Reserved10[210]"},                      // ULONG[210]
-};
 
 
 static const std::map<uint64_t, std::string> teb_offsets = {
@@ -1589,7 +1766,7 @@ public:
 
                     if (!IsInEmulationRange(address)) {
 #if analyze_ENABLED
-                        LOG_analyze( CYAN ,  GetExportedFunctionNameByAddress(address).c_str());
+                        LOG_analyze( CYAN ,"Executing function: " << GetExportedFunctionNameByAddress(address).c_str() << "RIP [0x"<< std::hex << g_regs.rip <<"]");
 
                         uint8_t buffer[16] = {};
                         if (ReadMemory(address, buffer, sizeof(buffer))) {
@@ -2556,21 +2733,12 @@ private:
         // KUSER_SHARED_DATA
         if (address >= kuser_base && address < kuser_base + kuser_size) {
             uint64_t offset = address - kuser_base;
-            std::string description = "Unknown";
+            std::string description = get_kuser_field_name(offset);
 
-            auto it = kuser_shared_data_offsets.upper_bound(offset);
-            if (it != kuser_shared_data_offsets.begin()) {
-                --it;
-                uint64_t base_offset = it->first;
-                uint64_t delta = offset - base_offset;
-                if (delta == 0)
-                    description = it->second;
-                else
-                    description = it->second + " + 0x" + std::to_string(delta);
-            }
-
-           LOG_analyze(YELLOW,
-                "[KUSER_SHARED_DATA] Reading ("<< description.c_str() <<") at 0x"<<std::hex <<address <<" [RIP: 0x"<<std::hex << g_regs.rip<<"]");
+            LOG_analyze(YELLOW,
+                "[KUSER_SHARED_DATA] Reading (" << description.c_str() << ") at 0x"
+                << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]"
+            );
         }
         if (address != g_regs.rip) {
         auto FunctionName = GetExportedFunctionNameByAddress(address);
@@ -10080,7 +10248,7 @@ private:
         is_cpuid = 1;
 #endif
 #if analyze_ENABLED
-        LOG_analyze(WHITE, "CPUID  at : 0x"<< std::hex <<g_regs.rip);
+        LOG_analyze(WHITE, "CPUID leaf "<< "0x" << std::hex << g_regs.rax.q << "  at : 0x" << std::hex << g_regs.rip);
 #endif
  #if AUTO_PATCH_HW
         if (patchSectionAddress != 0 && IsInPatchRange(g_regs.rip)) {
