@@ -1399,6 +1399,8 @@ public:
             { ZYDIS_MNEMONIC_VTESTPD, &CPU::emulate_vtestpd },
             { ZYDIS_MNEMONIC_VPERMILPD, &CPU::emulate_vpermilpd },
             { ZYDIS_MNEMONIC_VPERM2F128, &CPU::emulate_vperm2f128 },
+            { ZYDIS_MNEMONIC_VPERM2I128, &CPU::emulate_vperm2i128 },
+            { ZYDIS_MNEMONIC_VINSERTI128, &CPU::emulate_vinserti128 },
 
     
         };
@@ -12417,6 +12419,176 @@ private:
             LOG(L"[!] Unsupported width in VPERM2F128: " << width);
         }
     }
+    void emulate_vperm2i128(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+        uint32_t width = dst.size;
+
+        uint8_t imm8 = 0;
+        bool has_imm = instr->info.operand_count_visible > 3 &&
+            instr->operands[3].type == ZYDIS_OPERAND_TYPE_IMMEDIATE;
+        if (has_imm) {
+            imm8 = instr->operands[3].imm.value.u & 0xFF;
+        }
+
+        if (width == 128) {
+            __m128i v_src1, v_src2;
+            if (!read_operand_value<__m128i>(src1, width, v_src1) ||
+                !read_operand_value<__m128i>(src2, width, v_src2)) {
+                LOG(L"[!] Failed to read src operands in VPERM2I128 (128-bit)");
+                return;
+            }
+
+            alignas(16) int32_t s1[4], s2[4], out[4];
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(s1), v_src1);
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(s2), v_src2);
+
+            if (has_imm) {
+
+                switch (imm8 & 0x3) {
+                case 0: for (int i = 0; i < 4; i++) out[i] = s1[i]; break;
+                case 1: for (int i = 0; i < 4; i++) out[i] = s1[i]; break;
+                case 2: for (int i = 0; i < 4; i++) out[i] = s2[i]; break;
+                case 3: for (int i = 0; i < 4; i++) out[i] = s2[i]; break;
+                }
+                if (imm8 & 0x8) for (int i = 0; i < 4; i++) out[i] = 0;
+            }
+            else {
+
+                __m128i control;
+                if (!read_operand_value<__m128i>(src2, width, control)) {
+                    LOG(L"[!] Failed to read control operand in VPERM2I128 (128-bit)");
+                    return;
+                }
+                alignas(16) int32_t idx[4], c[4];
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(idx), v_src1);
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(c), control);
+                for (int i = 0; i < 4; i++) out[i] = idx[c[i] & 3];
+            }
+
+            __m128i result = _mm_loadu_si128(reinterpret_cast<__m128i*>(out));
+
+            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            set_register_value(dstYMM, YMM{});
+
+            if (!write_operand_value(dst, 128, result)) {
+                LOG(L"[!] Failed to write destination operand in VPERM2I128 (128-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPERM2I128 (128-bit) executed, imm=" << (int)imm8);
+        }
+        else if (width == 256) {
+            __m256i v_src1, v_src2;
+            if (!read_operand_value<__m256i>(src1, width, v_src1) ||
+                !read_operand_value<__m256i>(src2, width, v_src2)) {
+                LOG(L"[!] Failed to read src operands in VPERM2I128 (256-bit)");
+                return;
+            }
+
+            alignas(32) int32_t s1[8], s2[8], out[8];
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(s1), v_src1);
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(s2), v_src2);
+
+            if (has_imm) {
+       
+                switch (imm8 & 0x3) {
+                case 0: out[0] = s1[0]; out[1] = s1[1]; out[2] = s1[2]; out[3] = s1[3]; break;
+                case 1: out[0] = s1[4]; out[1] = s1[5]; out[2] = s1[6]; out[3] = s1[7]; break;
+                case 2: out[0] = s2[0]; out[1] = s2[1]; out[2] = s2[2]; out[3] = s2[3]; break;
+                case 3: out[0] = s2[4]; out[1] = s2[5]; out[2] = s2[6]; out[3] = s2[7]; break;
+                }
+     
+                switch ((imm8 >> 4) & 0x3) {
+                case 0: out[4] = s1[0]; out[5] = s1[1]; out[6] = s1[2]; out[7] = s1[3]; break;
+                case 1: out[4] = s1[4]; out[5] = s1[5]; out[6] = s1[6]; out[7] = s1[7]; break;
+                case 2: out[4] = s2[0]; out[5] = s2[1]; out[6] = s2[2]; out[7] = s2[3]; break;
+                case 3: out[4] = s2[4]; out[5] = s2[5]; out[6] = s2[6]; out[7] = s2[7]; break;
+                }
+
+                if (imm8 & 0x8) { for (int i = 0; i < 4; i++) out[i] = 0; }   
+                if (imm8 & 0x80) { for (int i = 4; i < 8; i++) out[i] = 0; }  
+            }
+            else {
+
+                __m256i control;
+                if (!read_operand_value<__m256i>(src2, width, control)) {
+                    LOG(L"[!] Failed to read control operand in VPERM2I128 (256-bit)");
+                    return;
+                }
+                alignas(32) int32_t idx[8], c[8];
+                _mm256_storeu_si256(reinterpret_cast<__m256i*>(idx), v_src1);
+                _mm256_storeu_si256(reinterpret_cast<__m256i*>(c), control);
+                for (int i = 0; i < 8; i++) out[i] = idx[c[i] & 7];
+            }
+
+            __m256i result = _mm256_loadu_si256(reinterpret_cast<__m256i*>(out));
+
+            if (!write_operand_value(dst, 256, result)) {
+                LOG(L"[!] Failed to write destination operand in VPERM2I128 (256-bit)");
+                return;
+            }
+
+            LOG(L"[+] VPERM2I128 (256-bit) executed, imm=" << (int)imm8);
+        }
+        else {
+            LOG(L"[!] Unsupported width in VPERM2I128: " << width);
+        }
+    }
+    void emulate_vinserti128(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0];
+        const auto& src1 = instr->operands[1];
+        const auto& src2 = instr->operands[2];
+
+        uint8_t imm8 = 0;
+        bool has_imm = instr->info.operand_count_visible > 3 &&
+            instr->operands[3].type == ZYDIS_OPERAND_TYPE_IMMEDIATE;
+        if (has_imm) {
+            imm8 = instr->operands[3].imm.value.u & 0xFF;
+        }
+
+        uint32_t width = dst.size;
+
+        if (width != 256) {
+            LOG(L"[!] Unsupported width in VINSERTI128: " << width);
+            return;
+        }
+
+
+        __m256i val1;
+        __m128i val2;
+        if (!read_operand_value<__m256i>(src1, width, val1) ||
+            !read_operand_value<__m128i>(src2, 128, val2)) {
+            LOG(L"[!] Failed to read source operands for VINSERTI128");
+            return;
+        }
+
+        alignas(32) int64_t temp[4];
+        _mm256_store_si256((__m256i*)temp, val1);   
+
+        alignas(16) int64_t s2[2];
+        _mm_store_si128((__m128i*)s2, val2);   
+
+        if ((imm8 & 0x1) == 0) {
+            temp[0] = s2[0];
+            temp[1] = s2[1];
+        }
+        else {
+            temp[2] = s2[0];
+            temp[3] = s2[1];
+        }
+
+        __m256i result = _mm256_load_si256((__m256i*)temp);
+
+        if (!write_operand_value<__m256i>(dst, width, result)) {
+            LOG(L"[!] Failed to write destination operand for VINSERTI128");
+            return;
+        }
+
+        LOG(L"[+] VINSERTI128 executed, imm=" << (int)imm8);
+    }
+
 
 
 
