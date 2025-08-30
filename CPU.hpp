@@ -612,13 +612,18 @@ inline void SetConsoleColor(ConsoleColor color) {
 #if AUTO_PATCH_HW
 const size_t patchOffsetFromInstruction = 4;
 uint64_t patchSectionAddress = 0;
-uint64_t patchSectionAddressbase  = 0;
- size_t patchSection_SIZE = 0;
 std::wstring patchModule;
 std::wstring patchModule_File_Path;
 std::pair<uint64_t, uint64_t> patch_modules_ranges;
+std::pair<uint64_t, uint64_t> patch_section_ranges;
 std::vector<IMAGE_SECTION_HEADER> sections;
+bool IsInPatchSectionRange(uint64_t addr) {
 
+    if (addr >= patch_section_ranges.first && addr <= patch_section_ranges.second)
+        return true;
+
+    return false;
+}
 
 bool IsInPatchRange(uint64_t addr) {
 
@@ -2920,7 +2925,7 @@ private:
         // Access memory
         bool success = write ? WriteMemory(address, inout, sizeof(T)) : ReadMemory(address, inout, sizeof(T));
 #if AUTO_PATCH_HW
-        if (is_address_RIP_relative && !write && IsInPatchRange(g_regs.rip) && success && !(address > patchSectionAddressbase && address < patchSectionAddressbase + patchSection_SIZE) && IsInEmulationRange(address)) {
+        if (is_address_RIP_relative && !write && IsInPatchRange(g_regs.rip) && success && !IsInPatchSectionRange(address) && IsInEmulationRange(address)) {
 
             if (!PatchFileSingle(patchSectionAddress,
                 reinterpret_cast<const char*>(inout),

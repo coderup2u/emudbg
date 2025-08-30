@@ -179,10 +179,8 @@ int wmain(int argc, wchar_t* argv[]) {
                                 patch_modules_ranges.second = dllBase + ntHdr.OptionalHeader.SizeOfImage;
          
                                 patchSectionAddress = (uint64_t)ld.lpBaseOfDll + secHdr.VirtualAddress  ;
-                                patchSectionAddressbase = patchSectionAddress;
-                           
-                        
-                                patchSection_SIZE = secHdr.Misc.VirtualSize;
+                                patch_section_ranges.first = patchSectionAddress;
+                                patch_section_ranges.second = patchSectionAddress + secHdr.Misc.VirtualSize;
                                 printf("%s section at: 0x%llx (size: 0x%x)\n",
                                     patchSections.c_str(), patchSectionAddress, secHdr.Misc.VirtualSize);
                                 break;
@@ -412,10 +410,8 @@ int wmain(int argc, wchar_t* argv[]) {
                     patch_modules_ranges.second = baseAddress + ntHdr.OptionalHeader.SizeOfImage;
 
                     patchSectionAddress = baseAddress + secHdr.VirtualAddress ;
-                    patchSectionAddressbase = patchSectionAddress;
-                    
-
-                    patchSection_SIZE = secHdr.Misc.VirtualSize;
+                    patch_section_ranges.first = patchSectionAddress;
+                    patch_section_ranges.second = patchSectionAddress + secHdr.Misc.VirtualSize;
                     printf("%s section at: 0x%llx (size: 0x%x)\n", patchSections.c_str(), patchSectionAddress, secHdr.Misc.VirtualSize);
                     break;
                 }
