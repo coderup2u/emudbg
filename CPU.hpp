@@ -3168,13 +3168,13 @@ private:
 #if FUll_user_MODE
         std::wstring dllName = GetSystemModuleNameFromAddress(address);
         if (!dllName.empty() && FunctionName.empty() ) {
-            LOG_analyze(YELLOW,
+            LOG_analyze(BRIGHT_CYAN,
                 "[READ SYSTEM DLL] Reading From (" << dllName.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
         }
 #endif
         if (!FunctionName.empty() ) {
             LOG_analyze(
-                YELLOW,
+                BRIGHT_BLACK,
                 "[Function Lookup] Resolved '" << FunctionName.c_str()
                 << "' at 0x" << std::hex << address
                 << " [RIP: 0x" << std::hex << g_regs.rip
