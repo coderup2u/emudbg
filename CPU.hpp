@@ -718,43 +718,145 @@ static const std::map<uint64_t, std::string> teb_offsets = {
     {0x1068, "ResourceRetValue"},
 };
 //LDR
-std::map<uint64_t, std::string> ldr_offsets = {
-    {0x00, "Length"},
-    {0x04, "Initialized"},
-    {0x08, "SsHandle"},
-    {0x10, "InLoadOrderModuleList"},
-    {0x20, "InMemoryOrderModuleList"},
-    {0x30, "InInitializationOrderModuleList"},
-    {0x40, "EntryInProgress"},
-    {0x48, "ShutdownInProgress"},
-    {0x50, "ShutdownThreadId"}
-};
+#define FIELD_INFO_LDR(field) {offsetof(_PEB_LDR_DATA, field), #field}
+
+typedef struct _PEB_LDR_DATA {
+    BYTE       Reserved1[8];
+    PVOID      Reserved2[3];
+    LIST_ENTRY InMemoryOrderModuleList;
+} PEB_LDR_DATA, * PPEB_LDR_DATA;
 
 
-static const std::map<uint64_t, std::string> peb_offsets = {
-    {0x000, "Reserved1[0]"},                      // BYTE[2]
-    {0x002, "BeingDebugged"},                     // BYTE
-    {0x003, "Reserved2[0]"},                      // BYTE
-    {0x008, "Reserved3[0]"},                      // PVOID
-    {0x010, "Reserved3[1]"},
-    {0x018, "Ldr (PEB_LDR_DATA*)"},
-    {0x020, "ProcessParameters (RTL_USER_PROCESS_PARAMETERS*)"},
-    {0x028, "Reserved4[0]"},
-    {0x030, "Reserved4[1]"},
-    {0x038, "Reserved4[2]"},
-    {0x040, "AtlThunkSListPtr"},
-    {0x048, "Reserved5"},
-    {0x050, "Reserved6"},
-    {0x058, "Reserved7"},
-    {0x060, "Reserved8"},
-    {0x064, "AtlThunkSListPtr32"},
-    {0x068, "Reserved9[0]"},                      // 45 pointers
-    // Skipping actual 45*8 = 0x168 bytes
-    {0x1D0, "PostProcessInitRoutine"},
-    {0x1D8, "Reserved11[0]"},                     // 128 bytes
-    {0x258, "Reserved12[0]"},
-    {0x260, "SessionId"},
+struct PebLdrFieldMapper {
+    std::vector<std::pair<size_t, std::string_view>> members_ = {
+        FIELD_INFO_LDR(Reserved1),
+        FIELD_INFO_LDR(Reserved2),
+        FIELD_INFO_LDR(InMemoryOrderModuleList),
+    };
+
+    std::string get_member_name(size_t offset) const {
+        size_t last_offset{};
+        std::string_view last_member{};
+
+        for (const auto& member : members_) {
+            if (offset == member.first)
+                return std::string(member.second);
+
+            if (offset < member.first) {
+                size_t diff = offset - last_offset;
+                std::stringstream ss;
+                ss << last_member << " + 0x" << std::hex << diff;
+                return ss.str();
+            }
+
+            last_offset = member.first;
+            last_member = member.second;
+        }
+
+        if (!members_.empty()) {
+            size_t diff = offset - members_.back().first;
+            std::stringstream ss;
+            ss << members_.back().second << " + 0x" << std::hex << diff;
+            return ss.str();
+        }
+
+        return "<N/A>";
+    }
 };
+
+typedef struct _UNICODE_STRING {
+    USHORT Length;
+    USHORT MaximumLength;
+    PWSTR  Buffer;
+} UNICODE_STRING, * PUNICODE_STRING;
+typedef struct _RTL_USER_PROCESS_PARAMETERS {
+    BYTE           Reserved1[16];
+    PVOID          Reserved2[10];
+    UNICODE_STRING ImagePathName;
+    UNICODE_STRING CommandLine;
+} RTL_USER_PROCESS_PARAMETERS, * PRTL_USER_PROCESS_PARAMETERS;
+typedef _Function_class_(PS_POST_PROCESS_INIT_ROUTINE)
+VOID NTAPI PS_POST_PROCESS_INIT_ROUTINE(
+    VOID
+);
+typedef PS_POST_PROCESS_INIT_ROUTINE* PPS_POST_PROCESS_INIT_ROUTINE;
+typedef struct _PEB {
+    BYTE                          Reserved1[2];
+    BYTE                          BeingDebugged;
+    BYTE                          Reserved2[1];
+    PVOID                         Reserved3[2];
+    PPEB_LDR_DATA                 Ldr;
+    PRTL_USER_PROCESS_PARAMETERS  ProcessParameters;
+    PVOID                         Reserved4[3];
+    PVOID                         AtlThunkSListPtr;
+    PVOID                         Reserved5;
+    ULONG                         Reserved6;
+    PVOID                         Reserved7;
+    ULONG                         Reserved8;
+    ULONG                         AtlThunkSListPtr32;
+    PVOID                         Reserved9[45];
+    BYTE                          Reserved10[96];
+    PPS_POST_PROCESS_INIT_ROUTINE PostProcessInitRoutine;
+    BYTE                          Reserved11[128];
+    PVOID                         Reserved12[1];
+    ULONG                         SessionId;
+} PEB, * PPEB;
+
+#define FIELD_INFO_PEB(field) {offsetof(_PEB, field), #field}
+
+struct PebFieldMapper {
+    std::vector<std::pair<size_t, std::string_view>> members_ = {
+        FIELD_INFO_PEB(Reserved1),
+        FIELD_INFO_PEB(BeingDebugged),
+        FIELD_INFO_PEB(Reserved2),
+        FIELD_INFO_PEB(Reserved3),
+        FIELD_INFO_PEB(Ldr),
+        FIELD_INFO_PEB(ProcessParameters),
+        FIELD_INFO_PEB(Reserved4),
+        FIELD_INFO_PEB(AtlThunkSListPtr),
+        FIELD_INFO_PEB(Reserved5),
+        FIELD_INFO_PEB(Reserved6),
+        FIELD_INFO_PEB(Reserved7),
+        FIELD_INFO_PEB(Reserved8),
+        FIELD_INFO_PEB(AtlThunkSListPtr32),
+        FIELD_INFO_PEB(Reserved9),
+        FIELD_INFO_PEB(Reserved10),
+        FIELD_INFO_PEB(PostProcessInitRoutine),
+        FIELD_INFO_PEB(Reserved11),
+        FIELD_INFO_PEB(Reserved12),
+        FIELD_INFO_PEB(SessionId),
+    };
+
+    std::string get_member_name(size_t offset) const {
+        size_t last_offset{};
+        std::string_view last_member{};
+
+        for (const auto& member : members_) {
+            if (offset == member.first)
+                return std::string(member.second);
+
+            if (offset < member.first) {
+                size_t diff = offset - last_offset;
+                std::stringstream ss;
+                ss << last_member << " + 0x" << std::hex << diff;
+                return ss.str();
+            }
+
+            last_offset = member.first;
+            last_member = member.second;
+        }
+
+        if (!members_.empty()) {
+            size_t diff = offset - members_.back().first;
+            std::stringstream ss;
+            ss << members_.back().second << " + 0x" << std::hex << diff;
+            return ss.str();
+        }
+
+        return "<N/A>";
+    }
+};
+
 
 
 enum ConsoleColor {
@@ -2786,21 +2888,13 @@ private:
         if (g_regs.peb_address) {
             if (address >= g_regs.peb_address && address < g_regs.peb_address + 0x1000) {
                 uint64_t offset = address - g_regs.peb_address;
-                std::string description = "Unknown";
+                PebFieldMapper peb_mapper;
+                std::string field_name = peb_mapper.get_member_name(offset);
 
-                auto it = peb_offsets.upper_bound(offset);
-                if (it != peb_offsets.begin()) {
-                    --it;
-                    uint64_t base_offset = it->first;
-                    uint64_t delta = offset - base_offset;
-                    if (delta == 0)
-                        description = it->second;
-                    else
-                        description = it->second + " + 0x" + std::to_string(delta);
-                }
+                
 
                 LOG_analyze(CYAN,
-                    "[PEB] Reading (" << description.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+                    "[PEB] Reading (" << field_name.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
             }
         }
         // PEB LDR
@@ -2808,21 +2902,11 @@ private:
             const uint64_t ldr_size = 0x80; 
             if (address >= g_regs.peb_ldr && address < g_regs.peb_ldr + ldr_size) {
                 uint64_t offset = address - g_regs.peb_ldr;
-                std::string description = "Unknown (LDR)";
-
-                auto it = ldr_offsets.upper_bound(offset);
-                if (it != ldr_offsets.begin()) {
-                    --it;
-                    uint64_t base_offset = it->first;
-                    uint64_t delta = offset - base_offset;
-                    if (delta == 0)
-                        description = it->second;
-                    else
-                        description = it->second + " + 0x" + std::to_string(delta);
-                }
+                PebLdrFieldMapper ldr_mapper;
+                std::string field_name = ldr_mapper.get_member_name(offset);
 
                 LOG_analyze(GREEN,
-                    "[LDR] Reading (" << description.c_str() << ") at 0x"
+                    "[LDR] Reading (" << field_name.c_str() << ") at 0x"
                     << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
             }
         }
