@@ -2002,6 +2002,7 @@ public:
             { ZYDIS_MNEMONIC_VPERM2I128, &CPU::emulate_vperm2i128 },
             { ZYDIS_MNEMONIC_VINSERTI128, &CPU::emulate_vinserti128 },
             { ZYDIS_MNEMONIC_VEXTRACTI128, &CPU::emulate_vextracti128 },
+            { ZYDIS_MNEMONIC_CLD, &CPU::emulate_cld },
 
     
         };
@@ -13203,7 +13204,10 @@ private:
 
         LOG(L"[+] VEXTRACTI128 executed, imm=" << (int)imm8);
     }
-
+    void emulate_cld(const ZydisDisassembledInstruction* instr) {
+        g_regs.rflags.flags.DF = 0;
+        LOG(L"[+] CLD => DF = 0x0");
+    }
 
 
 
