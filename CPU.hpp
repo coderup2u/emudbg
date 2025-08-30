@@ -1178,19 +1178,26 @@ struct PebFieldMapper {
 };
 
 
-
 enum ConsoleColor {
     BLACK = 0,
-    RED = 4,
-    GREEN = 2,
-    YELLOW = 6,
     BLUE = 1,
-    MAGENTA = 5,
+    GREEN = 2,
     CYAN = 3,
+    RED = 4,
+    MAGENTA = 5,
+    YELLOW = 6,
     WHITE = 7,
-    BRIGHT_WHITE = 15
-};
 
+
+    BRIGHT_BLACK = 8,   
+    BRIGHT_BLUE = 9,
+    BRIGHT_GREEN = 10,
+    BRIGHT_CYAN = 11,
+    BRIGHT_RED = 12,
+    BRIGHT_MAGENTA = 13,
+    BRIGHT_YELLOW = 14,
+    BRIGHT_WHITE = 15    
+};
 
 inline void SetConsoleColor(ConsoleColor color) {
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -2182,7 +2189,7 @@ public:
 
                     if (!IsInEmulationRange(address)) {
 #if analyze_ENABLED
-                        LOG_analyze( CYAN ,"Executing function: " << GetExportedFunctionNameByAddress(address).c_str() << "RIP [0x"<< std::hex << g_regs.rip <<"]");
+                        LOG_analyze( CYAN ,"Executing function: " << GetExportedFunctionNameByAddress(address).c_str() << " via [0x"<< std::hex << g_regs.rip <<"]");
 
                         uint8_t buffer[16] = {};
                         if (ReadMemory(address, buffer, sizeof(buffer))) {
@@ -3217,7 +3224,7 @@ private:
 
         // read FROM executable
         if (IsInEmulationRange(address)) {
-            LOG_analyze(BRIGHT_WHITE,
+            LOG_analyze(BRIGHT_BLACK,
                 "[+] READ FROM executable memory detected | Target: 0x" << std::hex << address <<
                 " | RIP: 0x" << std::hex << g_regs.rip
             );
@@ -3251,7 +3258,7 @@ private:
                 }
             }
 
-            LOG_analyze(BLUE,
+            LOG_analyze(BRIGHT_BLUE,
                 "[NTDLL] Reading (" << description.c_str() << ") at 0x" << std::hex << address <<
                 " [RIP: 0x" << std::hex << g_regs.rip << "]");
         }
@@ -10636,7 +10643,7 @@ private:
         is_cpuid = 1;
 #endif
 #if analyze_ENABLED
-        LOG_analyze(WHITE, "CPUID leaf "<< "0x" << std::hex << g_regs.rax.q << "  at : 0x" << std::hex << g_regs.rip);
+        LOG_analyze(BRIGHT_MAGENTA, "CPUID leaf "<< "0x" << std::hex << g_regs.rax.q << "  at : 0x" << std::hex << g_regs.rip);
 #endif
  #if AUTO_PATCH_HW
         if (patchSectionAddress != 0 && IsInPatchRange(g_regs.rip)) {
