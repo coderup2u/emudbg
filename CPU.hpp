@@ -12,6 +12,7 @@
 #include "deps/zydis_wrapper.h"
 #include <tlhelp32.h>
 #include <tchar.h>
+#include <winternl.h>  
 
 
 #define CPU_PAUSED (0x1)      
@@ -627,105 +628,461 @@ std::string GetExportedFunctionNameByAddress(uint64_t addr) {
     return "";
 }
 
+typedef struct _ACTIVATION_CONTEXT* PACTIVATION_CONTEXT;
+typedef struct _ACTIVATION_CONTEXT_DATA* PACTIVATION_CONTEXT_DATA;
+typedef struct _ACTIVATION_CONTEXT_DATA
+{
+    ULONG Magic;
+    ULONG HeaderSize;
+    ULONG FormatVersion;
+    ULONG TotalSize;
+    ULONG DefaultTocOffset; // to ACTIVATION_CONTEXT_DATA_TOC_HEADER
+    ULONG ExtendedTocOffset; // to ACTIVATION_CONTEXT_DATA_EXTENDED_TOC_HEADER
+    ULONG AssemblyRosterOffset; // to ACTIVATION_CONTEXT_DATA_ASSEMBLY_ROSTER_HEADER
+    ULONG Flags; // ACTIVATION_CONTEXT_FLAG_*
+} ACTIVATION_CONTEXT_DATA, * PACTIVATION_CONTEXT_DATA;
+typedef VOID(NTAPI* PACTIVATION_CONTEXT_NOTIFY_ROUTINE)(
+    _In_ ULONG NotificationType, // ACTIVATION_CONTEXT_NOTIFICATION_*
+    _In_ PACTIVATION_CONTEXT ActivationContext,
+    _In_ PACTIVATION_CONTEXT_DATA ActivationContextData,
+    _In_opt_ PVOID NotificationContext,
+    _In_opt_ PVOID NotificationData,
+    _Inout_ PBOOLEAN DisableThisNotification
+    );
+typedef struct _ASSEMBLY_STORAGE_MAP_ENTRY
+{
+    ULONG Flags;
+    UNICODE_STRING DosPath;
+    HANDLE Handle;
+} ASSEMBLY_STORAGE_MAP_ENTRY, * PASSEMBLY_STORAGE_MAP_ENTRY;
+typedef struct _ASSEMBLY_STORAGE_MAP
+{
+    ULONG Flags;
+    ULONG AssemblyCount;
+    PASSEMBLY_STORAGE_MAP_ENTRY* AssemblyArray;
+} ASSEMBLY_STORAGE_MAP, * PASSEMBLY_STORAGE_MAP;
+typedef struct _ACTIVATION_CONTEXT
+{
+    LONG RefCount;
+    ULONG Flags;
+    PACTIVATION_CONTEXT_DATA ActivationContextData;
+    PACTIVATION_CONTEXT_NOTIFY_ROUTINE NotificationRoutine;
+    PVOID NotificationContext;
+    ULONG SentNotifications[8];
+    ULONG DisabledNotifications[8];
+    ASSEMBLY_STORAGE_MAP StorageMap;
+    PASSEMBLY_STORAGE_MAP_ENTRY InlineStorageMapEntries[32];
+} ACTIVATION_CONTEXT, * PACTIVATION_CONTEXT;
+typedef struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME
+{
+    struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME* Previous;
+    PACTIVATION_CONTEXT ActivationContext;
+    ULONG Flags; // RTL_ACTIVATION_CONTEXT_STACK_FRAME_FLAG_*
+} RTL_ACTIVATION_CONTEXT_STACK_FRAME, * PRTL_ACTIVATION_CONTEXT_STACK_FRAME;
+typedef struct _ACTIVATION_CONTEXT_STACK
+{
+    PRTL_ACTIVATION_CONTEXT_STACK_FRAME ActiveFrame;
+    LIST_ENTRY FrameListCache;
+    ULONG Flags; // ACTIVATION_CONTEXT_STACK_FLAG_*
+    ULONG NextCookieSequenceNumber;
+    ULONG StackId;
+} ACTIVATION_CONTEXT_STACK, * PACTIVATION_CONTEXT_STACK;
+#define GDI_BATCH_BUFFER_SIZE 310
+typedef struct _GDI_TEB_BATCH
+{
+    ULONG Offset;
+    ULONG_PTR HDC;
+    ULONG Buffer[GDI_BATCH_BUFFER_SIZE];
+} GDI_TEB_BATCH, * PGDI_TEB_BATCH;
+#define WIN32_CLIENT_INFO_LENGTH 62
+#define STATIC_UNICODE_BUFFER_LENGTH 261
+typedef struct _TEB_ACTIVE_FRAME_CONTEXT
+{
+    ULONG Flags;
+    PCSTR FrameName;
+} TEB_ACTIVE_FRAME_CONTEXT, * PTEB64_ACTIVE_FRAME_CONTEXT;
+typedef struct _TEB_ACTIVE_FRAME
+{
+    ULONG Flags;
+    struct _TEB_ACTIVE_FRAME* Previous;
+    PTEB64_ACTIVE_FRAME_CONTEXT Context;
+} TEB_ACTIVE_FRAME, * PTEB64_ACTIVE_FRAME;
+typedef struct tagSOleTlsData
+{
+    PVOID ThreadBase;
+    PVOID SmAllocator;
+    DWORD               dwApartmentID;      // Per thread "process ID"
+    DWORD               dwFlags;            // see OLETLSFLAGS above
+
+    // counters
+    DWORD               cComInits;          // number of per-thread inits
+    DWORD               cOleInits;          // number of per-thread OLE inits
+#if DBG==1
+    LONG                cTraceNestingLevel; // call nesting level for OLETRACE
+#endif
 
 
-static const std::map<uint64_t, std::string> teb_offsets = {
-    {0x000, "NtTib.ExceptionList"},              // _NT_TIB
-    {0x008, "NtTib.StackBase"},
-    {0x010, "NtTib.StackLimit"},
-    {0x018, "NtTib.SubSystemTib"},
-    {0x020, "NtTib.FiberData / Version"},
-    {0x028, "NtTib.ArbitraryUserPointer"},
-    {0x030, "NtTib.Self"},
-    {0x038, "EnvironmentPointer"},               // Reserved1[0]
-    {0x040, "ClientId (ProcessId, ThreadId)"},
-    {0x050, "ActiveRpcHandle"},
-    {0x058, "ThreadLocalStoragePointer"},
-    {0x060, "ProcessEnvironmentBlock (PEB*)"},
-    {0x068, "LastErrorValue"},
-    {0x070, "CountOfOwnedCriticalSections"},
-    {0x078, "CsrClientThread"},
-    {0x080, "Win32ThreadInfo"},
-    {0x088, "User32Reserved[26]"},
-    {0x0F0, "UserReserved[5]"},
-    {0x108, "WOW32Reserved"},
-    {0x110, "CurrentLocale"},
-    {0x118, "FpSoftwareStatusRegister"},
-    {0x120, "SystemReserved1[54]"},
-    {0x300, "ExceptionCode"},
-    {0x308, "ActivationContextStackPointer"},
-    {0x310, "SpareBytes1[24]"},
-    {0x328, "GdiTebBatch"},
-    {0x4E0, "RealClientId"},
-    {0x4F0, "GdiCachedProcessHandle"},
-    {0x4F8, "GdiClientPID"},
-    {0x500, "GdiClientTID"},
-    {0x508, "GdiThreadLocalInfo"},
-    {0x510, "Win32ClientInfo[62]"},
-    {0x608, "glDispatchTable[233]"},
-    {0x9F0, "glReserved1[29]"},
-    {0xA68, "glReserved2"},
-    {0xA70, "glSectionInfo"},
-    {0xA78, "glSection"},
-    {0xA80, "glTable"},
-    {0xA88, "glCurrentRC"},
-    {0xA90, "glContext"},
-    {0xA98, "LastStatusValue"},
-    {0xAA0, "StaticUnicodeString"},
-    {0xAB0, "StaticUnicodeBuffer[261]"},
-    {0xCD8, "DeallocationStack"},
-    {0xCE0, "TlsSlots[64]"},                    // 8*64 = 512 bytes
-    {0xEE0, "TlsLinks"},
-    {0xEF0, "Vdm"},                             // Reserved5[0]
-    {0xEF8, "ReservedForNtRpc"},
-    {0xF00, "DbgSsReserved[2]"},
-    {0xF10, "HardErrorMode"},
-    {0xF18, "Instrumentation[11]"},
-    {0xF70, "ActivityId"},
-    {0xF80, "SubProcessTag"},
-    {0xF88, "EtwLocalData"},
-    {0xF90, "EtwTraceData"},
-    {0xF98, "WinSockData"},
-    {0xFA0, "GdiBatchCount"},
-    {0xFA4, "CurrentIdealProcessor"},
-    {0xFA8, "GuaranteedStackBytes"},
-    {0xFB0, "ReservedForPerf"},
-    {0xFB8, "ReservedForOle"},
-    {0xFC0, "WaitingOnLoaderLock"},
-    {0xFC8, "SavedPriorityState"},
-    {0xFD0, "ReservedForCodeCoverage"},
-    {0xFD8, "ThreadPoolData"},
-    {0xFE0, "TlsExpansionSlots"},
-    {0xFE8, "MuiGeneration"},
-    {0xFEC, "IsImpersonating"},
-    {0xFF0, "NlsCache"},
-    {0xFF8, "pShimData"},
-    {0x1000, "HeapVirtualAffinity"},
-    {0x1008, "CurrentTransactionHandle"},
-    {0x1010, "ActiveFrame"},
-    {0x1018, "FlsData"},
-    {0x1020, "PreferredLanguages"},
-    {0x1028, "UserPrefLanguages"},
-    {0x1030, "MergedPrefLanguages"},
-    {0x1038, "MuiImpersonation"},
-    {0x1040, "CrossTebFlags"},
-    {0x1044, "SameTebFlags"},
-    {0x1048, "TxnScopeEnterCallback"},
-    {0x1050, "TxnScopeExitCallback"},
-    {0x1058, "TxnScopeContext"},
-    {0x1060, "LockCount"},
-    {0x1064, "SpareUlong0"},
-    {0x1068, "ResourceRetValue"},
+    // Object RPC data
+    UUID                LogicalThreadId;    // current logical thread id
+    DWORD               dwTIDCaller;        // TID of current calling app
+    ULONG               fault;              // fault value
+    LONG                cORPCNestingLevel;  // call nesting level (DBG only)
+#ifdef DCOM
+    CChannelCallInfo* pCallInfo;          // channel call info
+    DWORD               cDebugData;         // count of bytes of debug data in call
+    void* pOXIDEntry;         // ptr to OXIDEntry for this thread.
+    CObjServer* pObjServer;         // Activation Server Object.
+    CRemoteUnknown* pRemoteUnk;         // CRemUnknown for this thread.
+    CAptCallCtrl* pCallCtrl;          // new call control for RPC
+    CSrvCallState* pTopSCS;            // top server-side callctrl state
+    IMessageFilter* pMsgFilter;         // temp storage for App MsgFilter
+    ULONG               cPreRegOidsAvail;   // count of server-side OIDs avail
+    unsigned hyper* pPreRegOids;	    // ptr to array of pre-reg OIDs
+    IUnknown* pCallContext;       // call context object
+    DWORD               dwAuthnLevel;       // security level of current call
+#else
+    void* pChanCtrl;          // channel control
+    void* pService;           // per-thread service object
+    void* pServiceList;
+    void* pCallCont;          // call control
+    void* pDdeCallCont;       // dde call control
+    void* pCALLINFO;          // callinfo
+    DWORD               dwEndPoint;         // endpoint id
+#ifdef _CHICAGO_
+    HWND                hwndOleRpcNotify;
+#endif
+#endif // DCOM
+
+    // DDE data
+    HWND                hwndDdeServer;      // Per thread Common DDE server
+    HWND                hwndDdeClient;      // Per thread Common DDE client
+
+
+    // upper layer data
+    HWND                hwndClip;           // Clipboard window
+    IUnknown* punkState;          // Per thread "state" object
+#ifdef WX86OLE
+    IUnknown* punkStateWx86;      // Per thread "state" object for Wx86
+#endif
+    void* pDragCursors;       // Per thread drag cursor table.
+
+#ifdef _CHICAGO_
+    LPVOID              pWcstokContext;     // Scan context for wcstok
+#endif
+
+    IUnknown* punkError;          // Per thread error object.
+    ULONG               cbErrorData;        // Maximum size of error data.
+} SOleTlsData,*PSOleTlsData;
+typedef struct _TEB64
+{
+
+    NT_TIB NtTib;
+    PVOID EnvironmentPointer;
+    CLIENT_ID ClientId;
+    PVOID ActiveRpcHandle;
+    PVOID ThreadLocalStoragePointer;
+    PPEB ProcessEnvironmentBlock;
+    ULONG LastErrorValue;
+    ULONG CountOfOwnedCriticalSections;
+    PVOID CsrClientThread;
+    PVOID Win32ThreadInfo;
+    ULONG User32Reserved[26];
+    ULONG UserReserved[5];
+    PVOID WOW32Reserved;
+    LCID CurrentLocale;
+    ULONG FpSoftwareStatusRegister;
+    PVOID ReservedForDebuggerInstrumentation[16];
+#ifdef _WIN64
+    PVOID SystemReserved1[25];
+    PVOID HeapFlsData;
+    ULONG_PTR RngState[4];
+#else
+    PVOID SystemReserved1[26];
+#endif
+    CHAR PlaceholderCompatibilityMode;
+    BOOLEAN PlaceholderHydrationAlwaysExplicit;
+    CHAR PlaceholderReserved[10];
+    ULONG ProxiedProcessId;
+    ACTIVATION_CONTEXT_STACK ActivationStack;
+    UCHAR WorkingOnBehalfTicket[8];
+    NTSTATUS ExceptionCode;
+    PACTIVATION_CONTEXT_STACK ActivationContextStackPointer;
+    ULONG_PTR InstrumentationCallbackSp;
+    ULONG_PTR InstrumentationCallbackPreviousPc;
+    ULONG_PTR InstrumentationCallbackPreviousSp;
+#ifdef _WIN64
+    ULONG TxFsContext;
+#endif
+    BOOLEAN InstrumentationCallbackDisabled;
+#ifdef _WIN64
+    BOOLEAN UnalignedLoadStoreExceptions;
+#endif
+#ifndef _WIN64
+    UCHAR SpareBytes[23];
+    ULONG TxFsContext;
+#endif
+    GDI_TEB_BATCH GdiTebBatch;
+    CLIENT_ID RealClientId;
+    HANDLE GdiCachedProcessHandle;
+    ULONG GdiClientPID;
+    ULONG GdiClientTID;
+    PVOID GdiThreadLocalInfo;
+    ULONG_PTR Win32ClientInfo[WIN32_CLIENT_INFO_LENGTH];
+    PVOID glDispatchTable[233];
+    ULONG_PTR glReserved1[29];
+    PVOID glReserved2;
+    PVOID glSectionInfo;
+    PVOID glSection;
+    PVOID glTable;
+    PVOID glCurrentRC;
+    PVOID glContext;
+    NTSTATUS LastStatusValue;
+    UNICODE_STRING StaticUnicodeString;
+    WCHAR StaticUnicodeBuffer[STATIC_UNICODE_BUFFER_LENGTH];
+    PVOID DeallocationStack;
+    PVOID TlsSlots[TLS_MINIMUM_AVAILABLE];
+    LIST_ENTRY TlsLinks;
+    PVOID Vdm;
+    PVOID ReservedForNtRpc;
+    PVOID DbgSsReserved[2];
+    ULONG HardErrorMode;
+#ifdef _WIN64
+    PVOID Instrumentation[11];
+#else
+    PVOID Instrumentation[9];
+#endif
+    GUID ActivityId;
+    PVOID SubProcessTag;
+    PVOID PerflibData;
+    PVOID EtwTraceData;
+    HANDLE WinSockData;
+    ULONG GdiBatchCount;
+    union
+    {
+        PROCESSOR_NUMBER CurrentIdealProcessor;
+        ULONG IdealProcessorValue;
+        struct
+        {
+            UCHAR ReservedPad0;
+            UCHAR ReservedPad1;
+            UCHAR ReservedPad2;
+            UCHAR IdealProcessor;
+        };
+    };
+    ULONG GuaranteedStackBytes;
+    PVOID ReservedForPerf;
+    PSOleTlsData ReservedForOle;
+    ULONG WaitingOnLoaderLock;
+    PVOID SavedPriorityState;
+    ULONG_PTR ReservedForCodeCoverage;
+    PVOID ThreadPoolData;
+    PVOID* TlsExpansionSlots;
+#ifdef _WIN64
+    PVOID ChpeV2CpuAreaInfo; 
+    PVOID Unused;
+#endif
+    ULONG MuiGeneration;
+    ULONG IsImpersonating;
+    PVOID NlsCache;
+    PVOID pShimData;
+    ULONG HeapData;
+    HANDLE CurrentTransactionHandle;
+    PTEB64_ACTIVE_FRAME ActiveFrame;
+    PVOID FlsData;
+    PVOID PreferredLanguages;
+    PVOID UserPrefLanguages;
+    PVOID MergedPrefLanguages;
+    ULONG MuiImpersonation;
+    union
+    {
+        USHORT CrossTebFlags;
+        USHORT SpareCrossTebBits : 16;
+    };
+    union
+    {
+        USHORT SameTebFlags;
+        struct
+        {
+            USHORT SafeThunkCall : 1;
+            USHORT InDebugPrint : 1;            // Indicates if the thread is currently in a debug print routine.
+            USHORT HasFiberData : 1;            // Indicates if the thread has local fiber-local storage (FLS).
+            USHORT SkipThreadAttach : 1;        // Indicates if the thread should suppress DLL_THREAD_ATTACH notifications.
+            USHORT WerInShipAssertCode : 1;
+            USHORT RanProcessInit : 1;          // Indicates if the thread has run process initialization code.
+            USHORT ClonedThread : 1;            // Indicates if the thread is a clone of a different thread.
+            USHORT SuppressDebugMsg : 1;        // Indicates if the thread should suppress LOAD_DLL_DEBUG_INFO notifications.
+            USHORT DisableUserStackWalk : 1;
+            USHORT RtlExceptionAttached : 1;
+            USHORT InitialThread : 1;           // Indicates if the thread is the initial thread of the process.
+            USHORT SessionAware : 1;
+            USHORT LoadOwner : 1;               // Indicates if the thread is the owner of the process loader lock.
+            USHORT LoaderWorker : 1;
+            USHORT SkipLoaderInit : 1;
+            USHORT SkipFileAPIBrokering : 1;
+        };
+    };
+    PVOID TxnScopeEnterCallback;
+    PVOID TxnScopeExitCallback;
+    PVOID TxnScopeContext;
+    ULONG LockCount;
+    LONG WowTebOffset;
+    PVOID ResourceRetValue;
+    PVOID ReservedForWdf;
+    ULONGLONG ReservedForCrt;
+    GUID EffectiveContainerId;
+    ULONGLONG LastSleepCounter; // since Win11
+    ULONG SpinCallCount;
+    ULONGLONG ExtendedFeatureDisableMask;
+    PVOID SchedulerSharedDataSlot; // since 24H2
+    PVOID HeapWalkContext;
+    GROUP_AFFINITY PrimaryGroupAffinity;
+    ULONG Rcu[2];
+} _TEB64, * PTEB64;
+#define FIELD_INFO_TEB64(field) {offsetof(_TEB64, field), #field}
+
+struct Teb64FieldMapper {
+    std::vector<std::pair<size_t, std::string_view>> members_ = {
+        FIELD_INFO_TEB64(NtTib),
+        FIELD_INFO_TEB64(EnvironmentPointer),
+        FIELD_INFO_TEB64(ClientId),
+        FIELD_INFO_TEB64(ActiveRpcHandle),
+        FIELD_INFO_TEB64(ThreadLocalStoragePointer),
+        FIELD_INFO_TEB64(ProcessEnvironmentBlock),
+        FIELD_INFO_TEB64(LastErrorValue),
+        FIELD_INFO_TEB64(CountOfOwnedCriticalSections),
+        FIELD_INFO_TEB64(CsrClientThread),
+        FIELD_INFO_TEB64(Win32ThreadInfo),
+        FIELD_INFO_TEB64(User32Reserved),
+        FIELD_INFO_TEB64(UserReserved),
+        FIELD_INFO_TEB64(WOW32Reserved),
+        FIELD_INFO_TEB64(CurrentLocale),
+        FIELD_INFO_TEB64(FpSoftwareStatusRegister),
+        FIELD_INFO_TEB64(ReservedForDebuggerInstrumentation),
+        FIELD_INFO_TEB64(SystemReserved1),
+        FIELD_INFO_TEB64(HeapFlsData),
+        FIELD_INFO_TEB64(RngState),
+        FIELD_INFO_TEB64(PlaceholderCompatibilityMode),
+        FIELD_INFO_TEB64(PlaceholderHydrationAlwaysExplicit),
+        FIELD_INFO_TEB64(PlaceholderReserved),
+        FIELD_INFO_TEB64(ProxiedProcessId),
+        FIELD_INFO_TEB64(ActivationStack),
+        FIELD_INFO_TEB64(WorkingOnBehalfTicket),
+        FIELD_INFO_TEB64(ExceptionCode),
+        FIELD_INFO_TEB64(ActivationContextStackPointer),
+        FIELD_INFO_TEB64(InstrumentationCallbackSp),
+        FIELD_INFO_TEB64(InstrumentationCallbackPreviousPc),
+        FIELD_INFO_TEB64(InstrumentationCallbackPreviousSp),
+        FIELD_INFO_TEB64(TxFsContext),
+        FIELD_INFO_TEB64(InstrumentationCallbackDisabled),
+        FIELD_INFO_TEB64(UnalignedLoadStoreExceptions),
+        FIELD_INFO_TEB64(GdiTebBatch),
+        FIELD_INFO_TEB64(RealClientId),
+        FIELD_INFO_TEB64(GdiCachedProcessHandle),
+        FIELD_INFO_TEB64(GdiClientPID),
+        FIELD_INFO_TEB64(GdiClientTID),
+        FIELD_INFO_TEB64(GdiThreadLocalInfo),
+        FIELD_INFO_TEB64(Win32ClientInfo),
+        FIELD_INFO_TEB64(glDispatchTable),
+        FIELD_INFO_TEB64(glReserved1),
+        FIELD_INFO_TEB64(glReserved2),
+        FIELD_INFO_TEB64(glSectionInfo),
+        FIELD_INFO_TEB64(glSection),
+        FIELD_INFO_TEB64(glTable),
+        FIELD_INFO_TEB64(glCurrentRC),
+        FIELD_INFO_TEB64(glContext),
+        FIELD_INFO_TEB64(LastStatusValue),
+        FIELD_INFO_TEB64(StaticUnicodeString),
+        FIELD_INFO_TEB64(StaticUnicodeBuffer),
+        FIELD_INFO_TEB64(DeallocationStack),
+        FIELD_INFO_TEB64(TlsSlots),
+        FIELD_INFO_TEB64(TlsLinks),
+        FIELD_INFO_TEB64(Vdm),
+        FIELD_INFO_TEB64(ReservedForNtRpc),
+        FIELD_INFO_TEB64(DbgSsReserved),
+        FIELD_INFO_TEB64(HardErrorMode),
+        FIELD_INFO_TEB64(Instrumentation),
+        FIELD_INFO_TEB64(ActivityId),
+        FIELD_INFO_TEB64(SubProcessTag),
+        FIELD_INFO_TEB64(PerflibData),
+        FIELD_INFO_TEB64(EtwTraceData),
+        FIELD_INFO_TEB64(WinSockData),
+        FIELD_INFO_TEB64(GdiBatchCount),
+        FIELD_INFO_TEB64(CurrentIdealProcessor),
+        FIELD_INFO_TEB64(GuaranteedStackBytes),
+        FIELD_INFO_TEB64(ReservedForPerf),
+        FIELD_INFO_TEB64(ReservedForOle),
+        FIELD_INFO_TEB64(WaitingOnLoaderLock),
+        FIELD_INFO_TEB64(SavedPriorityState),
+        FIELD_INFO_TEB64(ReservedForCodeCoverage),
+        FIELD_INFO_TEB64(ThreadPoolData),
+        FIELD_INFO_TEB64(TlsExpansionSlots),
+        FIELD_INFO_TEB64(ChpeV2CpuAreaInfo),
+        FIELD_INFO_TEB64(Unused),
+        FIELD_INFO_TEB64(MuiGeneration),
+        FIELD_INFO_TEB64(IsImpersonating),
+        FIELD_INFO_TEB64(NlsCache),
+        FIELD_INFO_TEB64(pShimData),
+        FIELD_INFO_TEB64(HeapData),
+        FIELD_INFO_TEB64(CurrentTransactionHandle),
+        FIELD_INFO_TEB64(ActiveFrame),
+        FIELD_INFO_TEB64(FlsData),
+        FIELD_INFO_TEB64(PreferredLanguages),
+        FIELD_INFO_TEB64(UserPrefLanguages),
+        FIELD_INFO_TEB64(MergedPrefLanguages),
+        FIELD_INFO_TEB64(MuiImpersonation),
+        FIELD_INFO_TEB64(CrossTebFlags),
+        FIELD_INFO_TEB64(SameTebFlags),
+        FIELD_INFO_TEB64(TxnScopeEnterCallback),
+        FIELD_INFO_TEB64(TxnScopeExitCallback),
+        FIELD_INFO_TEB64(TxnScopeContext),
+        FIELD_INFO_TEB64(LockCount),
+        FIELD_INFO_TEB64(WowTebOffset),
+        FIELD_INFO_TEB64(ResourceRetValue),
+        FIELD_INFO_TEB64(ReservedForWdf),
+        FIELD_INFO_TEB64(ReservedForCrt),
+        FIELD_INFO_TEB64(EffectiveContainerId),
+        FIELD_INFO_TEB64(LastSleepCounter),
+        FIELD_INFO_TEB64(SpinCallCount),
+        FIELD_INFO_TEB64(ExtendedFeatureDisableMask),
+        FIELD_INFO_TEB64(SchedulerSharedDataSlot),
+        FIELD_INFO_TEB64(HeapWalkContext),
+        FIELD_INFO_TEB64(PrimaryGroupAffinity),
+        FIELD_INFO_TEB64(Rcu),
+    };
+
+    std::string get_member_name(size_t offset) const {
+        size_t last_offset{};
+        std::string_view last_member{};
+
+        for (const auto& member : members_) {
+            if (offset == member.first)
+                return std::string(member.second);
+
+            if (offset < member.first) {
+                size_t diff = offset - last_offset;
+                std::stringstream ss;
+                ss << last_member << " + 0x" << std::hex << diff;
+                return ss.str();
+            }
+
+            last_offset = member.first;
+            last_member = member.second;
+        }
+
+        if (!members_.empty()) {
+            size_t diff = offset - members_.back().first;
+            std::stringstream ss;
+            ss << members_.back().second << " + 0x" << std::hex << diff;
+            return ss.str();
+        }
+
+        return "<N/A>";
+    }
 };
+
+
 //LDR
 #define FIELD_INFO_LDR(field) {offsetof(_PEB_LDR_DATA, field), #field}
-
-typedef struct _PEB_LDR_DATA {
-    BYTE       Reserved1[8];
-    PVOID      Reserved2[3];
-    LIST_ENTRY InMemoryOrderModuleList;
-} PEB_LDR_DATA, * PPEB_LDR_DATA;
-
 
 struct PebLdrFieldMapper {
     std::vector<std::pair<size_t, std::string_view>> members_ = {
@@ -764,43 +1121,6 @@ struct PebLdrFieldMapper {
     }
 };
 
-typedef struct _UNICODE_STRING {
-    USHORT Length;
-    USHORT MaximumLength;
-    PWSTR  Buffer;
-} UNICODE_STRING, * PUNICODE_STRING;
-typedef struct _RTL_USER_PROCESS_PARAMETERS {
-    BYTE           Reserved1[16];
-    PVOID          Reserved2[10];
-    UNICODE_STRING ImagePathName;
-    UNICODE_STRING CommandLine;
-} RTL_USER_PROCESS_PARAMETERS, * PRTL_USER_PROCESS_PARAMETERS;
-typedef _Function_class_(PS_POST_PROCESS_INIT_ROUTINE)
-VOID NTAPI PS_POST_PROCESS_INIT_ROUTINE(
-    VOID
-);
-typedef PS_POST_PROCESS_INIT_ROUTINE* PPS_POST_PROCESS_INIT_ROUTINE;
-typedef struct _PEB {
-    BYTE                          Reserved1[2];
-    BYTE                          BeingDebugged;
-    BYTE                          Reserved2[1];
-    PVOID                         Reserved3[2];
-    PPEB_LDR_DATA                 Ldr;
-    PRTL_USER_PROCESS_PARAMETERS  ProcessParameters;
-    PVOID                         Reserved4[3];
-    PVOID                         AtlThunkSListPtr;
-    PVOID                         Reserved5;
-    ULONG                         Reserved6;
-    PVOID                         Reserved7;
-    ULONG                         Reserved8;
-    ULONG                         AtlThunkSListPtr32;
-    PVOID                         Reserved9[45];
-    BYTE                          Reserved10[96];
-    PPS_POST_PROCESS_INIT_ROUTINE PostProcessInitRoutine;
-    BYTE                          Reserved11[128];
-    PVOID                         Reserved12[1];
-    ULONG                         SessionId;
-} PEB, * PPEB;
 
 #define FIELD_INFO_PEB(field) {offsetof(_PEB, field), #field}
 
@@ -1165,14 +1485,8 @@ void RestoreAllBreakpoints(HANDLE hProcess, std::unordered_map<uint64_t, Breakpo
 
 // ----------------------------- Structs & Typedefs -----------------------------
 
-typedef struct _CLIENT_ID {
-    HANDLE UniqueProcess;
-    HANDLE UniqueThread;
-} CLIENT_ID;
 
-typedef enum _THREADINFOCLASS {
-    ThreadBasicInformation = 0
-} THREADINFOCLASS;
+
 
 typedef struct _THREAD_BASIC_INFORMATION {
     NTSTATUS ExitStatus;
@@ -1234,7 +1548,7 @@ uint64_t GetTEBAddress(HANDLE hThread) {
     if (!NtQueryInformationThread) return 0;
 
     THREAD_BASIC_INFORMATION tbi = {};
-    if (NtQueryInformationThread(hThread, ThreadBasicInformation, &tbi, sizeof(tbi), nullptr) != 0)
+    if (NtQueryInformationThread(hThread, static_cast<THREADINFOCLASS>(0), &tbi, sizeof(tbi), nullptr) != 0)
         return 0;
 
     return reinterpret_cast<uint64_t>(tbi.TebBaseAddress);
@@ -2866,21 +3180,11 @@ private:
         // TEB
         if (address >= g_regs.gs_base && address < g_regs.gs_base + 0x1000) {
             uint64_t offset = address - g_regs.gs_base;
-            std::string description = "Unknown";
-
-            auto it = teb_offsets.upper_bound(offset);
-            if (it != teb_offsets.begin()) {
-                --it;
-                uint64_t base_offset = it->first;
-                uint64_t delta = offset - base_offset;
-                if (delta == 0)
-                    description = it->second;
-                else
-                    description = it->second + " + 0x" + std::to_string(delta);
-            }
-
+        
+            Teb64FieldMapper teb_mapper;
+            std::string field_name = teb_mapper.get_member_name(offset);
             LOG_analyze(MAGENTA,
-                "[TEB] Reading ("<< description.c_str()  <<") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+                "[TEB] Reading ("<< field_name.c_str()  <<") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
         }
 
  
