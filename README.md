@@ -82,7 +82,7 @@ emudbg.exe <exe_path> [-m target.dll] [-b software|hardware]
 |------------------|----------|--------------------------------------------------------------------|
 | `<exe_path>`     | ✅       | Path to the target executable you want to debug                   |
 | `-m <target.dll>`| ❌       | Wait for a specific DLL to load before setting breakpoints        |
-| `-b <type>`      | ❌       | Breakpoint type: `software` (default) or `hardware`               |
+| `-b <type>`      | ❌       | Breakpoint type: `software` (default) or `hardware` or `noexec`              |
 | `-r <rva>`      | ❌       | Set a breakpoint at a Relative Virtual Address (RVA) inside the target module.           |
 
 ### 💡 Examples
@@ -109,4 +109,9 @@ emudbg.exe C:\Samples\MyApp.exe -r 0xFAB43
 #### 🔹 Set a hardware breakpoint  at a specific RVA inside a specific module
 ```bash
 emudbg.exe C:\Games\MyGame.exe -m target.dll -r 0x12A400 -b hardware
+```
+
+#### 🔹🔹 noexec doesn’t work with RVA
+```bash
+emudbg.exe C:\Games\MyGame.exe -m target.dll  -b noexec
 ```
