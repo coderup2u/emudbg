@@ -3332,7 +3332,7 @@ private:
 
 #if analyze_ENABLED
         if (IsInEmulationRange(address)) {
-            LOG_analyze(GREEN,
+            LOG_analyze(BRIGHT_GREEN,
                 "[+] Write to executable memory detected | Target: 0x" << std::hex << address <<
                 " | RIP: 0x" << std::hex << g_regs.rip
             );
