@@ -110,3 +110,8 @@ emudbg.exe C:\Samples\MyApp.exe -r 0xFAB43
 ```bash
 emudbg.exe C:\Games\MyGame.exe -m target.dll -r 0x12A400 -b hardware
 ```
+
+#### 🔹🔹 noexec doesn’t work with RVA
+```bash
+emudbg.exe C:\Games\MyGame.exe -m target.dll  -b noexec
+```
