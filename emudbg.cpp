@@ -46,6 +46,7 @@ int wmain(int argc, wchar_t* argv[]) {
                 std::transform(type.begin(), type.end(), type.begin(), ::towlower);
                 if (type == L"hardware") bpType = BreakpointType::Hardware;
                 else if (type == L"software") bpType = BreakpointType::Software;
+                else if (type == L"noexec") bpType = BreakpointType::ExecGuard;
                 else {
                     wprintf(L"[-] Invalid breakpoint type: %s\n", type.c_str());
                     return 1;
@@ -257,7 +258,7 @@ int wmain(int argc, wchar_t* argv[]) {
                                 << L" - size: 0x" << dllSize);
 
                             // --- TLS & EntryPoint Breakpoints ---
-                            if (!hasRVA && !waitForModule) {
+                            if (!hasRVA && !waitForModule && bpType != BreakpointType::ExecGuard) {
                                 auto modEntryRVA = GetEntryPointRVA(buffer);
                                 auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
                               
@@ -277,12 +278,16 @@ int wmain(int argc, wchar_t* argv[]) {
                                 }
                                 if (hThread) CloseHandle(hThread);
                             }
+                            else if (!hasRVA && !waitForModule && bpType == BreakpointType::ExecGuard){
+                                
+                                RemoveExecutionEx((LPVOID)dllBase, dllSize);
+                            }
                         }
                     }
 #endif
 
 
-                    if (waitForModule && !hasRVA && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
+                    if (waitForModule && !hasRVA && lowerLoaded.find(lowerTarget) != std::wstring::npos ) {
                         moduleBase = (uint64_t)ld.lpBaseOfDll;
                         auto modEntryRVA = GetEntryPointRVA(buffer);
                         auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
@@ -290,15 +295,21 @@ int wmain(int argc, wchar_t* argv[]) {
                         HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
                         if (modEntryRVA) modTLSRVAs.push_back(modEntryRVA);
 
-                        for (auto &rva : modTLSRVAs) {
-                            uint64_t addr = moduleBase + rva;
-                            if (bpType == BreakpointType::Hardware)
-                                SetHardwareBreakpointAuto(hThread, addr);
-                            else {
-                                BYTE orig;
-                                if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
-                            }
+                        if (bpType == BreakpointType::ExecGuard) {
+                            RemoveExecutionEx((LPVOID)moduleBase , optionalHeader.SizeOfImage);
                         }
+                        else {
+                           for (auto &rva : modTLSRVAs) {
+                                        uint64_t addr = moduleBase + rva;
+                                        if (bpType == BreakpointType::Hardware)
+                                            SetHardwareBreakpointAuto(hThread, addr);
+                                        else {
+                                            BYTE orig;
+                                            if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
+                                        }
+                           }
+                        }
+         
                         if (hThread) CloseHandle(hThread);
                     }
                 }
@@ -308,7 +319,8 @@ int wmain(int argc, wchar_t* argv[]) {
         }
 
         case CREATE_THREAD_DEBUG_EVENT: {
-            CONTEXT ctx = { 0 };
+            if (bpType != BreakpointType::ExecGuard) {
+   CONTEXT ctx = { 0 };
             ctx.ContextFlags = CONTEXT_FULL;
             HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
 
@@ -381,6 +393,8 @@ int wmain(int argc, wchar_t* argv[]) {
                 }
             }
             if (hThread) CloseHandle(hThread);
+            }
+         
             break;
         }
 
@@ -432,7 +446,12 @@ int wmain(int argc, wchar_t* argv[]) {
             if (hThread) {
                 cpuThreads.emplace(dbgEvent.dwThreadId, CPU(hThread));
             }
+            
 
+            if (bpType == BreakpointType::ExecGuard) {
+                RemoveExecutionEx((LPVOID)baseAddress, optionalHeader.SizeOfImage);
+            }
+            else {
             if (hasRVA && !waitForModule) {
                 uint64_t targetAddr = baseAddress + targetRVA;
                 if (bpType == BreakpointType::Hardware)
@@ -443,12 +462,14 @@ int wmain(int argc, wchar_t* argv[]) {
                 }
                 LOG(L"[+] Breakpoint set on main executable at RVA 0x%llX -> 0x%llX", targetRVA, targetAddr);
             }
+      
 
-            if (!waitForModule && !hasRVA) {
+            if (!waitForModule && !hasRVA ) {
                 if (entryRVA) tlsRVAs.push_back(entryRVA);
                
                 for (auto &rva : tlsRVAs) {
                     uint64_t addr = baseAddress + rva;
+       
                     if (bpType == BreakpointType::Hardware)
                         SetHardwareBreakpointAuto(hThread, addr);
                     else {
@@ -456,6 +477,9 @@ int wmain(int argc, wchar_t* argv[]) {
                         if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
                     }
                 }
+            }
+             
+  
             }
 
             break;
@@ -649,11 +673,38 @@ int wmain(int argc, wchar_t* argv[]) {
             }
 
             case EXCEPTION_ACCESS_VIOLATION:
+                if (bpType == BreakpointType::ExecGuard) {
+                    HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
+                    if (!hThread) {
+                        printf("OpenThread failed: %lu\n", GetLastError());
+              
+                    }
+
+                    auto it = cpuThreads.find(dbgEvent.dwThreadId);
+                    if (it == cpuThreads.end()) {
+                        CPU cpu(hThread);
+                        cpu.CPUThreadState = ThreadState::Unknown;
+                        auto [newIt, inserted] = cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
+                        it = newIt; 
+                    }
+                    CPU& cpu = it->second;
+                    cpu.CPUThreadState = ThreadState::Running;
+
+                    cpu.UpdateRegistersFromContext();
+
+                    cpu.start_emulation();
+
+                    cpu.ApplyRegistersToContext();
+                }
+
+                else {
                 std::cout << "[!] Access Violation at 0x" << std::hex << exAddr;
                 if (bpType == BreakpointType::Software) {
                     std::cout << " (Writing INT3 on code integrity protected program can cause this. Use hardware breakpoints: emudbg my.exe -b hardware)";
                 }
                 std::cout << std::endl;
+                }
+
                // exit(0);
                 break;
 

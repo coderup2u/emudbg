@@ -152,7 +152,8 @@ extern "C" void ReadGDTR(GDTRStruct* gdtr);
 
 enum class BreakpointType {
     Software,
-    Hardware
+    Hardware,
+    ExecGuard
 };
 struct BreakpointInfo {
     BYTE originalByte;
@@ -1460,6 +1461,17 @@ bool RemoveHardwareBreakpointByAddress(HANDLE hThread, uint64_t address) {
     return false; 
 }
 
+BOOL RemoveExecutionEx(LPVOID start, size_t size) {
+    DWORD oldProtect;
+    if (VirtualProtectEx(pi.hProcess, start, size, PAGE_READWRITE, &oldProtect)) {
+        return TRUE;
+    }
+    else {
+        printf("VirtualProtectEx failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+}
+
 
 
 bool SetBreakpoint(HANDLE hProcess, uint64_t address, BYTE& originalByte) {
@@ -1538,6 +1550,7 @@ bool IsInEmulationRange(uint64_t addr) {
     }
     return false;
 }
+#if FUll_user_MODE
 bool IsInSystemRange(uint64_t addr) {
     for (const auto& range : system_modules_ranges) {
         if (addr >= range.first && addr <= range.second)
@@ -1545,6 +1558,7 @@ bool IsInSystemRange(uint64_t addr) {
     }
     return false;
 }
+#endif 
 uint64_t GetTEBAddress(HANDLE hThread) {
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
     if (!ntdll) return 0;
@@ -2205,7 +2219,8 @@ public:
                         }
 
 #endif
-
+                        if (bpType == BreakpointType::ExecGuard)
+                            return 0 ;
 #if FUll_user_MODE
                         if (IsInSystemRange(address)) 
 #endif
@@ -4193,7 +4208,12 @@ private:
             LOG(L"[!] Unsupported MUL operand count: " << operand_count);
             return;
         }
-
+#if DB_ENABLED
+        is_Parity_FLAG_SKIP = 1;
+        is_Auxiliary_Carry_FLAG_SKIP = 1;
+        is_Sign_FLAG_SKIP = 1;
+        is_Zero_FLAG_SKIP = 1;
+#endif
         uint64_t val1 = 0;
         if (!read_operand_value(operands[0], width, val1)) {
             LOG(L"[!] Failed to read operand for MUL");
@@ -4272,7 +4292,6 @@ private:
         g_regs.rflags.flags.OF = upper_nonzero;
 
         g_regs.rflags.flags.ZF = 0;
-        g_regs.rflags.flags.AF = 0;
         g_regs.rflags.flags.PF =  !parity(result_low);
 
         switch (width) {
@@ -9239,6 +9258,7 @@ private:
         uint8_t width = instr->info.operand_width;
 #if DB_ENABLED
         is_OVERFLOW_FLAG_SKIP = 1;
+        is_Auxiliary_Carry_FLAG_SKIP = 1;
 #endif
         uint64_t dst_val = 0, src_val = 0;
         if (!read_operand_value(dst, width, dst_val)) {
@@ -10252,7 +10272,9 @@ private:
         uint8_t low_byte = static_cast<uint8_t>(result & 0xFF);
         g_regs.rflags.flags.PF = !parity(low_byte); 
 
-        g_regs.rflags.flags.AF = 0; 
+#if DB_ENABLED
+        is_Auxiliary_Carry_FLAG_SKIP = 1;
+#endif
 
 
         if (!write_operand_value(dst, width, result)) {
@@ -10575,7 +10597,9 @@ private:
 
         // Update Flags
         g_regs.rflags.flags.CF = cf;
-        g_regs.rflags.flags.AF = 0;
+#if DB_ENABLED
+        is_Auxiliary_Carry_FLAG_SKIP = 1;
+#endif
         g_regs.rflags.flags.OF = 0; // SAR always clears OF
         g_regs.rflags.flags.SF = ((result >> (width - 1)) & 1);
         g_regs.rflags.flags.ZF = (result == 0);
