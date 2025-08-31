@@ -9870,6 +9870,9 @@ private:
 
         uint64_t dst_val = 0, src_val = 0;
 
+#if DB_ENABLED
+        is_Auxiliary_Carry_FLAG_SKIP = 1;
+#endif
         if (!read_operand_value(dst, width, dst_val)) {
             LOG(L"[!] Failed to read destination operand");
             return;
@@ -10290,7 +10293,9 @@ private:
 
         uint32_t width = instr->info.operand_width;
         uint64_t val = 0;
-
+#if DB_ENABLED
+        is_Auxiliary_Carry_FLAG_SKIP = 1;
+#endif
         if (!read_operand_value(dst, width, val)) {
             LOG(L"[!] Failed to read destination operand in SHR");
             return;
