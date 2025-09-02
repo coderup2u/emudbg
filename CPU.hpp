@@ -37,11 +37,11 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
@@ -2105,6 +2105,7 @@ public:
             { ZYDIS_MNEMONIC_VINSERTI128, &CPU::emulate_vinserti128 },
             { ZYDIS_MNEMONIC_VEXTRACTI128, &CPU::emulate_vextracti128 },
             { ZYDIS_MNEMONIC_CLD, &CPU::emulate_cld },
+            { ZYDIS_MNEMONIC_CVTSD2SS, &CPU::emulate_cvtsd2ss },
 
 
         };
@@ -7774,6 +7775,39 @@ private:
 
         write_operand_value(dst, 64, static_cast<uint64_t>(value));
     }
+    void emulate_cvtsd2ss(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0]; 
+        const auto& src = instr->operands[1]; 
+
+        __m128 dst_val;    
+        __m128d src_val;   
+
+
+        if (!read_operand_value(dst, 128, dst_val)) {
+            LOG(L"[!] Failed to read destination XMM for CVTSD2SS");
+            return;
+        }
+
+        if (!read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read source operand for CVTSD2SS");
+            return;
+        }
+
+        double src_double = src_val.m128d_f64[0];
+        float converted = static_cast<float>(src_double);
+
+        dst_val.m128_f32[0] = converted;
+
+        write_operand_value(dst, 128, dst_val);
+
+        LOG(L"[+] CVTSD2SS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", "
+            << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
+                ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
+                : L"[mem]")
+            << L" => " << std::fixed << converted);
+    }
+
     void emulate_cvtsi2ss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];  // XMM register
         const auto& src = instr->operands[1];  // Integer (reg/mem)
