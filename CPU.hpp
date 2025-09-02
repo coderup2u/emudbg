@@ -37,7 +37,7 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -51,7 +51,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 // Enable automatic patching of hardware checks
 #define AUTO_PATCH_HW 0
 // Enable saving RVA addresses + descriptions to file
-#define Save_Rva 0
+#define Save_Rva 1
 //------------------------------------------
 
 #if Save_Rva
@@ -3357,12 +3357,12 @@ private:
         }
 
         // read FROM executable
-        //if (IsInEmulationRange(address)) {
-        //    LOG_analyze(BRIGHT_BLACK,
-        //        "[+] READ FROM executable memory detected | Target: 0x" << std::hex << address <<
-        //        " | RIP: 0x" << std::hex << g_regs.rip
-        //    );
-        //}
+        if (IsInEmulationRange(address)) {
+            LOG_analyze(BRIGHT_BLACK,
+                "[+] READ FROM executable memory detected | Target: 0x" << std::hex << address <<
+                " | RIP: 0x" << std::hex << g_regs.rip
+            );
+        }
 
         // NTDLL Image Data Directory
 
@@ -3462,12 +3462,12 @@ private:
 
 
 #if analyze_ENABLED
-        //if (IsInEmulationRange(address)) {
-        //    LOG_analyze(BRIGHT_GREEN,
-        //        "[+] Write to executable memory detected | Target: 0x" << std::hex << address <<
-        //        " | RIP: 0x" << std::hex << g_regs.rip
-        //    );
-        //}
+        if (IsInEmulationRange(address)) {
+            LOG_analyze(BRIGHT_GREEN,
+                "[+] Write to executable memory detected | Target: 0x" << std::hex << address <<
+                " | RIP: 0x" << std::hex << g_regs.rip
+            );
+        }
 #endif
 
 #if DB_ENABLED
