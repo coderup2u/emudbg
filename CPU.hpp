@@ -2140,8 +2140,8 @@ public:
                     LOG(L"[~] VEX prefix detected.");
                 if (instr.mnemonic == ZYDIS_MNEMONIC_SYSCALL )
                 {
-                    LOG_analyze( BLUE ,"[+] syscall in : " << g_regs.rip << " rax : " << g_regs.rax.q);
-                    LOG("[+] syscall in : " << g_regs.rip << " rax : " << g_regs.rax.q);
+                    LOG_analyze( BLUE ,"[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
+                    LOG("[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
                     if (bpType == BreakpointType::ExecGuard)
                         AddExecutionEx((LPVOID)g_regs.rip, instr.length);
 
