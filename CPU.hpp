@@ -2228,8 +2228,12 @@ public:
                 {
                     LOG_analyze(BLUE, "[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
                     LOG("[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
-                    if (bpType == BreakpointType::ExecGuard)
+                    if (bpType == BreakpointType::ExecGuard) {
                         AddExecutionEx((LPVOID)g_regs.rip, instr.length);
+                        SingleStep(pi.hProcess, pi.hThread);
+                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
+                    }
+
 
 #if Save_Rva
 
@@ -2239,8 +2243,12 @@ public:
                 }
                 if (instr.mnemonic == ZYDIS_MNEMONIC_LSL)
                 {
-                    if (bpType == BreakpointType::ExecGuard)
+                    if (bpType == BreakpointType::ExecGuard) {
                         AddExecutionEx((LPVOID)g_regs.rip, instr.length);
+                        SingleStep(pi.hProcess, pi.hThread);
+                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
+                    }
+
                     return g_regs.rip + instr.length;
                 }
                 if (instr.mnemonic == ZYDIS_MNEMONIC_INT3)
@@ -13991,6 +13999,116 @@ private:
     }
 
 #endif
+    void SingleStep(HANDLE hProcess, HANDLE hThread) {
+        CONTEXT ctx = { 0 };
+        ctx.ContextFlags = CONTEXT_FULL;
+
+        if (!GetThreadContext(hThread, &ctx)) {
+            std::wcout << L"[!] Failed to get thread context before single step" << std::endl;
+            return;
+        }
+
+        ctx.EFlags |= 0x100; // Trap Flag
+
+        if (!SetThreadContext(hThread, &ctx)) {
+            std::wcout << L"[!] Failed to set thread context with Trap Flag" << std::endl;
+            return;
+        }
+
+        ContinueDebugEvent(pi.dwProcessId, GetThreadId(hThread), DBG_CONTINUE);
+
+        DEBUG_EVENT dbgEvent;
+        while (true) {
+            if (!WaitForDebugEvent(&dbgEvent, INFINITE)) {
+                std::wcout << L"[!] WaitForDebugEvent failed" << std::endl;
+                break;
+            }
+
+            DWORD continueStatus = DBG_CONTINUE;
+
+            if (dbgEvent.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
+                auto& er = dbgEvent.u.Exception.ExceptionRecord;
+
+                if (er.ExceptionCode == EXCEPTION_SINGLE_STEP) {
+
+                    DWORD ctxSize = 0;
+                    if (!pfnInitializeContext(NULL, CONTEXT_ALL | CONTEXT_XSTATE, NULL, &ctxSize) &&
+                        GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+                    {
+                        LOG(L"[-] InitializeContext query size failed");
+                        break;
+                    }
+
+                    void* buf = malloc(ctxSize);
+                    if (!buf) {
+                        LOG(L"[-] malloc failed");
+                        break;
+                    }
+
+                    PCONTEXT pCtx = NULL;
+                    if (!pfnInitializeContext(buf, CONTEXT_ALL | CONTEXT_XSTATE, &pCtx, &ctxSize)) {
+                        LOG(L"[-] InitializeContext failed");
+                        free(buf);
+                        break;
+                    }
+
+                    if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_AVX)) {
+                        LOG(L"[-] SetXStateFeaturesMask failed");
+                        free(buf);
+                        break;
+                    }
+
+                    if (!GetThreadContext(hThread, pCtx)) {
+                        LOG(L"[-] GetThreadContext failed");
+                        free(buf);
+                        break;
+                    }
+
+                    RegState reg;
+                    reg.rip = pCtx->Rip;
+                    reg.rax.q = pCtx->Rax;
+                    reg.rbx.q = pCtx->Rbx;
+                    reg.rcx.q = pCtx->Rcx;
+                    reg.rdx.q = pCtx->Rdx;
+                    reg.rsi.q = pCtx->Rsi;
+                    reg.rdi.q = pCtx->Rdi;
+                    reg.rbp.q = pCtx->Rbp;
+                    reg.rsp.q = pCtx->Rsp;
+                    reg.r8.q = pCtx->R8;
+                    reg.r9.q = pCtx->R9;
+                    reg.r10.q = pCtx->R10;
+                    reg.r11.q = pCtx->R11;
+                    reg.r12.q = pCtx->R12;
+                    reg.r13.q = pCtx->R13;
+                    reg.r14.q = pCtx->R14;
+                    reg.r15.q = pCtx->R15;
+                    reg.rflags.value = pCtx->EFlags;
+
+                    DWORD featureLength = 0;
+                    PM128A pXmm = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
+                    PM128A pYmmHigh = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_AVX, NULL);
+
+                    if (pXmm && pYmmHigh) {
+                        for (int i = 0; i < 16; i++) {
+                            memcpy(reg.ymm[i].xmm, &pXmm[i], 16);
+                            memcpy(reg.ymm[i].ymmh, &pYmmHigh[i], 16);
+                        }
+                    }
+
+                    free(buf);
+
+
+
+                    break;
+                }
+            }
+            else {
+                continueStatus = DBG_EXCEPTION_NOT_HANDLED;
+            }
+
+            ContinueDebugEvent(dbgEvent.dwProcessId, dbgEvent.dwThreadId, continueStatus);
+        }
+    }
 
 
 
