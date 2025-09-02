@@ -14,7 +14,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # Create the main executable
-add_executable(emudbg "emudbg.cpp" "asm_function.asm")
+add_executable(emudbg "emudbg.cpp" "CPU.hpp" "asm_function.asm")
 
 # Optional: Use C++20 if available
 if (CMAKE_VERSION VERSION_GREATER 3.12)
