@@ -37,7 +37,7 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 0
+#define analyze_ENABLED 1
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -51,7 +51,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 // Enable automatic patching of hardware checks
 #define AUTO_PATCH_HW 0
 // Enable saving RVA addresses + descriptions to file
-#define Save_Rva 1
+#define Save_Rva 0
 //------------------------------------------
 
 #if Save_Rva
