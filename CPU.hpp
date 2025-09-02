@@ -13,6 +13,7 @@
 #include <tlhelp32.h>
 #include <tchar.h>
 #include <winternl.h>  
+#include <immintrin.h>
 
 
 #define CPU_PAUSED (0x1)      
