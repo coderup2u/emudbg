@@ -2230,8 +2230,6 @@ public:
                     LOG("[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
                     if (bpType == BreakpointType::ExecGuard) {
                         AddExecutionEx((LPVOID)g_regs.rip, instr.length);
-                        SingleStep(pi.hProcess, pi.hThread);
-                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
                     }
 
 
@@ -2245,8 +2243,6 @@ public:
                 {
                     if (bpType == BreakpointType::ExecGuard) {
                         AddExecutionEx((LPVOID)g_regs.rip, instr.length);
-                        SingleStep(pi.hProcess, pi.hThread);
-                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
                     }
 
                     return g_regs.rip + instr.length;
