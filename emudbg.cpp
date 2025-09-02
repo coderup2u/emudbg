@@ -107,7 +107,7 @@ int wmain(int argc, wchar_t* argv[]) {
         {
             pfnGetEnabledXStateFeatures = (PGETENABLEDXSTATEFEATURES)-1;
             _tprintf(_T("This needs to run on Windows 7 SP1 or greater.\n"));
- 
+
         }
     }
 
@@ -126,7 +126,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
     DEBUG_EVENT dbgEvent = {};
     uint64_t baseAddress = 0;
-    uint64_t moduleBase = 0;
+
     std::unordered_map<uint64_t, BreakpointInfo> breakpoints;
 
     while (true) {
@@ -178,8 +178,8 @@ int wmain(int argc, wchar_t* argv[]) {
                             if (strncmp((char*)secHdr.Name, patchSections.c_str(), cmpLen) == 0) {
                                 patch_modules_ranges.first = dllBase;
                                 patch_modules_ranges.second = dllBase + ntHdr.OptionalHeader.SizeOfImage;
-         
-                                patchSectionAddress = (uint64_t)ld.lpBaseOfDll + secHdr.VirtualAddress  ;
+
+                                patchSectionAddress = (uint64_t)ld.lpBaseOfDll + secHdr.VirtualAddress;
                                 patch_section_ranges.first = patchSectionAddress;
                                 patch_section_ranges.second = patchSectionAddress + secHdr.Misc.VirtualSize;
                                 printf("%s section at: 0x%llx (size: 0x%x)\n",
@@ -220,7 +220,7 @@ int wmain(int argc, wchar_t* argv[]) {
                     }
 #endif
 #if analyze_ENABLED
-                    LOG_analyze(GREEN,"DLL LOADED : "<< lowerLoaded.c_str());
+                    LOG_analyze(GREEN, "DLL LOADED : " << lowerLoaded.c_str());
                     if (lowerLoaded.find(L"ntdll.dll") != std::wstring::npos) {
                         ntdllBase = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
                         LOG(L"[+] ntdll.dll loaded at 0x" << std::hex << ntdllBase);
@@ -261,7 +261,7 @@ int wmain(int argc, wchar_t* argv[]) {
                             if (!hasRVA && !waitForModule && bpType != BreakpointType::ExecGuard) {
                                 auto modEntryRVA = GetEntryPointRVA(buffer);
                                 auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
-                              
+
                                 HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
                                 if (modEntryRVA)
                                     modTLSRVAs.push_back(modEntryRVA);
@@ -278,16 +278,21 @@ int wmain(int argc, wchar_t* argv[]) {
                                 }
                                 if (hThread) CloseHandle(hThread);
                             }
-                            else if (!hasRVA && !waitForModule && bpType == BreakpointType::ExecGuard){
-                                
+                            else if (!hasRVA && !waitForModule && bpType == BreakpointType::ExecGuard) {
+
                                 RemoveExecutionEx((LPVOID)dllBase, dllSize);
                             }
                         }
                     }
 #endif
+#if Save_Rva
+                    if (lowerLoaded.find(L"ntdll.dll") != std::wstring::npos) {
+                        ntdll_rang.first = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
+                        ntdll_rang.second = moduleBase + optionalHeader.SizeOfImage;
+                    }
+#endif
 
-
-                    if (waitForModule && !hasRVA && lowerLoaded.find(lowerTarget) != std::wstring::npos ) {
+                    if (waitForModule && !hasRVA && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
                         moduleBase = (uint64_t)ld.lpBaseOfDll;
                         auto modEntryRVA = GetEntryPointRVA(buffer);
                         auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
@@ -296,20 +301,20 @@ int wmain(int argc, wchar_t* argv[]) {
                         if (modEntryRVA) modTLSRVAs.push_back(modEntryRVA);
 
                         if (bpType == BreakpointType::ExecGuard) {
-                            RemoveExecutionEx((LPVOID)moduleBase , optionalHeader.SizeOfImage);
+                            RemoveExecutionEx((LPVOID)moduleBase, optionalHeader.SizeOfImage);
                         }
                         else {
-                           for (auto &rva : modTLSRVAs) {
-                                        uint64_t addr = moduleBase + rva;
-                                        if (bpType == BreakpointType::Hardware)
-                                            SetHardwareBreakpointAuto(hThread, addr);
-                                        else {
-                                            BYTE orig;
-                                            if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
-                                        }
-                           }
+                            for (auto& rva : modTLSRVAs) {
+                                uint64_t addr = moduleBase + rva;
+                                if (bpType == BreakpointType::Hardware)
+                                    SetHardwareBreakpointAuto(hThread, addr);
+                                else {
+                                    BYTE orig;
+                                    if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
+                                }
+                            }
                         }
-         
+
                         if (hThread) CloseHandle(hThread);
                     }
                 }
@@ -320,81 +325,81 @@ int wmain(int argc, wchar_t* argv[]) {
 
         case CREATE_THREAD_DEBUG_EVENT: {
             if (bpType != BreakpointType::ExecGuard) {
-   CONTEXT ctx = { 0 };
-            ctx.ContextFlags = CONTEXT_FULL;
-            HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
+                CONTEXT ctx = { 0 };
+                ctx.ContextFlags = CONTEXT_FULL;
+                HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
 
-            if (hThread && GetThreadContext(hThread, &ctx)) {
+                if (hThread && GetThreadContext(hThread, &ctx)) {
 #if Stealth_Mode_ENABLED
 
-                EnableStealthMode(hThread);
+                    EnableStealthMode(hThread);
 
 #endif
-                uint64_t entryAddress = (uint64_t)dbgEvent.u.CreateThread.lpStartAddress;
-                if (IsInEmulationRange(entryAddress)) {
+                    uint64_t entryAddress = (uint64_t)dbgEvent.u.CreateThread.lpStartAddress;
+                    if (IsInEmulationRange(entryAddress)) {
 #if analyze_ENABLED
-                    LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << entryAddress);
+                        LOG_analyze(GREEN, "New THREAD CREATED! Entry point : " << std::hex << entryAddress);
 
 #endif
 
-                    CPU cpu(hThread);
-                    cpu.CPUThreadState = ThreadState::Unknown;
-                    cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
+                        CPU cpu(hThread);
+                        cpu.CPUThreadState = ThreadState::Unknown;
+                        cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
 
-                    if (bpType == BreakpointType::Hardware)
-                        SetHardwareBreakpointAuto(hThread, ctx.Rip);
-                    else {
-                        BYTE orig;
-                        if (breakpoints.find(ctx.Rip) == breakpoints.end()) {
-                            if (SetBreakpoint(pi.hProcess, ctx.Rip, orig)) breakpoints[ctx.Rip] = { orig, 1 };
+                        if (bpType == BreakpointType::Hardware)
+                            SetHardwareBreakpointAuto(hThread, ctx.Rip);
+                        else {
+                            BYTE orig;
+                            if (breakpoints.find(ctx.Rip) == breakpoints.end()) {
+                                if (SetBreakpoint(pi.hProcess, ctx.Rip, orig)) breakpoints[ctx.Rip] = { orig, 1 };
+                            }
+                        }
+                    }
+                    if (IsInEmulationRange(ctx.Rip)) {
+#if analyze_ENABLED
+                        LOG_analyze(GREEN, "New THREAD CREATED! Rip : " << std::hex << ctx.Rip);
+
+#endif
+
+                        CPU cpu(hThread);
+                        cpu.CPUThreadState = ThreadState::Unknown;
+                        cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
+
+                        if (bpType == BreakpointType::Hardware)
+                            SetHardwareBreakpointAuto(hThread, ctx.Rip);
+                        else {
+                            BYTE orig;
+                            if (breakpoints.find(ctx.Rip) == breakpoints.end()) {
+                                if (SetBreakpoint(pi.hProcess, ctx.Rip, orig)) breakpoints[ctx.Rip] = { orig, 1 };
+                            }
+                        }
+                    }
+
+                    uint64_t pointer = ctx.Rdx, address = 0;
+                    if (ReadProcessMemory(pi.hProcess, (LPCVOID)pointer, &address, sizeof(address), nullptr) && IsInEmulationRange(address)) {
+#if analyze_ENABLED
+                        LOG_analyze(GREEN, "New THREAD CREATED! RDX address : " << std::hex << address);
+
+#endif
+
+
+                        CPU cpu(hThread);
+                        cpu.CPUThreadState = ThreadState::Unknown;
+                        cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
+
+                        if (bpType == BreakpointType::Hardware)
+                            SetHardwareBreakpointAuto(hThread, address);
+                        else {
+                            BYTE orig;
+                            if (breakpoints.find(address) == breakpoints.end()) {
+                                if (SetBreakpoint(pi.hProcess, address, orig)) breakpoints[address] = { orig, 1 };
+                            }
                         }
                     }
                 }
-                if (IsInEmulationRange(ctx.Rip)) {
-#if analyze_ENABLED
-                    LOG_analyze(GREEN, "New THREAD CREATED! Rip : " << std::hex << ctx.Rip);
-
-#endif
-          
-                    CPU cpu(hThread);
-                    cpu.CPUThreadState = ThreadState::Unknown;
-                    cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
-
-                    if (bpType == BreakpointType::Hardware)
-                        SetHardwareBreakpointAuto(hThread, ctx.Rip);
-                    else {
-                        BYTE orig;
-                        if (breakpoints.find(ctx.Rip) == breakpoints.end()) {
-                            if (SetBreakpoint(pi.hProcess, ctx.Rip, orig)) breakpoints[ctx.Rip] = { orig, 1 };
-                        }
-                    }
-                }
-
-                uint64_t pointer = ctx.Rdx, address = 0;
-            if (ReadProcessMemory(pi.hProcess, (LPCVOID)pointer, &address, sizeof(address), nullptr) && IsInEmulationRange(address)) {
-#if analyze_ENABLED
-                    LOG_analyze(GREEN, "New THREAD CREATED! RDX address : " << std::hex << address);
-
-#endif
-
-
-                    CPU cpu(hThread);
-                    cpu.CPUThreadState = ThreadState::Unknown;
-                    cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
-
-                    if (bpType == BreakpointType::Hardware)
-                        SetHardwareBreakpointAuto(hThread, address);
-                    else {
-                        BYTE orig;
-                        if (breakpoints.find(address) == breakpoints.end()) {
-                            if (SetBreakpoint(pi.hProcess, address, orig)) breakpoints[address] = { orig, 1 };
-                        }
-                    }
-                }
+                if (hThread) CloseHandle(hThread);
             }
-            if (hThread) CloseHandle(hThread);
-            }
-         
+
             break;
         }
 
@@ -404,34 +409,34 @@ int wmain(int argc, wchar_t* argv[]) {
 #if AUTO_PATCH_HW
             if (patchModule.empty() && !patchSection.empty() && patchSectionAddress == 0) {
 
-            IMAGE_DOS_HEADER dosHdr{};
-            ReadProcessMemory(pi.hProcess, (LPCVOID)baseAddress, &dosHdr, sizeof(dosHdr), nullptr);
+                IMAGE_DOS_HEADER dosHdr{};
+                ReadProcessMemory(pi.hProcess, (LPCVOID)baseAddress, &dosHdr, sizeof(dosHdr), nullptr);
 
-            IMAGE_NT_HEADERS64 ntHdr{};
-            ReadProcessMemory(pi.hProcess, (LPCVOID)(baseAddress + dosHdr.e_lfanew), &ntHdr, sizeof(ntHdr), nullptr);
+                IMAGE_NT_HEADERS64 ntHdr{};
+                ReadProcessMemory(pi.hProcess, (LPCVOID)(baseAddress + dosHdr.e_lfanew), &ntHdr, sizeof(ntHdr), nullptr);
 
-            DWORD numberOfSections = ntHdr.FileHeader.NumberOfSections;
-            DWORD sectionOffset = dosHdr.e_lfanew +
-                offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
-                ntHdr.FileHeader.SizeOfOptionalHeader;
-            std::string patchSections(patchSection.begin(), patchSection.end());
-            for (DWORD i = 0; i < numberOfSections; i++) {
-                IMAGE_SECTION_HEADER secHdr{};
-                ReadProcessMemory(pi.hProcess, (LPCVOID)(baseAddress + sectionOffset + i * sizeof(secHdr)), &secHdr, sizeof(secHdr), nullptr);
-                sections.push_back(secHdr);
-                if (strncmp((char*)secHdr.Name, (char*)patchSections.c_str(), patchSection.size()) == 0) {
-                    patch_modules_ranges.first = baseAddress;
-                    patch_modules_ranges.second = baseAddress + ntHdr.OptionalHeader.SizeOfImage;
+                DWORD numberOfSections = ntHdr.FileHeader.NumberOfSections;
+                DWORD sectionOffset = dosHdr.e_lfanew +
+                    offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
+                    ntHdr.FileHeader.SizeOfOptionalHeader;
+                std::string patchSections(patchSection.begin(), patchSection.end());
+                for (DWORD i = 0; i < numberOfSections; i++) {
+                    IMAGE_SECTION_HEADER secHdr{};
+                    ReadProcessMemory(pi.hProcess, (LPCVOID)(baseAddress + sectionOffset + i * sizeof(secHdr)), &secHdr, sizeof(secHdr), nullptr);
+                    sections.push_back(secHdr);
+                    if (strncmp((char*)secHdr.Name, (char*)patchSections.c_str(), patchSection.size()) == 0) {
+                        patch_modules_ranges.first = baseAddress;
+                        patch_modules_ranges.second = baseAddress + ntHdr.OptionalHeader.SizeOfImage;
 
-                    patchSectionAddress = baseAddress + secHdr.VirtualAddress ;
-                    patch_section_ranges.first = patchSectionAddress;
-                    patch_section_ranges.second = patchSectionAddress + secHdr.Misc.VirtualSize;
-                    printf("%s section at: 0x%llx (size: 0x%x)\n", patchSections.c_str(), patchSectionAddress, secHdr.Misc.VirtualSize);
-                    break;
+                        patchSectionAddress = baseAddress + secHdr.VirtualAddress;
+                        patch_section_ranges.first = patchSectionAddress;
+                        patch_section_ranges.second = patchSectionAddress + secHdr.Misc.VirtualSize;
+                        printf("%s section at: 0x%llx (size: 0x%x)\n", patchSections.c_str(), patchSectionAddress, secHdr.Misc.VirtualSize);
+                        break;
+                    }
                 }
             }
-            }
-         
+
 
 #endif
 
@@ -446,40 +451,40 @@ int wmain(int argc, wchar_t* argv[]) {
             if (hThread) {
                 cpuThreads.emplace(dbgEvent.dwThreadId, CPU(hThread));
             }
-            
+
 
             if (bpType == BreakpointType::ExecGuard) {
                 RemoveExecutionEx((LPVOID)baseAddress, optionalHeader.SizeOfImage);
             }
             else {
-            if (hasRVA && !waitForModule) {
-                uint64_t targetAddr = baseAddress + targetRVA;
-                if (bpType == BreakpointType::Hardware)
-                    SetHardwareBreakpointAuto(hThread, targetAddr);
-                else {
-                    BYTE orig;
-                    if (SetBreakpoint(pi.hProcess, targetAddr, orig)) breakpoints[targetAddr] = { orig, 1 };
-                }
-                LOG(L"[+] Breakpoint set on main executable at RVA 0x%llX -> 0x%llX", targetRVA, targetAddr);
-            }
-      
-
-            if (!waitForModule && !hasRVA ) {
-                if (entryRVA) tlsRVAs.push_back(entryRVA);
-               
-                for (auto &rva : tlsRVAs) {
-                    uint64_t addr = baseAddress + rva;
-       
+                if (hasRVA && !waitForModule) {
+                    uint64_t targetAddr = baseAddress + targetRVA;
                     if (bpType == BreakpointType::Hardware)
-                        SetHardwareBreakpointAuto(hThread, addr);
+                        SetHardwareBreakpointAuto(hThread, targetAddr);
                     else {
                         BYTE orig;
-                        if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
+                        if (SetBreakpoint(pi.hProcess, targetAddr, orig)) breakpoints[targetAddr] = { orig, 1 };
+                    }
+                    LOG(L"[+] Breakpoint set on main executable at RVA 0x%llX -> 0x%llX", targetRVA, targetAddr);
+                }
+
+
+                if (!waitForModule && !hasRVA) {
+                    if (entryRVA) tlsRVAs.push_back(entryRVA);
+
+                    for (auto& rva : tlsRVAs) {
+                        uint64_t addr = baseAddress + rva;
+
+                        if (bpType == BreakpointType::Hardware)
+                            SetHardwareBreakpointAuto(hThread, addr);
+                        else {
+                            BYTE orig;
+                            if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
+                        }
                     }
                 }
-            }
-             
-  
+
+
             }
 
             break;
@@ -515,7 +520,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
                     std::vector<uint64_t> returnedAddrs(cpus.size(), 0);
 
-     
+
                     for (auto* cpu : cpus) {
                         cpu->CPUThreadState = ThreadState::Running;
                         cpu->UpdateRegistersFromContext();
@@ -527,7 +532,7 @@ int wmain(int argc, wchar_t* argv[]) {
                         CPU* cpu = cpus[i];
                         workers.emplace_back([cpu, &returnedAddrs, i]() {
                             returnedAddrs[i] = cpu->start_emulation();
-                            LOG( "  returnedAddrs["<< i<<"] " << returnedAddrs[i]);
+                            LOG("  returnedAddrs[" << i << "] " << returnedAddrs[i]);
                             });
                     }
                     for (auto& t : workers) {
@@ -536,7 +541,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
                     for (auto* cpu : cpus) {
                         if (!cpu->ApplyRegistersToContext()) {
-            
+
                             DWORD tid = GetThreadId(cpu->hThread);
                             if (tid != 0) {
                                 LOG(L"[!] Removing CPU for dead thread ID: " << tid);
@@ -592,7 +597,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
                     auto it = cpuThreads.find(dbgEvent.dwThreadId);
                     if (it == cpuThreads.end()) {
-     
+
                         if (hThread) {
                             CPU cpu(hThread);
                             cpu.CPUThreadState = ThreadState::Unknown;
@@ -677,7 +682,7 @@ int wmain(int argc, wchar_t* argv[]) {
                     HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
                     if (!hThread) {
                         printf("OpenThread failed: %lu\n", GetLastError());
-              
+
                     }
 
                     auto it = cpuThreads.find(dbgEvent.dwThreadId);
@@ -685,7 +690,7 @@ int wmain(int argc, wchar_t* argv[]) {
                         CPU cpu(hThread);
                         cpu.CPUThreadState = ThreadState::Unknown;
                         auto [newIt, inserted] = cpuThreads.emplace(dbgEvent.dwThreadId, std::move(cpu));
-                        it = newIt; 
+                        it = newIt;
                     }
                     CPU& cpu = it->second;
                     cpu.CPUThreadState = ThreadState::Running;
@@ -698,14 +703,14 @@ int wmain(int argc, wchar_t* argv[]) {
                 }
 
                 else {
-                std::cout << "[!] Access Violation at 0x" << std::hex << exAddr;
-                if (bpType == BreakpointType::Software) {
-                    std::cout << " (Writing INT3 on code integrity protected program can cause this. Use hardware breakpoints: emudbg my.exe -b hardware)";
-                }
-                std::cout << std::endl;
+                    std::cout << "[!] Access Violation at 0x" << std::hex << exAddr;
+                    if (bpType == BreakpointType::Software) {
+                        std::cout << " (Writing INT3 on code integrity protected program can cause this. Use hardware breakpoints: emudbg my.exe -b hardware)";
+                    }
+                    std::cout << std::endl;
                 }
 
-               // exit(0);
+                // exit(0);
                 break;
 
             case EXCEPTION_ILLEGAL_INSTRUCTION:
@@ -738,7 +743,7 @@ int wmain(int argc, wchar_t* argv[]) {
                 break;
 
             default:
-                std::cout<< "[!] Unhandled exception 0x" << std::hex << exceptionCode << " at 0x" << exAddr << std::endl;
+                std::cout << "[!] Unhandled exception 0x" << std::hex << exceptionCode << " at 0x" << exAddr << std::endl;
                 break;
             }
 
@@ -747,7 +752,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
         case EXIT_THREAD_DEBUG_EVENT:
             cpuThreads.erase(dbgEvent.dwThreadId);
-            LOG(dbgEvent.dwThreadId<< "  EXIT");
+            LOG(dbgEvent.dwThreadId << "  EXIT");
             break;
 
         case EXIT_PROCESS_DEBUG_EVENT:

@@ -13,6 +13,7 @@
 #include <tlhelp32.h>
 #include <tchar.h>
 #include <winternl.h>  
+#include <immintrin.h>
 
 
 #define CPU_PAUSED (0x1)      
@@ -44,13 +45,89 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 // Enable automatic patching of hardware checks
 #define AUTO_PATCH_HW 0
+// Enable saving RVA addresses + descriptions to file
+#define Save_Rva 0
 //------------------------------------------
 
+#if Save_Rva
+std::pair<uint64_t, uint64_t>  ntdll_rang;
+std::string filename = "rva_list.txt";
+enum class RVAType {
+    CPUID,
+    KUSER_SHARED_DATA,
+    SYSCALL,
+    NTDLL,
+    XGETBV,
+    RCPSS,
+    CMPXCHG,
+    UNKNOWN
+};
+
+std::string typeToString(RVAType type) {
+    switch (type) {
+    case RVAType::CPUID: return "CPUID";
+    case RVAType::KUSER_SHARED_DATA: return "KUSER_SHARED_DATA";
+    case RVAType::SYSCALL: return "SYSCALL";
+    case RVAType::NTDLL: return "NTDLL";
+    case RVAType::XGETBV: return "XGETBV";
+    case RVAType::RCPSS: return "RCPSS";
+    case RVAType::CMPXCHG: return "CMPXCHG";
+    default: return "UNKNOWN";
+    }
+}
+
+RVAType stringToType(const std::string& s) {
+    if (s == "CPUID") return RVAType::CPUID;
+    if (s == "KUSER_SHARED_DATA") return RVAType::KUSER_SHARED_DATA;
+    if (s == "SYSCALL") return RVAType::SYSCALL;
+    if (s == "NTDLL") return RVAType::NTDLL;
+    if (s == "XGETBV") return RVAType::XGETBV;
+    if (s == "RCPSS") return RVAType::RCPSS;
+    if (s == "CMPXCHG") return RVAType::CMPXCHG;
+    return RVAType::UNKNOWN;
+}
+
+struct RVAEntry {
+    uint64_t rva;
+    RVAType type;
+
+    void save(std::ofstream& out) const {
+        out << std::hex << rva << " " << typeToString(type) << "\n";
+    }
+
+    static RVAEntry load(std::ifstream& in) {
+        RVAEntry entry;
+        std::string typeStr;
+        in >> std::hex >> entry.rva >> typeStr;
+        entry.type = stringToType(typeStr);
+        return entry;
+    }
+};
+
+bool addRVA(std::vector<RVAEntry>& entries, uint64_t rva, RVAType type, const std::string& filename) {
+    for (const auto& e : entries) {
+        if (e.rva == rva) {
+            return false;
+        }
+    }
+
+    RVAEntry newEntry{ rva, type };
+    entries.push_back(newEntry);
+
+    std::ofstream out(filename, std::ios::app);
+    if (out.is_open()) {
+        newEntry.save(out);
+    }
+
+    return true;
+}
+std::vector<RVAEntry> entries;
+#endif
 
 
 #if LOG_ENABLED
@@ -76,7 +153,7 @@ union YMM {
 };
 struct Flags {
     uint64_t CF : 1;   // bit 0
-    uint64_t always1 : 1; 
+    uint64_t always1 : 1;
     uint64_t PF : 1;   // bit 2
     uint64_t reserved3 : 1;
     uint64_t AF : 1;   // bit 4
@@ -172,7 +249,7 @@ std::wstring GetSystemModuleNameFromAddress(uint64_t addr) {
             return system_modules_names[i];
         }
     }
-    return L""; 
+    return L"";
 }
 #endif
 PROCESS_INFORMATION pi;
@@ -452,9 +529,9 @@ bool compareGPR(const GPR& a, const GPR& b) {
     return a.q == b.q;
 }
 bool compareRegState(const RegState& a, const RegState& b) {
-    const GPR* gprs_a[] = {  &a.rbx, &a.rcx, &a.rdx, &a.rsi, &a.rdi, &a.rbp,
+    const GPR* gprs_a[] = { &a.rbx, &a.rcx, &a.rdx, &a.rsi, &a.rdi, &a.rbp,
                             &a.r8, &a.r9, &a.r10, &a.r11, &a.r12, &a.r13, &a.r14, &a.r15 };
-    const GPR* gprs_b[] = {  &b.rbx, &b.rcx, &b.rdx, &b.rsi, &b.rdi, &b.rbp,
+    const GPR* gprs_b[] = { &b.rbx, &b.rcx, &b.rdx, &b.rsi, &b.rdi, &b.rbp,
                             &b.r8, &b.r9, &b.r10, &b.r11, &b.r12, &b.r13, &b.r14, &b.r15 };
 
     for (int i = 0; i < 14; ++i) {
@@ -773,7 +850,7 @@ typedef struct tagSOleTlsData
 
     IUnknown* punkError;          // Per thread error object.
     ULONG               cbErrorData;        // Maximum size of error data.
-} SOleTlsData,*PSOleTlsData;
+} SOleTlsData, * PSOleTlsData;
 typedef struct _TEB64
 {
 
@@ -879,7 +956,7 @@ typedef struct _TEB64
     PVOID ThreadPoolData;
     PVOID* TlsExpansionSlots;
 #ifdef _WIN64
-    PVOID ChpeV2CpuAreaInfo; 
+    PVOID ChpeV2CpuAreaInfo;
     PVOID Unused;
 #endif
     ULONG MuiGeneration;
@@ -1190,14 +1267,14 @@ enum ConsoleColor {
     WHITE = 7,
 
 
-    BRIGHT_BLACK = 8,   
+    BRIGHT_BLACK = 8,
     BRIGHT_BLUE = 9,
     BRIGHT_GREEN = 10,
     BRIGHT_CYAN = 11,
     BRIGHT_RED = 12,
     BRIGHT_MAGENTA = 13,
     BRIGHT_YELLOW = 14,
-    BRIGHT_WHITE = 15    
+    BRIGHT_WHITE = 15
 };
 
 inline void SetConsoleColor(ConsoleColor color) {
@@ -1234,9 +1311,9 @@ bool IsInPatchSectionRange(uint64_t addr) {
 
 bool IsInPatchRange(uint64_t addr) {
 
-        if (addr >= patch_modules_ranges.first && addr <= patch_modules_ranges.second)
-            return true;
-    
+    if (addr >= patch_modules_ranges.first && addr <= patch_modules_ranges.second)
+        return true;
+
     return false;
 }
 struct PatchInfo {
@@ -1275,7 +1352,7 @@ bool PatchFileAtMemoryOffsets(const std::vector<PatchInfo>& patches) {
         if (!IsInPatchRange(patch.memoryAddress)) {
             std::wcerr << L"Memory address 0x" << std::hex << patch.memoryAddress
                 << L" is outside of patchable range.\n";
-            continue; 
+            continue;
         }
 
         uint64_t rva = patch.memoryAddress - patch_modules_ranges.first;
@@ -1337,7 +1414,7 @@ bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patch
         std::wcout << L"Created patched file: " << patchedFilePath << std::endl;
     }
     else {
-       // std::wcout << L"Patched file already exists, applying new patch on it.\n";
+        // std::wcout << L"Patched file already exists, applying new patch on it.\n";
     }
     checkPatched.close();
 
@@ -1382,12 +1459,13 @@ bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patch
     }
 
     outFile.close();
-   // std::wcout << L"Patch applied successfully.\n";
+    // std::wcout << L"Patch applied successfully.\n";
     return true;
 }
 
 #endif
 
+uint64_t moduleBase = 0;
 // ----------------------- Break point helper ------------------
 
 bool SetHardwareBreakpointAuto(HANDLE hThread, uint64_t address) {
@@ -1452,13 +1530,13 @@ bool RemoveHardwareBreakpointByAddress(HANDLE hThread, uint64_t address) {
             case 3: ctx.Dr3 = 0; break;
             }
             ctx.Dr7 &= ~(1 << (slot * 2)); // disable local enable bit
-            ctx.Dr7 &= ~(1 << (slot * 2 + 1)); 
+            ctx.Dr7 &= ~(1 << (slot * 2 + 1));
 
             return SetThreadContext(hThread, &ctx);
         }
     }
 
-    return false; 
+    return false;
 }
 
 BOOL RemoveExecutionEx(LPVOID start, size_t size) {
@@ -1507,7 +1585,7 @@ void RemoveAllBreakpoints(HANDLE hProcess, std::unordered_map<uint64_t, Breakpoi
 
 void RestoreAllBreakpoints(HANDLE hProcess, std::unordered_map<uint64_t, BreakpointInfo> breakpoints) {
     for (auto& [address, info] : breakpoints) {
-        BYTE temp; 
+        BYTE temp;
         SetBreakpoint(hProcess, address, temp);
     }
 }
@@ -1728,7 +1806,7 @@ bool Patch_CheckRemoteDebuggerPresent() {
      0xC3               // ret
     };
 
-  return  PatchKernelBaseFunction(pi.hProcess, kernelBase_address, "CheckRemoteDebuggerPresent", patch, sizeof(patch));
+    return  PatchKernelBaseFunction(pi.hProcess, kernelBase_address, "CheckRemoteDebuggerPresent", patch, sizeof(patch));
 }
 #endif
 // ----------------------------- CPU Class Definition -----------------------------
@@ -2004,7 +2082,7 @@ public:
             { ZYDIS_MNEMONIC_KMOVB, &CPU::emulate_kmovb },
             { ZYDIS_MNEMONIC_KMOVW, &CPU::emulate_kmovw },
             { ZYDIS_MNEMONIC_KMOVD, &CPU::emulate_kmovd },
-            { ZYDIS_MNEMONIC_KMOVQ, &CPU::emulate_kmovq },   
+            { ZYDIS_MNEMONIC_KMOVQ, &CPU::emulate_kmovq },
             { ZYDIS_MNEMONIC_ROUNDPS, &CPU::emulate_roundps },
             { ZYDIS_MNEMONIC_VROUNDPS, &CPU::emulate_vroundps },
             { ZYDIS_MNEMONIC_VPERMILPS, &CPU::emulate_vpermilps },
@@ -2028,7 +2106,7 @@ public:
             { ZYDIS_MNEMONIC_VEXTRACTI128, &CPU::emulate_vextracti128 },
             { ZYDIS_MNEMONIC_CLD, &CPU::emulate_cld },
 
-    
+
         };
 
 
@@ -2048,7 +2126,7 @@ public:
     void DisableTrapFlag() {
         CONTEXT ctx = { 0 };
         ctx.ContextFlags = CONTEXT_ALL;
-        
+
         if (GetThreadContext(hThread, &ctx)) {
             ctx.EFlags &= ~0x100; // Clear Trap Flag (bit 8)
             SetThreadContext(hThread, &ctx);
@@ -2064,19 +2142,19 @@ public:
         return val;
     }
     uint64_t start_emulation() {
-         address = g_regs.rip;
+        address = g_regs.rip;
         BYTE buffer[16] = { 0 };
         SIZE_T bytesRead = 0;
         Zydis disasm(true);
-//
-//#if analyze_ENABLED
-//
-//        if (is_first_time) {
-//
-//            g_regs_first_time = g_regs;
-//
-//        }
-//#endif
+        //
+        //#if analyze_ENABLED
+        //
+        //        if (is_first_time) {
+        //
+        //            g_regs_first_time = g_regs;
+        //
+        //        }
+        //#endif
 
         while (true) {
             //DumpRegisters();
@@ -2092,7 +2170,7 @@ public:
             if (disasm.Disassemble(address, buffer, bytesRead)) {
 #if DB_ENABLED
                 is_cpuid = 0;
-              //  is_reading_time = 0;
+                //  is_reading_time = 0;
                 is_rdtsc = 0;
                 is_OVERFLOW_FLAG_SKIP = 0;
                 is_Auxiliary_Carry_FLAG_SKIP = 0;
@@ -2108,10 +2186,10 @@ public:
                 if (patchDistance == patchOffsetFromInstruction) {
                     is_patch_cpuid = 0;
                     patchDistance = 0;
-                    const std::vector<uint8_t>& patch  = BuildCpuidPatch(g_regs.rax.q, g_regs.rbx.q, g_regs.rcx.q, g_regs.rdx.q);
-                    char*  buffer = new char[patch.size()];
+                    const std::vector<uint8_t>& patch = BuildCpuidPatch(g_regs.rax.q, g_regs.rbx.q, g_regs.rcx.q, g_regs.rdx.q);
+                    char* buffer = new char[patch.size()];
                     std::memcpy(buffer, patch.data(), patch.size());
-                    ApplyInlineHook(buffer , patch.size());
+                    ApplyInlineHook(buffer, patch.size());
                 }
 
 
@@ -2125,7 +2203,7 @@ public:
                 LOG(L"0x" << std::hex << disasm.Address()
                     << L": " << std::wstring(instrText.begin(), instrText.end()));
 
-                 has_lock = (instr.attributes & ZYDIS_ATTRIB_HAS_LOCK) != 0;
+                has_lock = (instr.attributes & ZYDIS_ATTRIB_HAS_LOCK) != 0;
                 bool has_rep = (instr.attributes & ZYDIS_ATTRIB_HAS_REP) != 0;
                 bool has_repne = (instr.attributes & ZYDIS_ATTRIB_HAS_REPNE) != 0;
                 bool has_VEX = (instr.attributes & ZYDIS_ATTRIB_HAS_VEX) != 0;
@@ -2138,13 +2216,16 @@ public:
                     LOG(L"[~] REPNE prefix detected.");
                 if (has_VEX)
                     LOG(L"[~] VEX prefix detected.");
-                if (instr.mnemonic == ZYDIS_MNEMONIC_SYSCALL )
+                if (instr.mnemonic == ZYDIS_MNEMONIC_SYSCALL)
                 {
-                    LOG_analyze( BLUE ,"[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
+                    LOG_analyze(BLUE, "[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
                     LOG("[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
                     if (bpType == BreakpointType::ExecGuard)
                         AddExecutionEx((LPVOID)g_regs.rip, instr.length);
 
+#if Save_Rva
+                    addRVA(entries, g_regs.rip - moduleBase, RVAType::SYSCALL, filename);
+#endif 
                     return g_regs.rip + instr.length;
                 }
                 if (instr.mnemonic == ZYDIS_MNEMONIC_LSL)
@@ -2155,14 +2236,14 @@ public:
                 }
                 if (instr.mnemonic == ZYDIS_MNEMONIC_INT3)
                 {
-                    LOG_analyze(BLUE, "[+] INT3 at: 0x" << std::hex << g_regs.rip );
+                    LOG_analyze(BLUE, "[+] INT3 at: 0x" << std::hex << g_regs.rip);
                     return CPU_PAUSED;
                 }
                 if (is_paused && instr.mnemonic == ZYDIS_MNEMONIC_JMP) {
                     is_paused = 0;
                     return g_regs.rip + instr.length;
-                 }
-    
+                }
+
 
                 auto it = dispatch_table.find(instr.mnemonic);
                 if (it != dispatch_table.end()) {
@@ -2184,21 +2265,21 @@ public:
                             }
 
 #if DB_ENABLED 
-                            SingleStepAndCompare(pi.hProcess, pi.hThread); 
+                            SingleStepAndCompare(pi.hProcess, pi.hThread);
 #endif 
-                        } 
+                        }
                     }
-   
+
                     else {
                         (this->*it->second)(op);
 
                         if (!disasm.IsJump() &&
                             instr.mnemonic != ZYDIS_MNEMONIC_CALL &&
-                            instr.mnemonic != ZYDIS_MNEMONIC_RET )
+                            instr.mnemonic != ZYDIS_MNEMONIC_RET)
                         {
                             g_regs.rip += instr.length;
                         }
-  
+
 
 #if DB_ENABLED
                         if (instr.mnemonic != ZYDIS_MNEMONIC_SGDT) {
@@ -2210,44 +2291,44 @@ public:
                 }
                 else {
                     std::wcout << L"[!] Instruction not implemented: "
-                        << std::wstring(instrText.begin(), instrText.end()) << " at : " <<std::hex <<g_regs.rip << std::endl;
+                        << std::wstring(instrText.begin(), instrText.end()) << " at : " << std::hex << g_regs.rip << std::endl;
                     exit(0);
                 }
 
                 address = g_regs.rip;
 
 
-                    if (!IsInEmulationRange(address)) {
+                if (!IsInEmulationRange(address)) {
 #if analyze_ENABLED
-                        std::string fuction_name = GetExportedFunctionNameByAddress(address);
-                        if (!fuction_name.empty())
-                        LOG_analyze( CYAN ,"Executing function: " << fuction_name.c_str() << " via [0x"<< std::hex << g_regs.rip <<"]");
+                    std::string fuction_name = GetExportedFunctionNameByAddress(address);
+                    if (!fuction_name.empty())
+                        LOG_analyze(CYAN, "Executing function: " << fuction_name.c_str() << " via [0x" << std::hex << g_regs.rip << "]");
 
-                        uint8_t buffer[16] = {};
-                        if (ReadMemory(address, buffer, sizeof(buffer))) {
-                            if (disasm.Disassemble(address, buffer, bytesRead)) {
-                                const ZydisDisassembledInstruction* op = disasm.GetInstr();
-                                if (op->info.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
-                                    LOG_analyze(YELLOW, "indirect syscall from RIP[0x"<<std::hex<< g_regs.rip<<"]");
-                                }
+                    uint8_t buffer[16] = {};
+                    if (ReadMemory(address, buffer, sizeof(buffer))) {
+                        if (disasm.Disassemble(address, buffer, bytesRead)) {
+                            const ZydisDisassembledInstruction* op = disasm.GetInstr();
+                            if (op->info.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
+                                LOG_analyze(YELLOW, "indirect syscall from RIP[0x" << std::hex << g_regs.rip << "]");
                             }
                         }
-
-#endif
-                        if (bpType == BreakpointType::ExecGuard)
-                            return 0 ;
-#if FUll_user_MODE
-                        if (IsInSystemRange(address)) 
-#endif
-                        {
-                            uint64_t value = 0;
-                            ReadMemory(g_regs.rsp.q, &value, 8);
-                            return value;
-                        }
-
-
-
                     }
+
+#endif
+                    if (bpType == BreakpointType::ExecGuard)
+                        return 0;
+#if FUll_user_MODE
+                    if (IsInSystemRange(address))
+#endif
+                    {
+                        uint64_t value = 0;
+                        ReadMemory(g_regs.rsp.q, &value, 8);
+                        return value;
+                    }
+
+
+
+                }
 
 
 
@@ -2270,8 +2351,8 @@ public:
 
 
     void DumpRegisters() {
-        std::cout<<"0x" << std::hex << address
-            << ": " << instrText.c_str()<< std::endl;
+        std::cout << "0x" << std::hex << address
+            << ": " << instrText.c_str() << std::endl;
 
         std::wcout << L"===== Register Dump =====" << std::endl;
 #define DUMP(reg) std::wcout << L#reg << L": 0x" << std::hex << std::setw(16) << std::setfill(L'0') << g_regs.reg.q << std::endl
@@ -2315,7 +2396,7 @@ public:
     void UpdateRegistersFromContext()
     {
 
-   
+
         g_regs.gs_base = GetTEBAddress(hThread);
 
 
@@ -2406,7 +2487,7 @@ public:
 
         free(buf);
         LOG(L"[+] Finished UpdateRegistersFromContextEx");
-      
+
 #if DB_ENABLED
         g_regs.rflags.flags.TF = 1;
 #endif
@@ -2559,7 +2640,7 @@ public:
             LOG(L"[-] malloc failed");
             return false;
         }
-  
+
         PCONTEXT pCtx = NULL;
         if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
         {
@@ -2584,7 +2665,7 @@ public:
             if (err == ERROR_INVALID_HANDLE) {
 
                 LOG(L"[!] Thread handle invalid, removing CPU from list.");
-     
+
             }
 
             free(buf);
@@ -2642,7 +2723,7 @@ public:
 
             if (err == ERROR_INVALID_HANDLE) {
                 LOG(L"[!] Thread handle invalid, removing CPU from list.");
-    
+
             }
 
             free(buf);
@@ -2892,8 +2973,8 @@ private:
     static int implicit_length(const std::vector<int64_t>& elems, int elem_count) {
         for (size_t i = 0; i < elems.size(); ++i) {
             if (elems[i] == 0) {
-                if (i == 0) return elem_count; 
-                return (int)i;              
+                if (i == 0) return elem_count;
+                return (int)i;
             }
         }
         return (int)elems.size();
@@ -3029,7 +3110,7 @@ private:
 
         uint64_t res[4];
         for (int i = 0; i < 4; i++) {
-            int sel = (imm >> (2 * i)) & 0x3; 
+            int sel = (imm >> (2 * i)) & 0x3;
             res[i] = elems[sel];
         }
 
@@ -3041,7 +3122,7 @@ private:
 
         uint64_t res[8];
         for (int i = 0; i < 8; i++) {
-            int sel = (imm >> (3 * i)) & 0x7; 
+            int sel = (imm >> (3 * i)) & 0x7;
             res[i] = elems[sel];
         }
 
@@ -3065,9 +3146,9 @@ private:
         _mm256_store_si256((__m256i*)elems, v);
 
         uint32_t res[8];
-        for (int lane = 0; lane < 2; lane++) {      
+        for (int lane = 0; lane < 2; lane++) {
             for (int i = 0; i < 4; i++) {
-                int sel = (imm >> (2 * i)) & 0x3;   
+                int sel = (imm >> (2 * i)) & 0x3;
                 res[lane * 4 + i] = elems[lane * 4 + sel];
             }
         }
@@ -3079,7 +3160,7 @@ private:
         _mm512_store_si512((__m512i*)elems, v);
 
         uint32_t res[16];
-        for (int lane = 0; lane < 4; lane++) {     
+        for (int lane = 0; lane < 4; lane++) {
             for (int i = 0; i < 4; i++) {
                 int sel = (imm >> (2 * i)) & 0x3;
                 res[lane * 4 + i] = elems[lane * 4 + sel];
@@ -3124,9 +3205,9 @@ private:
         _mm_store_ps(fb, b);
 
         for (int i = 0; i < 4; i++) {
-            if (mask & (1 << i)) 
+            if (mask & (1 << i))
                 fr[i] = fb[i];
-            else                 
+            else
                 fr[i] = fa[i];
         }
         return _mm_load_ps(fr);
@@ -3154,7 +3235,7 @@ private:
         _mm_store_ps(src, a);
 
         for (int i = 0; i < 4; i++) {
-            int sel = (imm >> (2 * i)) & 0x3; 
+            int sel = (imm >> (2 * i)) & 0x3;
             dst[i] = src[sel];
         }
 
@@ -3181,7 +3262,18 @@ private:
 
     // ------------------- Memory Access Helpers -------------------
     bool ReadMemory(uint64_t address, void* buffer, SIZE_T size) {
+#if Save_Rva
+        const uint64_t kuser_base = 0x00000007FFE0000;
+        const uint64_t kuser_size = 0x1000;
 
+        // KUSER_SHARED_DATA
+        if (address >= kuser_base && address < kuser_base + kuser_size) {
+            addRVA(entries, g_regs.rip - moduleBase, RVAType::KUSER_SHARED_DATA, filename);
+        }
+        if (address >= ntdll_rang.first && address < ntdll_rang.second) {
+            addRVA(entries, g_regs.rip - moduleBase, RVAType::NTDLL, filename);
+        }
+#endif 
 #if analyze_ENABLED
         const uint64_t kuser_base = 0x00000007FFE0000;
         const uint64_t kuser_size = 0x1000;
@@ -3197,45 +3289,45 @@ private:
             );
         }
         if (address != g_regs.rip) {
-        auto FunctionName = GetExportedFunctionNameByAddress(address);
+            auto FunctionName = GetExportedFunctionNameByAddress(address);
 #if FUll_user_MODE
-        std::wstring dllName = GetSystemModuleNameFromAddress(address);
-        if (!dllName.empty() && FunctionName.empty() ) {
-            LOG_analyze(BRIGHT_CYAN,
-                "[READ SYSTEM DLL] Reading From (" << dllName.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
-        }
+            std::wstring dllName = GetSystemModuleNameFromAddress(address);
+            if (!dllName.empty() && FunctionName.empty()) {
+                LOG_analyze(BRIGHT_CYAN,
+                    "[READ SYSTEM DLL] Reading From (" << dllName.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+            }
 #endif
-        if (!FunctionName.empty() ) {
-            LOG_analyze(
-                BRIGHT_BLACK,
-                "[Function Lookup] Resolved '" << FunctionName.c_str()
-                << "' at 0x" << std::hex << address
-                << " [RIP: 0x" << std::hex << g_regs.rip
-                << "] - function address read, not executed"
-            );
-        }
+            if (!FunctionName.empty()) {
+                LOG_analyze(
+                    BRIGHT_BLACK,
+                    "[Function Lookup] Resolved '" << FunctionName.c_str()
+                    << "' at 0x" << std::hex << address
+                    << " [RIP: 0x" << std::hex << g_regs.rip
+                    << "] - function address read, not executed"
+                );
+            }
         }
 
 
         // TEB
         if (address >= g_regs.gs_base && address < g_regs.gs_base + 0x1000) {
             uint64_t offset = address - g_regs.gs_base;
-        
+
             Teb64FieldMapper teb_mapper;
             std::string field_name = teb_mapper.get_member_name(offset);
             LOG_analyze(MAGENTA,
-                "[TEB] Reading ("<< field_name.c_str()  <<") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+                "[TEB] Reading (" << field_name.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
         }
 
- 
-       // PEB
+
+        // PEB
         if (g_regs.peb_address) {
             if (address >= g_regs.peb_address && address < g_regs.peb_address + 0x1000) {
                 uint64_t offset = address - g_regs.peb_address;
                 PebFieldMapper peb_mapper;
                 std::string field_name = peb_mapper.get_member_name(offset);
 
-                
+
 
                 LOG_analyze(CYAN,
                     "[PEB] Reading (" << field_name.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
@@ -3243,7 +3335,7 @@ private:
         }
         // PEB LDR
         if (g_regs.peb_ldr) {
-            const uint64_t ldr_size = 0x80; 
+            const uint64_t ldr_size = 0x80;
             if (address >= g_regs.peb_ldr && address < g_regs.peb_ldr + ldr_size) {
                 uint64_t offset = address - g_regs.peb_ldr;
                 PebLdrFieldMapper ldr_mapper;
@@ -3256,16 +3348,16 @@ private:
         }
 
         // read FROM executable
-        if (IsInEmulationRange(address)) {
-            LOG_analyze(BRIGHT_BLACK,
-                "[+] READ FROM executable memory detected | Target: 0x" << std::hex << address <<
-                " | RIP: 0x" << std::hex << g_regs.rip
-            );
-        }
+        //if (IsInEmulationRange(address)) {
+        //    LOG_analyze(BRIGHT_BLACK,
+        //        "[+] READ FROM executable memory detected | Target: 0x" << std::hex << address <<
+        //        " | RIP: 0x" << std::hex << g_regs.rip
+        //    );
+        //}
 
         // NTDLL Image Data Directory
 
-        if (address >= ntdllBase && address < ntdllBase + 0x1000) {  
+        if (address >= ntdllBase && address < ntdllBase + 0x1000) {
             std::string description = "Unknown (NTDLL)";
 
             for (auto it = ntdll_directory_offsets.begin(); it != ntdll_directory_offsets.end(); ++it) {
@@ -3281,7 +3373,7 @@ private:
                     if (offset == 0) {
                         description = name;
                     }
-                    else if (offset < 0x20) { 
+                    else if (offset < 0x20) {
                         description = name + " + 0x" + std::to_string(offset);
                     }
                     else {
@@ -3356,17 +3448,17 @@ private:
 #endif
 
         return result;
-}
+    }
     bool WriteMemory(uint64_t address, const void* buffer, SIZE_T size) {
-      
+
 
 #if analyze_ENABLED
-        if (IsInEmulationRange(address)) {
-            LOG_analyze(BRIGHT_GREEN,
-                "[+] Write to executable memory detected | Target: 0x" << std::hex << address <<
-                " | RIP: 0x" << std::hex << g_regs.rip
-            );
-        }
+        //if (IsInEmulationRange(address)) {
+        //    LOG_analyze(BRIGHT_GREEN,
+        //        "[+] Write to executable memory detected | Target: 0x" << std::hex << address <<
+        //        " | RIP: 0x" << std::hex << g_regs.rip
+        //    );
+        //}
 #endif
 
 #if DB_ENABLED
@@ -3381,13 +3473,13 @@ private:
         }
         return true;
 #endif
-  SIZE_T bytesWritten;
+        SIZE_T bytesWritten;
         bool result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size, &bytesWritten) &&
             bytesWritten == size;
 
         if (!result) {
             DWORD err = GetLastError();
-            LOG("WriteProcessMemory failed with error:"<< err);
+            LOG("WriteProcessMemory failed with error:" << err);
 
             if (err == ERROR_PARTIAL_COPY || err == ERROR_NOACCESS) {
                 // --- Step 1: Check current memory content ---
@@ -3483,11 +3575,11 @@ private:
             // Handle RIP-relative addressing
             if (op.mem.base == ZYDIS_REGISTER_RIP) {
                 address = g_regs.rip + instr.length;
-            #if AUTO_PATCH_HW 
+#if AUTO_PATCH_HW 
 
-                            is_address_RIP_relative = 1;
+                is_address_RIP_relative = 1;
 
-            #endif
+#endif
                 //  LOG(L"[+] RIP-relative base : " << std::hex << address);
             }
             else if (op.mem.base != ZYDIS_REGISTER_NONE) {
@@ -3538,10 +3630,10 @@ private:
             }
 
 
-            size_t disp_offset = instr.raw.disp.offset;          
-            size_t disp_size = instr.raw.disp.size / 8;           
+            size_t disp_offset = instr.raw.disp.offset;
+            size_t disp_size = instr.raw.disp.size / 8;
 
-            uint64_t instr_start = g_regs.rip;           
+            uint64_t instr_start = g_regs.rip;
             uint64_t instr_end = instr_start + instr.length;
 
 
@@ -3570,7 +3662,7 @@ private:
                     std::wcerr << L"Failed to write new displacement to patched file.\n";
                 }
                 else {
-    
+
                     patchSectionAddress += sizeof(T);
                     std::cout << "integrity check patched! at 0x" << std::hex << g_regs.rip << std::endl;
                 }
@@ -3700,7 +3792,7 @@ private:
             return *reinterpret_cast<T*>(it->second);
         }
         else {
-            return T{};  
+            return T{};
         }
     }
 
@@ -3933,10 +4025,10 @@ private:
 #endif
 
         ApplyRegistersToContext();
-        auto FltSave =  UpdateFltSaveFromContext();
+        auto FltSave = UpdateFltSaveFromContext();
 
-        
-        if (!write_operand_value(dst,sizeof(FltSave), FltSave)) {
+
+        if (!write_operand_value(dst, sizeof(FltSave), FltSave)) {
             LOG(L"[!] Failed to write operand for SETLE");
             return;
         }
@@ -3956,7 +4048,7 @@ private:
 #endif
 
         XMM_SAVE_AREA32 fltSave{};
-        
+
 
         if (!read_operand_value(src, sizeof(fltSave), fltSave)) {
             LOG(L"[!] Failed to read memory operand for FXRSTOR");
@@ -4001,7 +4093,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-        auto width = dst.size; 
+        auto width = dst.size;
 
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported width in VPOR: " << (int)width);
@@ -4016,14 +4108,14 @@ private:
                 return;
             }
 
-            __m128i result = _mm_or_si128(v1, v2); 
+            __m128i result = _mm_or_si128(v1, v2);
 
             if (!write_operand_value<__m128i>(dst, width, result)) {
                 LOG(L"[!] Failed to write result in VPOR (128-bit)");
                 return;
             }
         }
-        else { 
+        else {
             __m256i v1, v2;
             if (!read_operand_value<__m256i>(src1, width, v1) ||
                 !read_operand_value<__m256i>(src2, width, v2)) {
@@ -4266,12 +4358,12 @@ private:
             break;
         }
         case 16: {
-            uint16_t multiplicand = static_cast<uint16_t>(g_regs.rax.w); 
+            uint16_t multiplicand = static_cast<uint16_t>(g_regs.rax.w);
             uint16_t src_val = static_cast<uint16_t>(val1);
 
             uint32_t result = static_cast<uint32_t>(multiplicand) * static_cast<uint32_t>(src_val);
 
-            g_regs.rax.w = static_cast<uint16_t>(result & 0xFFFF); 
+            g_regs.rax.w = static_cast<uint16_t>(result & 0xFFFF);
             g_regs.rdx.w = static_cast<uint16_t>((result >> 16) & 0xFFFF);
 
             result_low = result;
@@ -4307,7 +4399,7 @@ private:
         g_regs.rflags.flags.OF = upper_nonzero;
 
         g_regs.rflags.flags.ZF = 0;
-        g_regs.rflags.flags.PF =  !parity(result_low);
+        g_regs.rflags.flags.PF = !parity(result_low);
 
         switch (width) {
         case 8:
@@ -4376,7 +4468,7 @@ private:
     }
     void emulate_scasd(const ZydisDisassembledInstruction* instr) {
 
-        uint32_t eax_val = static_cast<uint32_t>(g_regs.rax.d);  
+        uint32_t eax_val = static_cast<uint32_t>(g_regs.rax.d);
 
 
         uint64_t addr = g_regs.rdi.q;
@@ -4403,7 +4495,9 @@ private:
     void emulate_rcpss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
-
+#if Save_Rva
+        addRVA(entries, g_regs.rip - moduleBase, RVAType::RCPSS, filename);
+#endif
 #if analyze_ENABLED
 
         LOG_analyze(CYAN, L"[+] RCPSS at [RIP: 0x" << std::hex << g_regs.rip << "] ");
@@ -4593,7 +4687,7 @@ private:
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
         auto width = dst.size;
-    
+
 
 
         if (width != 128 && width != 256) {
@@ -4625,7 +4719,7 @@ private:
 #if defined(__AVX2__)
             __m256i result = _mm256_cmpeq_epi16(v1, v2);
 #else
-         
+
             __m128i lo = _mm_cmpeq_epi16(_mm256_castsi256_si128(v1),
                 _mm256_castsi256_si128(v2));
             __m128i hi = _mm_cmpeq_epi16(_mm256_extracti128_si256(v1, 1),
@@ -4645,7 +4739,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-        auto width = dst.size; 
+        auto width = dst.size;
 
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported width in vpcmpeqb: " << (int)width);
@@ -4660,7 +4754,7 @@ private:
                 return;
             }
 
-            __m128i result = _mm_cmpeq_epi8(v1, v2); 
+            __m128i result = _mm_cmpeq_epi8(v1, v2);
 
             if (!write_operand_value<__m128i>(dst, width, result)) {
                 LOG(L"[!] Failed to write result in vpcmpeqb (128-bit)");
@@ -4676,7 +4770,7 @@ private:
             }
 
 #if defined(__AVX2__)
-            __m256i result = _mm256_cmpeq_epi8(v1, v2); 
+            __m256i result = _mm256_cmpeq_epi8(v1, v2);
 #else
             __m128i lo = _mm_cmpeq_epi8(_mm256_castsi256_si128(v1),
                 _mm256_castsi256_si128(v2));
@@ -4744,7 +4838,7 @@ private:
     void emulate_vpshufb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
-        const auto& src2 = instr->operands[2]; 
+        const auto& src2 = instr->operands[2];
         auto width = dst.size;
 
         if (width != 128 && width != 256 && width != 512) {
@@ -4793,7 +4887,7 @@ private:
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2].size > 2
             ? instr->operands[2]
-            : src1; 
+            : src1;
 
         auto width = dst.size;
         if (width != 128) {
@@ -4822,7 +4916,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-        auto width = dst.size; 
+        auto width = dst.size;
 
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported width in vpaddq: " << (int)width);
@@ -4879,7 +4973,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-        auto width = dst.size; 
+        auto width = dst.size;
 
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported width in vpsubq: " << (int)width);
@@ -4902,7 +4996,7 @@ private:
                 return;
             }
         }
-        else { 
+        else {
             __m256i v1, v2;
             if (!read_operand_value<__m256i>(src1, width, v1) ||
                 !read_operand_value<__m256i>(src2, width, v2)) {
@@ -5167,7 +5261,7 @@ private:
             }
 
             __m128i result = _mm_xor_si128(v1, v2);
-             
+
             if (!write_operand_value(dst, width, result)) {
                 LOG(L"[!] Failed to write result in vpxor");
                 return;
@@ -5182,7 +5276,7 @@ private:
             }
 
 
-         
+
             __m256i result = _mm256_xor_si256(v1, v2);
 
             if (!write_operand_value(dst, width, result)) {
@@ -5337,7 +5431,7 @@ private:
     void emulate_vpsllq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
-        const auto& count_op = instr->operands[2]; 
+        const auto& count_op = instr->operands[2];
         auto width = dst.size;
 
         if (width != 128 && width != 256) {
@@ -5346,7 +5440,7 @@ private:
         }
 
         int count = 0;
-        if (!read_operand_value(count_op, 32, count)) { 
+        if (!read_operand_value(count_op, 32, count)) {
             LOG(L"[!] Failed to read shift count in vpsllq");
             return;
         }
@@ -5473,7 +5567,7 @@ private:
     void emulate_vpsllvq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
-        const auto& src2 = instr->operands[2]; 
+        const auto& src2 = instr->operands[2];
         auto width = dst.size;
 
         if (width != 128 && width != 256) {
@@ -5562,7 +5656,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-        const auto& mask_op = instr->operands[3]; 
+        const auto& mask_op = instr->operands[3];
 
         auto width = dst.size;
 
@@ -5942,7 +6036,7 @@ private:
         g_regs.rflags.flags.ZF = (result == 0);
         g_regs.rflags.flags.SF = (result & 0x80) != 0;
         g_regs.rflags.flags.CF = (al < mem_value);
-        g_regs.rflags.flags.PF = !parity(result); 
+        g_regs.rflags.flags.PF = !parity(result);
         g_regs.rflags.flags.AF = ((al ^ mem_value ^ result) & 0x10) != 0;
         g_regs.rflags.flags.OF = ((al ^ mem_value) & (al ^ result) & 0x80) != 0;
 
@@ -6477,9 +6571,13 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
         uint8_t width = instr->info.operand_width;
+#if Save_Rva
+        if (has_lock)
+            addRVA(entries, g_regs.rip - moduleBase, RVAType::CMPXCHG, filename);
+#endif
 #if analyze_ENABLED
-        if(has_lock)
-        LOG_analyze(CYAN, L"[+] cmpxchg at [RIP: 0x" << std::hex << g_regs.rip << "] ");
+        if (has_lock)
+            LOG_analyze(CYAN, L"[+] cmpxchg at [RIP: 0x" << std::hex << g_regs.rip << "] ");
 
 #endif
         uint64_t dstVal, srcVal;
@@ -6504,7 +6602,7 @@ private:
         uint64_t mask = get_mask_for_width(width);
         uint64_t res = (accVal - dstVal) & mask;
 
- 
+
         auto& f = g_regs.rflags.flags;
         f.ZF = (res == 0);
         f.SF = res >> (width - 1);
@@ -7000,9 +7098,9 @@ private:
         bool msb = (val >> (width - 1)) & 1;
         bool msb_minus_1 = (val >> (width - 2)) & 1;
 
-       // g_regs.rflags.flags.SF = msb_minus_1;
+        // g_regs.rflags.flags.SF = msb_minus_1;
         if (count == 1)
-        g_regs.rflags.flags.OF = msb ^ msb_minus_1;
+            g_regs.rflags.flags.OF = msb ^ msb_minus_1;
         else {
 #if DB_ENABLED
             is_OVERFLOW_FLAG_SKIP = 1;
@@ -7136,8 +7234,12 @@ private:
     }
     void emulate_xgetbv(const ZydisDisassembledInstruction*) {
 #if analyze_ENABLED
-        LOG_analyze(GREEN, "[+] xgetbv at [RIP:" << std::hex<< g_regs.rip << "]");
+        LOG_analyze(GREEN, "[+] xgetbv at [RIP:" << std::hex << g_regs.rip << "]");
 #endif
+#if Save_Rva
+        addRVA(entries, g_regs.rip - moduleBase, RVAType::XGETBV, filename);
+
+#endif 
         uint64_t XCR;
         XCR = xgetbv_asm(g_regs.rcx.d);
 
@@ -7334,7 +7436,7 @@ private:
         LOG_analyze(GREEN, "[+] rdtsc at [RIP:" << std::hex << g_regs.rip << "]");
 #endif
 
-        uint64_t tsc = rdtsc_asm();  
+        uint64_t tsc = rdtsc_asm();
 
         g_regs.rax.q = tsc & 0xFFFFFFFF;
         g_regs.rdx.q = (tsc >> 32) & 0xFFFFFFFF;
@@ -7573,7 +7675,7 @@ private:
             auto [quotient, remainder] = div_128_by_64_signed(high, low, divisor);
 
 
-            overflow = false; 
+            overflow = false;
 
             g_regs.rax.q = quotient;
             g_regs.rdx.q = remainder;
@@ -7585,8 +7687,8 @@ private:
         }
 
 
-            g_regs.rflags.flags.OF = overflow;
-            g_regs.rflags.flags.CF = overflow;
+        g_regs.rflags.flags.OF = overflow;
+        g_regs.rflags.flags.CF = overflow;
 
         LOG(L"[+] IDIV executed: divisor = " << divisor << ", overflow = " << overflow);
     }
@@ -7808,7 +7910,7 @@ private:
         LOG(L"[+] MOVUPS executed");
     }
     void emulate_stmxcsr(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  
+        const auto& dst = instr->operands[0];
         uint32_t mxcsr_val = 0;
         read_mxcsr_asm(&mxcsr_val);
 
@@ -7870,7 +7972,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-        auto width = dst.size;  
+        auto width = dst.size;
 
         if (width != 128 && width != 256 && width != 512) {
             LOG(L"[!] Unsupported width in vpunpcklqdq: " << (int)width);
@@ -7905,7 +8007,7 @@ private:
                 return;
             }
         }
-        else { 
+        else {
             __m512i a, b;
             if (!read_operand_value<__m512i>(src1, width, a) ||
                 !read_operand_value<__m512i>(src2, width, b)) {
@@ -7959,19 +8061,19 @@ private:
         const auto& src = instr->operands[1];
 
         if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-            __m128 dst_val = {};  
+            __m128 dst_val = {};
             __m128 src_val = {};
 
             if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
                 read_operand_value(dst, 128, dst_val);
                 read_operand_value(src, 128, src_val);
-                dst_val = _mm_move_ss(dst_val, src_val); 
+                dst_val = _mm_move_ss(dst_val, src_val);
             }
             else {
                 float mem_scalar = 0.0f;
                 read_operand_value(src, 32, mem_scalar);
-                src_val = _mm_load_ss(&mem_scalar);      
-                dst_val = _mm_move_ss(_mm_setzero_ps(), src_val); 
+                src_val = _mm_load_ss(&mem_scalar);
+                dst_val = _mm_move_ss(_mm_setzero_ps(), src_val);
             }
 
             write_operand_value(dst, 128, dst_val);
@@ -7982,7 +8084,7 @@ private:
             if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
                 read_operand_value(src, 128, src_val);
             }
-            else { 
+            else {
                 float mem_scalar = 0.0f;
                 read_operand_value(src, 32, mem_scalar);
                 src_val = _mm_load_ss(&mem_scalar);
@@ -8000,7 +8102,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-        auto width = dst.size; 
+        auto width = dst.size;
 
         if (width != 128 && width != 256 && width != 512) {
             LOG(L"[!] Unsupported width in vpunpckhqdq: " << (int)width);
@@ -8038,7 +8140,7 @@ private:
                 return;
             }
         }
-        else { 
+        else {
             __m512i a, b;
             if (!read_operand_value<__m512i>(src1, width, a) ||
                 !read_operand_value<__m512i>(src2, width, b)) {
@@ -8061,7 +8163,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
-        auto width = dst.size; 
+        auto width = dst.size;
 
         if (width != 128 && width != 256 && width != 512) {
             LOG(L"[!] Unsupported width in vpackusdw: " << (int)width);
@@ -8100,7 +8202,7 @@ private:
             }
         }
 
-        else { 
+        else {
             __m512i a, b;
             if (!read_operand_value<__m512i>(src1, width, a) ||
                 !read_operand_value<__m512i>(src2, width, b)) {
@@ -8158,7 +8260,7 @@ private:
                 return;
             }
         }
-        else { 
+        else {
             __m512i a, b;
             if (!read_operand_value<__m512i>(src1, width, a) ||
                 !read_operand_value<__m512i>(src2, width, b)) {
@@ -8296,7 +8398,7 @@ private:
 
         for (int i = 0; i < 8; i++) {
             if (!(mask_arr[i] & 0x80000000)) {
-                continue; 
+                continue;
             }
 
             uint64_t base_val = 0;
@@ -8794,8 +8896,8 @@ private:
             cf = _mm256_testc_si256(a, b);
         }
 
-        g_regs.rflags.flags.ZF = zf ;
-        g_regs.rflags.flags.CF = cf ;
+        g_regs.rflags.flags.ZF = zf;
+        g_regs.rflags.flags.CF = cf;
         g_regs.rflags.flags.PF = 0;
         g_regs.rflags.flags.SF = 0;
         g_regs.rflags.flags.AF = 0;
@@ -9121,7 +9223,7 @@ private:
                 return;
             }
         }
-        else { 
+        else {
             __m256 a, b;
             if (!read_operand_value<__m256>(src1, width, a) ||
                 !read_operand_value<__m256>(src2, width, b)) {
@@ -9218,13 +9320,13 @@ private:
             << L" => High parts combined");
     }
     void emulate_cmpxchg16b(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0]; 
+        const auto& dst = instr->operands[0];
         if (dst.type != ZYDIS_OPERAND_TYPE_MEMORY) {
             LOG(L"[!] CMPXCHG16B requires memory operand");
             return;
         }
 
-   
+
         __m128i mem_val;
         if (!read_operand_value(dst, 128, mem_val)) {
             LOG(L"[!] Failed to read 128-bit memory for CMPXCHG16B");
@@ -9235,8 +9337,8 @@ private:
         _mm_store_si128((__m128i*)mem_qword, mem_val);
 
 
-        uint64_t mem_low = mem_qword[0]; 
-        uint64_t mem_high = mem_qword[1]; 
+        uint64_t mem_low = mem_qword[0];
+        uint64_t mem_high = mem_qword[1];
 
 
         uint64_t cmp_low = g_regs.rax.q;
@@ -9341,7 +9443,7 @@ private:
             LOG(3);
             g_regs.rflags.flags.OF = msb_after;
         }
-  
+
 
 
 
@@ -9449,13 +9551,13 @@ private:
     }
     void emulate_pause(const ZydisDisassembledInstruction*) {
         LOG_analyze(BLUE, "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
-        LOG( "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
+        LOG("[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
         is_paused = 1;
     }
     void emulate_movq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
-        const uint32_t width = 64; 
+        const uint32_t width = 64;
 
         // movq xmm, reg/mem
         if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
@@ -9469,7 +9571,7 @@ private:
                     auto& dst_xmm = g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0];
                     auto& src_xmm = g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0];
                     memcpy(dst_xmm.xmm, src_xmm.xmm, sizeof(uint64_t));
-                    memset(dst_xmm.xmm + 8, 0, 8); 
+                    memset(dst_xmm.xmm + 8, 0, 8);
                     LOG(L"[+] MOVQ xmm, xmm executed");
                     return;
                 }
@@ -9913,7 +10015,7 @@ private:
 
         count &= 0x3F;
 
-        if (count == 0) return; 
+        if (count == 0) return;
 
 
         uint64_t mask = (width == 64) ? ~0ULL : ((1ULL << width) - 1);
@@ -9972,8 +10074,8 @@ private:
         alignas(16) uint32_t tmp[4];
         _mm_store_si128((__m128i*)tmp, srcVal);
 
-        uint64_t lo = static_cast<uint64_t>(tmp[0]); 
-        uint64_t hi = static_cast<uint64_t>(tmp[1]); 
+        uint64_t lo = static_cast<uint64_t>(tmp[0]);
+        uint64_t hi = static_cast<uint64_t>(tmp[1]);
 
         __m128i result = _mm_set_epi64x(hi, lo);
 
@@ -9990,9 +10092,9 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-        uint32_t width = dst.size; 
+        uint32_t width = dst.size;
 
-        if (width == 128) { 
+        if (width == 128) {
             __m128i a, b;
             if (!read_operand_value(dst, 128, a) ||
                 !read_operand_value(src, 128, b)) {
@@ -10006,7 +10108,7 @@ private:
             }
             LOG(L"[+] PSUBQ (XMM) executed");
         }
-        else if (width == 256) { 
+        else if (width == 256) {
             __m256i a, b;
             if (!read_operand_value(dst, 256, a) ||
                 !read_operand_value(src, 256, b)) {
@@ -10020,7 +10122,7 @@ private:
             }
             LOG(L"[+] PSUBQ (YMM) executed");
         }
-        else if (width == 512) { 
+        else if (width == 512) {
             __m512i a, b;
             if (!read_operand_value(dst, 512, a) ||
                 !read_operand_value(src, 512, b)) {
@@ -10047,13 +10149,13 @@ private:
             return;
         }
 
-        const uint32_t src_bits = static_cast<uint32_t>(src.size); 
-        const uint32_t dst_bits = static_cast<uint32_t>(dst.size); 
-        const uint32_t src_bytes = src_bits / 8;                   
-        const uint32_t dst_elems = src_bytes;                  
+        const uint32_t src_bits = static_cast<uint32_t>(src.size);
+        const uint32_t dst_bits = static_cast<uint32_t>(dst.size);
+        const uint32_t src_bytes = src_bits / 8;
+        const uint32_t dst_elems = src_bytes;
 
 
-        alignas(64) uint8_t  in_bytes[32] = { 0 };   
+        alignas(64) uint8_t  in_bytes[32] = { 0 };
         if (src_bits == 256) {
             __m256i v;
             if (!read_operand_value(src, 256, v)) { LOG(L"[!] VPMOVZXBW read src (256) failed"); return; }
@@ -10067,23 +10169,23 @@ private:
         }
 
 
-        alignas(64) uint16_t out_words[32] = { 0 }; 
+        alignas(64) uint16_t out_words[32] = { 0 };
         for (uint32_t i = 0; i < dst_elems; ++i)
-            out_words[i] = static_cast<uint16_t>(in_bytes[i]); 
+            out_words[i] = static_cast<uint16_t>(in_bytes[i]);
 
         if (dst_bits == 128) {
-            __m128i r = _mm_loadu_si128((__m128i*)out_words); 
+            __m128i r = _mm_loadu_si128((__m128i*)out_words);
             if (!write_operand_value(dst, 128, r)) { LOG(L"[!] VPMOVZXBW write dst (128) failed"); return; }
             LOG(L"[+] VPMOVZXBW xmm <- m64/xmm-low executed");
         }
         else if (dst_bits == 256) {
-            __m256i r = _mm256_loadu_si256((__m256i*)out_words); 
+            __m256i r = _mm256_loadu_si256((__m256i*)out_words);
             if (!write_operand_value(dst, 256, r)) { LOG(L"[!] VPMOVZXBW write dst (256) failed"); return; }
             LOG(L"[+] VPMOVZXBW ymm <- xmm/m128 executed");
         }
-        else { 
+        else {
             __m512i r;
-            std::memcpy(&r, out_words, 64); 
+            std::memcpy(&r, out_words, 64);
             if (!write_operand_value(dst, 512, r)) { LOG(L"[!] VPMOVZXBW write dst (512) failed"); return; }
             LOG(L"[+] VPMOVZXBW zmm <- ymm/m256 executed");
         }
@@ -10097,11 +10199,11 @@ private:
             return;
         }
 
-        const uint32_t src_bits = static_cast<uint32_t>(src.size); 
-        const uint32_t dst_bits = static_cast<uint32_t>(dst.size); 
-        const uint32_t src_bytes = src_bits / 8;                  
-        const uint32_t src_elems = src_bytes / 2;                  
-        const uint32_t dst_elems = src_elems;                     
+        const uint32_t src_bits = static_cast<uint32_t>(src.size);
+        const uint32_t dst_bits = static_cast<uint32_t>(dst.size);
+        const uint32_t src_bytes = src_bits / 8;
+        const uint32_t src_elems = src_bytes / 2;
+        const uint32_t dst_elems = src_elems;
 
         alignas(64) uint8_t raw[32] = { 0 };
         if (src_bits == 256) {
@@ -10117,11 +10219,11 @@ private:
 
 
         const uint16_t* in_words = reinterpret_cast<const uint16_t*>(raw);
-        alignas(64) uint32_t out_dwords[16] = { 0 }; 
+        alignas(64) uint32_t out_dwords[16] = { 0 };
         for (uint32_t i = 0; i < dst_elems; ++i)
             out_dwords[i] = static_cast<uint32_t>(in_words[i]);
 
-    
+
         if (dst_bits == 128) {
             __m128i r = _mm_loadu_si128((__m128i*)out_dwords);
             if (!write_operand_value(dst, 128, r)) { LOG(L"[!] PMOVZXWD write dst (128) failed"); return; }
@@ -10191,7 +10293,7 @@ private:
         uint64_t return_address = g_regs.rip + instr->info.length;
 
         // Push return address to stack
-   
+
 
         // Determine call target
         const auto& op = instr->operands[0];
@@ -10214,7 +10316,7 @@ private:
             std::wcout << L"[!] Unsupported operand type for CALL" << std::endl;
             return;
         }
-     g_regs.rsp.q -= 8;
+        g_regs.rsp.q -= 8;
         WriteMemory(g_regs.rsp.q, &return_address, 8);
         g_regs.rip = target_rip;
         LOG(L"[+] CALL => 0x" << std::hex << g_regs.rip);
@@ -10272,7 +10374,7 @@ private:
             g_regs.rflags.flags.CF = 0;
         }
 
-    
+
         if (shift == 1) {
             bool msb_before = (old_val >> (width - 1)) & 1;
             bool msb_after = (result >> (width - 1)) & 1;
@@ -10284,12 +10386,12 @@ private:
 #endif
         }
 
- 
+
         g_regs.rflags.flags.ZF = (result == 0);
         g_regs.rflags.flags.SF = (result >> (width - 1)) & 1;
 
         uint8_t low_byte = static_cast<uint8_t>(result & 0xFF);
-        g_regs.rflags.flags.PF = !parity(low_byte); 
+        g_regs.rflags.flags.PF = !parity(low_byte);
 
 #if DB_ENABLED
         is_Auxiliary_Carry_FLAG_SKIP = 1;
@@ -10467,7 +10569,7 @@ private:
 
             uint64_t* p = reinterpret_cast<uint64_t*>(&ymm_val);
             p[0] = mem_val;
-            p[1] = 0;      
+            p[1] = 0;
 
 
             if (!write_operand_value<__m256>(dst, 256, ymm_val)) {
@@ -10514,7 +10616,7 @@ private:
             uint64_t* p_dst = reinterpret_cast<uint64_t*>(&ymm_dst);
             uint64_t* p_src = reinterpret_cast<uint64_t*>(&xmm_src);
 
-            p_dst[0] = p_src[0]; 
+            p_dst[0] = p_src[0];
 
 
             if (!write_operand_value<__m256>(dst, 256, ymm_dst)) {
@@ -10634,12 +10736,12 @@ private:
             << L" PF=" << g_regs.rflags.flags.PF);
     }
     void emulate_lahf(const ZydisDisassembledInstruction* instr) {
-        bool long_mode = (g_regs.rip >> 32) != 0; 
+        bool long_mode = (g_regs.rip >> 32) != 0;
 
         if (long_mode) {
             int cpu_info[4] = { 0 };
             __cpuidex(cpu_info, 0x80000001, 0);
-            bool lahf_supported = (cpu_info[2] & 0x1); 
+            bool lahf_supported = (cpu_info[2] & 0x1);
 
             if (!lahf_supported) {
                 LOG(L"[!] LAHF not supported in 64-bit mode (#UD)");
@@ -10652,7 +10754,7 @@ private:
         ah_value |= (g_regs.rflags.flags.ZF ? 0x40 : 0);
         ah_value |= (g_regs.rflags.flags.AF ? 0x10 : 0);
         ah_value |= (g_regs.rflags.flags.PF ? 0x04 : 0);
-        ah_value |= 0x02; 
+        ah_value |= 0x02;
         ah_value |= (g_regs.rflags.flags.CF ? 0x01 : 0);
 
         g_regs.rax.q &= 0xFFFFFFFFFFFF00FFULL;
@@ -10691,13 +10793,17 @@ private:
         is_cpuid = 1;
 #endif
 #if analyze_ENABLED
-        LOG_analyze(BRIGHT_MAGENTA, "CPUID leaf "<< "0x" << std::hex << g_regs.rax.q << "  at : 0x" << std::hex << g_regs.rip);
+        LOG_analyze(BRIGHT_MAGENTA, "CPUID leaf " << "0x" << std::hex << g_regs.rax.q << "  at : 0x" << std::hex << g_regs.rip);
 #endif
- #if AUTO_PATCH_HW
+#if AUTO_PATCH_HW
         if (patchSectionAddress != 0 && IsInPatchRange(g_regs.rip)) {
             is_patch_cpuid = 1;
         }
 #endif
+#if Save_Rva
+        addRVA(entries, g_regs.rip - moduleBase, RVAType::CPUID, filename);
+
+#endif 
         int cpu_info[4];
         int input_eax = static_cast<int>(g_regs.rax.q);
         int input_ecx = static_cast<int>(g_regs.rcx.q);
@@ -11057,8 +11163,8 @@ private:
         LOG(L"[+] XCHG executed");
     }
     void emulate_cvttsd2si(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  
-        const auto& src = instr->operands[1];  
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
 
         __m128d src_val;
         if (!read_operand_value(src, 128, src_val)) {
@@ -11068,7 +11174,7 @@ private:
 
         double src_double = src_val.m128d_f64[0];
 
-        uint8_t dst_size = dst.size; 
+        uint8_t dst_size = dst.size;
 
         int64_t result_int = 0;
 
@@ -11153,7 +11259,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-        uint32_t width = dst.size;  
+        uint32_t width = dst.size;
 
         if (width == 128) {
             __m128i v_dst, v_src;
@@ -11179,7 +11285,7 @@ private:
 #if defined(__AVX2__)
             __m256i result = _mm256_add_epi64(v_dst, v_src);
 #else
- 
+
             __m128i lo = _mm_add_epi64(_mm256_castsi256_si128(v_dst), _mm256_castsi256_si128(v_src));
             __m128i hi = _mm_add_epi64(_mm256_extracti128_si256(v_dst, 1), _mm256_extracti128_si256(v_src, 1));
             __m256i result = _mm256_set_m128i(hi, lo);
@@ -11197,7 +11303,7 @@ private:
         LOG(L"[+] PADDQ executed");
     }
     void emulate_xlatb(const ZydisDisassembledInstruction* instr) {
-        uint64_t table_base = g_regs.rbx.q; 
+        uint64_t table_base = g_regs.rbx.q;
         uint8_t al = g_regs.rax.l;
         uint8_t new_value;
 
@@ -11266,7 +11372,7 @@ private:
             int mask = _mm256_movemask_epi8(val);
 
             if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-   
+
                 set_register_value<uint64_t>(dst.reg.value, 0);
             }
 
@@ -11393,7 +11499,7 @@ private:
             << L", AF=" << g_regs.rflags.flags.AF);
     }
     void emulate_pmovmskb(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0]; 
+        const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
         uint32_t src_size_bits = src.size;
@@ -11716,8 +11822,8 @@ private:
         }
     }
     void emulate_bsr(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  
-        const auto& src = instr->operands[1];  
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
 
         uint64_t src_val = 0;
         if (!read_operand_value(src, 64, src_val)) {
@@ -11916,8 +12022,8 @@ private:
         for (size_t i = 0; i < res.mask.size() && i < 32; ++i)
             if (res.mask[i]) IntRes2 |= (1u << i);
 
-        g_regs.rflags.flags.CF = (IntRes2 != 0);       
-        g_regs.rflags.flags.OF = (IntRes2 & 1u) != 0; 
+        g_regs.rflags.flags.CF = (IntRes2 != 0);
+        g_regs.rflags.flags.OF = (IntRes2 & 1u) != 0;
         g_regs.rflags.flags.AF = 0;
         g_regs.rflags.flags.PF = 0;
 
@@ -11937,7 +12043,7 @@ private:
             g_regs.rflags.flags.ZF = hasZero ? 1 : 0;
         }
 
-   
+
         LOG(L"[+] PCMPISTRI executed -> idx=" << res.idx
             << ", ZF=" << g_regs.rflags.flags.ZF
             << ", CF=" << g_regs.rflags.flags.CF);
@@ -12096,7 +12202,7 @@ private:
             return;
         }
 
-        memcpy(oldYmm.xmm, &result, 32); 
+        memcpy(oldYmm.xmm, &result, 32);
         write_operand_value(dst, 256, oldYmm);
 
         LOG(L"[+] VROUNDPS executed (full 256-bit YMM updated)");
@@ -12137,10 +12243,10 @@ private:
                 LOG(L"[+] VPERMILPS (XMM var) executed");
             }
 
-        if (!write_operand_value(dst, 128, r)) {
-            LOG(L"[!] Failed to write dst in vpermilps (128)");
-            return;
-        }
+            if (!write_operand_value(dst, 128, r)) {
+                LOG(L"[!] Failed to write dst in vpermilps (128)");
+                return;
+            }
         }
         else if (width == 256) {
             __m256 a{};
@@ -12176,7 +12282,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-        uint32_t width = dst.size; 
+        uint32_t width = dst.size;
 
         if (width == 512) {
             __m512d val;
@@ -12267,7 +12373,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-        uint32_t width = dst.size; 
+        uint32_t width = dst.size;
 
         if (width == 512) {
             __m512d val;
@@ -12329,7 +12435,7 @@ private:
     void emulate_vextractf128(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
-        int lane = instr->operands[2].imm.value.u; 
+        int lane = instr->operands[2].imm.value.u;
 
         if (lane != 0 && lane != 1) {
             LOG(L"[!] Invalid lane for VEXTRACTF128: " << lane);
@@ -12370,7 +12476,7 @@ private:
         }
 
         if (width == 128) {
-            __m128 result = _mm_set1_ps(value); 
+            __m128 result = _mm_set1_ps(value);
             if (!write_operand_value(dst, 128, result)) {
                 LOG(L"[!] Failed to write destination operand for VBROADCASTSS (XMM)");
                 return;
@@ -12378,7 +12484,7 @@ private:
             LOG(L"[+] VBROADCASTSS executed (XMM), value=" << value);
         }
         else if (width == 256) {
-            __m256 result = _mm256_set1_ps(value); 
+            __m256 result = _mm256_set1_ps(value);
             if (!write_operand_value(dst, 256, result)) {
                 LOG(L"[!] Failed to write destination operand for VBROADCASTSS (YMM)");
                 return;
@@ -12393,24 +12499,24 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-        uint32_t width = dst.size; 
+        uint32_t width = dst.size;
 
         double value = 0.0;
-        if (!read_operand_value(src, 64, value)) { 
+        if (!read_operand_value(src, 64, value)) {
             LOG(L"[!] Failed to read source operand for VBROADCASTSD");
             return;
         }
 
         if (width == 256) {
-            __m256d result = _mm256_set1_pd(value); 
+            __m256d result = _mm256_set1_pd(value);
             if (!write_operand_value(dst, 256, result)) {
                 LOG(L"[!] Failed to write destination operand for VBROADCASTSD (YMM)");
                 return;
             }
             LOG(L"[+] VBROADCASTSD executed (YMM), value=" << value);
         }
-        else if (width == 128) { 
-            __m128d result = _mm_set1_pd(value); 
+        else if (width == 128) {
+            __m128d result = _mm_set1_pd(value);
             if (!write_operand_value(dst, 128, result)) {
                 LOG(L"[!] Failed to write destination operand for VBROADCASTSD (XMM)");
                 return;
@@ -12425,20 +12531,20 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-        uint32_t width = dst.size; 
+        uint32_t width = dst.size;
 
         if (width == 256) {
 
             if (src.size == 128) {
                 if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-            
+
                     __m128 src_val = get_register_value<__m128>(src.reg.value);
                     __m256 result = _mm256_broadcast_ps(&src_val);
                     write_operand_value(dst, 256, result);
                     LOG(L"[+] VBROADCASTF128 executed (float), source=XMM, dest=YMM");
                 }
                 else if (src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
-                 
+
                     __m128d src_val;
                     if (!read_operand_value(src, 128, src_val)) {
                         LOG(L"[!] Failed to read source operand for VBROADCASTF128 (memory)");
@@ -12710,8 +12816,8 @@ private:
                 return;
             }
 
-            __m128 and_mask = _mm_and_ps(v_dst, v_src);         
-            __m128 nand_mask = _mm_andnot_ps(v_dst, v_src);       
+            __m128 and_mask = _mm_and_ps(v_dst, v_src);
+            __m128 nand_mask = _mm_andnot_ps(v_dst, v_src);
 
 
             __m128i sign_mask = _mm_set1_epi32(0x80000000);
@@ -12737,8 +12843,8 @@ private:
                 return;
             }
 
-            __m256 and_mask = _mm256_and_ps(v_dst, v_src);    
-            __m256 nand_mask = _mm256_andnot_ps(v_dst, v_src);  
+            __m256 and_mask = _mm256_and_ps(v_dst, v_src);
+            __m256 nand_mask = _mm256_andnot_ps(v_dst, v_src);
 
             __m256i sign_mask = _mm256_set1_epi32(0x80000000);
 
@@ -12773,8 +12879,8 @@ private:
                 return;
             }
 
-            __m128d and_mask = _mm_and_pd(v_dst, v_src);       
-            __m128d nand_mask = _mm_andnot_pd(v_dst, v_src);     
+            __m128d and_mask = _mm_and_pd(v_dst, v_src);
+            __m128d nand_mask = _mm_andnot_pd(v_dst, v_src);
 
 
             __m128i sign_mask = _mm_set1_epi64x(0x8000000000000000ULL);
@@ -12799,8 +12905,8 @@ private:
                 return;
             }
 
-            __m256d and_mask = _mm256_and_pd(v_dst, v_src);      
-            __m256d nand_mask = _mm256_andnot_pd(v_dst, v_src); 
+            __m256d and_mask = _mm256_and_pd(v_dst, v_src);
+            __m256d nand_mask = _mm256_andnot_pd(v_dst, v_src);
 
             __m256i sign_mask = _mm256_set1_epi64x(0x8000000000000000ULL);
 
@@ -12883,7 +12989,7 @@ private:
 
             __m256d result;
             if (has_imm) {
-      
+
                 alignas(32) double vals[4];
                 _mm256_storeu_pd(vals, v_src);
 
@@ -12898,7 +13004,7 @@ private:
                 LOG(L"RESULT: [" << out[0] << " " << out[1] << " " << out[2] << " " << out[3] << "]");
             }
             else {
-             
+
                 __m256i control;
                 if (!read_operand_value<__m256i>(instr->operands[2], width, control)) {
                     LOG(L"[!] Failed to read control operand in VPERMILPD (256-bit)");
@@ -12997,7 +13103,7 @@ private:
                 case 2: out[0] = s2[0]; out[1] = s2[1]; break;
                 case 3: out[0] = s2[2]; out[1] = s2[3]; break;
                 }
-          
+
                 switch ((imm8 >> 4) & 0x3) {
                 case 0: out[2] = s1[0]; out[3] = s1[1]; break;
                 case 1: out[2] = s1[2]; out[3] = s1[3]; break;
@@ -13104,14 +13210,14 @@ private:
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(s2), v_src2);
 
             if (has_imm) {
-       
+
                 switch (imm8 & 0x3) {
                 case 0: out[0] = s1[0]; out[1] = s1[1]; out[2] = s1[2]; out[3] = s1[3]; break;
                 case 1: out[0] = s1[4]; out[1] = s1[5]; out[2] = s1[6]; out[3] = s1[7]; break;
                 case 2: out[0] = s2[0]; out[1] = s2[1]; out[2] = s2[2]; out[3] = s2[3]; break;
                 case 3: out[0] = s2[4]; out[1] = s2[5]; out[2] = s2[6]; out[3] = s2[7]; break;
                 }
-     
+
                 switch ((imm8 >> 4) & 0x3) {
                 case 0: out[4] = s1[0]; out[5] = s1[1]; out[6] = s1[2]; out[7] = s1[3]; break;
                 case 1: out[4] = s1[4]; out[5] = s1[5]; out[6] = s1[6]; out[7] = s1[7]; break;
@@ -13119,8 +13225,8 @@ private:
                 case 3: out[4] = s2[4]; out[5] = s2[5]; out[6] = s2[6]; out[7] = s2[7]; break;
                 }
 
-                if (imm8 & 0x8) { for (int i = 0; i < 4; i++) out[i] = 0; }   
-                if (imm8 & 0x80) { for (int i = 4; i < 8; i++) out[i] = 0; }  
+                if (imm8 & 0x8) { for (int i = 0; i < 4; i++) out[i] = 0; }
+                if (imm8 & 0x80) { for (int i = 4; i < 8; i++) out[i] = 0; }
             }
             else {
 
@@ -13177,10 +13283,10 @@ private:
         }
 
         alignas(32) int64_t temp[4];
-        _mm256_store_si256((__m256i*)temp, val1);   
+        _mm256_store_si256((__m256i*)temp, val1);
 
         alignas(16) int64_t s2[2];
-        _mm_store_si128((__m128i*)s2, val2);   
+        _mm_store_si128((__m128i*)s2, val2);
 
         if ((imm8 & 0x1) == 0) {
             temp[0] = s2[0];
@@ -13201,8 +13307,8 @@ private:
         LOG(L"[+] VINSERTI128 executed, imm=" << (int)imm8);
     }
     void emulate_vextracti128(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0]; 
-        const auto& src = instr->operands[1]; 
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
         uint32_t width = dst.size;
 
         if (width != 128) {
@@ -13267,7 +13373,7 @@ private:
     }
     template<typename T>
     uint64_t sign_extend(T value, unsigned bit_width) {
-        uint64_t mask = 1ULL << (bit_width - 1); 
+        uint64_t mask = 1ULL << (bit_width - 1);
         uint64_t v = static_cast<uint64_t>(value);
         return (v ^ mask) - mask;
     }
@@ -13424,13 +13530,13 @@ private:
         };
 
 
-        for ( auto& c : checks) {
+        for (auto& c : checks) {
             if (c.emu != c.real) {
                 std::wcout << L"[!] " << c.name << L" mismatch: Emulated=" << c.emu
                     << L", Actual=" << c.real << std::endl;
 
-                    DumpRegisters();
-                    exit(0);
+                DumpRegisters();
+                exit(0);
 
             }
         }
@@ -13468,9 +13574,9 @@ private:
                 std::wcout << L"[!] " << c.name << L" mismatch: Emulated=0x"
                     << std::hex << c.emu << L", Actual=0x" << c.real << std::endl;
 
-                    DumpRegisters();
-                    exit(0);
-                
+                DumpRegisters();
+                exit(0);
+
             }
         }
 
@@ -13680,7 +13786,7 @@ private:
 
                     }
 
-                    break; 
+                    break;
                 }
             }
             else {
@@ -13697,7 +13803,7 @@ private:
 
     bool ApplyInlineHook(const char* payloadBuffer, size_t payloadSize)
     {
-        const size_t jmpSize = 5; 
+        const size_t jmpSize = 5;
 
         if (!IsInPatchRange(g_regs.rip)) {
             std::wcerr << L"RIP is outside patchable range.\n";
@@ -13761,7 +13867,7 @@ private:
         trampoline.insert(trampoline.end(), payloadBuffer, payloadBuffer + payloadSize);
 
         size_t padCount = 8;
-        trampoline.insert(trampoline.end(), padCount, (char)0x90); 
+        trampoline.insert(trampoline.end(), padCount, (char)0x90);
 
 
         char jumpBack[jmpSize];
@@ -13781,8 +13887,8 @@ private:
 
         return true;
     }
-    
-      std::vector<uint8_t> BuildCpuidPatch(uint64_t rax, uint64_t rbx, uint64_t rcx, uint64_t rdx){
+
+    std::vector<uint8_t> BuildCpuidPatch(uint64_t rax, uint64_t rbx, uint64_t rcx, uint64_t rdx) {
         std::vector<uint8_t> code;
 
         auto emitMovRegImm64 = [&](uint8_t opcode, uint64_t imm) {
