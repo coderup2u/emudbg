@@ -45,7 +45,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 // Enable automatic patching of hardware checks
@@ -57,6 +57,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 #if Save_Rva
 std::pair<uint64_t, uint64_t>  ntdll_rang;
 std::string filename = "rva_list.txt";
+
 enum class RVAType {
     CPUID,
     KUSER_SHARED_DATA,
@@ -92,31 +93,33 @@ RVAType stringToType(const std::string& s) {
     return RVAType::UNKNOWN;
 }
 
+
 struct RVAEntry {
     uint64_t rva;
+    uint64_t size;   
     RVAType type;
 
     void save(std::ofstream& out) const {
-        out << std::hex << rva << " " << typeToString(type) << "\n";
+        out << std::hex << rva << " " << size << " " << typeToString(type) << "\n";
     }
 
     static RVAEntry load(std::ifstream& in) {
         RVAEntry entry;
         std::string typeStr;
-        in >> std::hex >> entry.rva >> typeStr;
+        in >> std::hex >> entry.rva >> entry.size >> typeStr;
         entry.type = stringToType(typeStr);
         return entry;
     }
 };
 
-bool addRVA(std::vector<RVAEntry>& entries, uint64_t rva, RVAType type, const std::string& filename) {
+bool addRVA(std::vector<RVAEntry>& entries, uint64_t rva, uint64_t size, RVAType type, const std::string& filename) {
     for (const auto& e : entries) {
         if (e.rva == rva) {
-            return false;
+            return false; 
         }
     }
 
-    RVAEntry newEntry{ rva, type };
+    RVAEntry newEntry{ rva, size, type };
     entries.push_back(newEntry);
 
     std::ofstream out(filename, std::ios::app);
@@ -126,8 +129,10 @@ bool addRVA(std::vector<RVAEntry>& entries, uint64_t rva, RVAType type, const st
 
     return true;
 }
+
 std::vector<RVAEntry> entries;
 #endif
+
 
 
 #if LOG_ENABLED
@@ -1466,6 +1471,7 @@ bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patch
 #endif
 
 uint64_t moduleBase = 0;
+uint64_t baseAddress = 0;
 // ----------------------- Break point helper ------------------
 
 bool SetHardwareBreakpointAuto(HANDLE hThread, uint64_t address) {
@@ -2106,6 +2112,7 @@ public:
             { ZYDIS_MNEMONIC_VEXTRACTI128, &CPU::emulate_vextracti128 },
             { ZYDIS_MNEMONIC_CLD, &CPU::emulate_cld },
             { ZYDIS_MNEMONIC_CVTSD2SS, &CPU::emulate_cvtsd2ss },
+            { ZYDIS_MNEMONIC_COMISD, &CPU::emulate_comisd },
 
 
         };
@@ -2225,7 +2232,8 @@ public:
                         AddExecutionEx((LPVOID)g_regs.rip, instr.length);
 
 #if Save_Rva
-                    addRVA(entries, g_regs.rip - moduleBase, RVAType::SYSCALL, filename);
+
+                   addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::SYSCALL, filename);
 #endif 
                     return g_regs.rip + instr.length;
                 }
@@ -3269,10 +3277,10 @@ private:
 
         // KUSER_SHARED_DATA
         if (address >= kuser_base && address < kuser_base + kuser_size) {
-            addRVA(entries, g_regs.rip - moduleBase, RVAType::KUSER_SHARED_DATA, filename);
+              addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::KUSER_SHARED_DATA, filename);
         }
         if (address >= ntdll_rang.first && address < ntdll_rang.second) {
-            addRVA(entries, g_regs.rip - moduleBase, RVAType::NTDLL, filename);
+              addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::NTDLL, filename);
         }
 #endif 
 #if analyze_ENABLED
@@ -4497,7 +4505,7 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 #if Save_Rva
-        addRVA(entries, g_regs.rip - moduleBase, RVAType::RCPSS, filename);
+          addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr->info.length, RVAType::RCPSS, filename);
 #endif
 #if analyze_ENABLED
 
@@ -5928,6 +5936,47 @@ private:
             << L", CF=" << g_regs.rflags.flags.CF
             << L", PF=" << g_regs.rflags.flags.PF);
     }
+    void emulate_comisd(const ZydisDisassembledInstruction* instr) {
+        const auto& dst = instr->operands[0]; 
+        const auto& src = instr->operands[1];  
+
+        __m128d dst_val, src_val;
+        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+            LOG(L"[!] Failed to read operands for COMISD");
+            return;
+        }
+
+        double a = dst_val.m128d_f64[0];
+        double b = src_val.m128d_f64[0];
+
+        bool unordered = std::isnan(a) || std::isnan(b);
+
+
+        g_regs.rflags.flags.ZF = 0;
+        g_regs.rflags.flags.CF = 0;
+        g_regs.rflags.flags.PF = 0;
+
+        if (unordered) {
+            g_regs.rflags.flags.PF = 1; 
+        }
+        else if (a == b) {
+            g_regs.rflags.flags.ZF = 1;
+        }
+        else if (a < b) {
+            g_regs.rflags.flags.CF = 1; 
+        }
+
+        LOG(L"[+] COMISD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
+            << ", "
+            << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
+                ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
+                : L"[mem]")
+            << L" => a=" << a << L", b=" << b
+            << L", ZF=" << g_regs.rflags.flags.ZF
+            << L", CF=" << g_regs.rflags.flags.CF
+            << L", PF=" << g_regs.rflags.flags.PF);
+    }
+
     void emulate_cdqe(const ZydisDisassembledInstruction* instr) {
 
         g_regs.rax.q = static_cast<int64_t>(static_cast<int32_t>(g_regs.rax.d));
@@ -6574,7 +6623,7 @@ private:
         uint8_t width = instr->info.operand_width;
 #if Save_Rva
         if (has_lock)
-            addRVA(entries, g_regs.rip - moduleBase, RVAType::CMPXCHG, filename);
+              addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase), instr->info.length, RVAType::CMPXCHG, filename);
 #endif
 #if analyze_ENABLED
         if (has_lock)
@@ -7238,7 +7287,7 @@ private:
         LOG_analyze(GREEN, "[+] xgetbv at [RIP:" << std::hex << g_regs.rip << "]");
 #endif
 #if Save_Rva
-        addRVA(entries, g_regs.rip - moduleBase, RVAType::XGETBV, filename);
+          addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::XGETBV, filename);
 
 #endif 
         uint64_t XCR;
@@ -10835,7 +10884,7 @@ private:
         }
 #endif
 #if Save_Rva
-        addRVA(entries, g_regs.rip - moduleBase, RVAType::CPUID, filename);
+          addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::CPUID, filename);
 
 #endif 
         int cpu_info[4];

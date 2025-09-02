@@ -125,7 +125,7 @@ int wmain(int argc, wchar_t* argv[]) {
     if (!CreateProcessW(exePath.c_str(), NULL, NULL, NULL, FALSE, DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi)) return 1;
 
     DEBUG_EVENT dbgEvent = {};
-    uint64_t baseAddress = 0;
+
 
     std::unordered_map<uint64_t, BreakpointInfo> breakpoints;
 
@@ -327,6 +327,7 @@ int wmain(int argc, wchar_t* argv[]) {
             if (bpType != BreakpointType::ExecGuard) {
                 CONTEXT ctx = { 0 };
                 ctx.ContextFlags = CONTEXT_FULL;
+
                 HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
 
                 if (hThread && GetThreadContext(hThread, &ctx)) {
