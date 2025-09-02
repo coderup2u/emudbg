@@ -36,7 +36,7 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
@@ -1471,6 +1471,16 @@ BOOL RemoveExecutionEx(LPVOID start, size_t size) {
         return FALSE;
     }
 }
+BOOL AddExecutionEx(LPVOID start, size_t size) {
+    DWORD oldProtect;
+    if (VirtualProtectEx(pi.hProcess, start, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        return TRUE;
+    }
+    else {
+        printf("VirtualProtectEx failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+}
 
 
 
@@ -2132,10 +2142,15 @@ public:
                 {
                     LOG_analyze( BLUE ,"[+] syscall in : " << g_regs.rip << " rax : " << g_regs.rax.q);
                     LOG("[+] syscall in : " << g_regs.rip << " rax : " << g_regs.rax.q);
+                    if (bpType == BreakpointType::ExecGuard)
+                        AddExecutionEx((LPVOID)g_regs.rip, instr.length);
+
                     return g_regs.rip + instr.length;
                 }
                 if (instr.mnemonic == ZYDIS_MNEMONIC_LSL)
                 {
+                    if (bpType == BreakpointType::ExecGuard)
+                        AddExecutionEx((LPVOID)g_regs.rip, instr.length);
                     return g_regs.rip + instr.length;
                 }
                 if (instr.mnemonic == ZYDIS_MNEMONIC_INT3)
@@ -5915,12 +5930,13 @@ private:
     }
     void emulate_scasb(const ZydisDisassembledInstruction* instr) {
         uint8_t mem_value;
+
         if (!ReadMemory(g_regs.rdi.q, &mem_value, sizeof(uint8_t))) {
             LOG(L"[!] Failed to read memory at RDI = 0x" << std::hex << g_regs.rdi.q);
             return;
         }
 
-        uint8_t al = static_cast<uint8_t>(g_regs.rax.q & 0xFF);
+        uint8_t al = g_regs.rax.l;
         uint8_t result = al - mem_value;
 
         g_regs.rflags.flags.ZF = (result == 0);
