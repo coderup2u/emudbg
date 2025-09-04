@@ -2408,6 +2408,8 @@ public:
 
         }
 
+        if (bpType == BreakpointType::ExecGuard)
+            RemoveExecutionEx_for_noexec_range();
         return -1;
     }
 
