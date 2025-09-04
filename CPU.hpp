@@ -45,7 +45,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 // Enable automatic patching of hardware checks
@@ -242,7 +242,7 @@ struct BreakpointInfo {
     int remainingHits;
 };
 
-BreakpointType bpType = BreakpointType::Software;
+BreakpointType bpType = BreakpointType::ExecGuard;
 std::vector<std::pair<uint64_t, uint64_t>> valid_ranges;
 #if FUll_user_MODE
 std::vector<std::pair<uint64_t, uint64_t>> system_modules_ranges;
@@ -2113,6 +2113,8 @@ public:
             { ZYDIS_MNEMONIC_CLD, &CPU::emulate_cld },
             { ZYDIS_MNEMONIC_CVTSD2SS, &CPU::emulate_cvtsd2ss },
             { ZYDIS_MNEMONIC_COMISD, &CPU::emulate_comisd },
+            { ZYDIS_MNEMONIC_SYSCALL, &CPU::emulate_syscall },
+            { ZYDIS_MNEMONIC_LSL, &CPU::emulate_lsl },
 
 
         };
@@ -2228,24 +2230,35 @@ public:
                 {
                     LOG_analyze(BLUE, "[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
                     LOG("[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
-                    if (bpType == BreakpointType::ExecGuard) {
-                        AddExecutionEx((LPVOID)g_regs.rip, instr.length);
-                    }
 
 
 #if Save_Rva
 
-                   addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::SYSCALL, filename);
+                    addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase), instr.length, RVAType::SYSCALL, filename);
 #endif 
-                    return g_regs.rip + instr.length;
+                    if (bpType == BreakpointType::ExecGuard) {
+                        AddExecutionEx((LPVOID)g_regs.rip, instr.length);
+                        SingleStep();
+                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
+                    }
+                    else {
+                      return g_regs.rip + instr.length;
+                    }
+
+                
                 }
                 if (instr.mnemonic == ZYDIS_MNEMONIC_LSL)
                 {
                     if (bpType == BreakpointType::ExecGuard) {
                         AddExecutionEx((LPVOID)g_regs.rip, instr.length);
+                        SingleStep();
+                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
+                    }
+                    else {
+                       return g_regs.rip + instr.length;
                     }
 
-                    return g_regs.rip + instr.length;
+      
                 }
                 if (instr.mnemonic == ZYDIS_MNEMONIC_INT3)
                 {
@@ -13446,8 +13459,11 @@ private:
         g_regs.rflags.flags.DF = 0;
         LOG(L"[+] CLD => DF = 0x0");
     }
+    void emulate_syscall(const ZydisDisassembledInstruction* instr) {
 
-
+    }
+    void emulate_lsl(const ZydisDisassembledInstruction* instr) {
+    }
 
 
 
@@ -13995,7 +14011,7 @@ private:
     }
 
 #endif
-    void SingleStep(HANDLE hProcess, HANDLE hThread) {
+    void SingleStep() {
         CONTEXT ctx = { 0 };
         ctx.ContextFlags = CONTEXT_FULL;
 

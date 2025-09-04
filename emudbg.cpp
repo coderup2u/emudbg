@@ -454,10 +454,7 @@ int wmain(int argc, wchar_t* argv[]) {
             }
 
 
-            if (bpType == BreakpointType::ExecGuard) {
-                RemoveExecutionEx((LPVOID)baseAddress, optionalHeader.SizeOfImage);
-            }
-            else {
+   
                 if (hasRVA && !waitForModule) {
                     uint64_t targetAddr = baseAddress + targetRVA;
                     if (bpType == BreakpointType::Hardware)
@@ -475,8 +472,10 @@ int wmain(int argc, wchar_t* argv[]) {
 
                     for (auto& rva : tlsRVAs) {
                         uint64_t addr = baseAddress + rva;
-
-                        if (bpType == BreakpointType::Hardware)
+                        if (bpType == BreakpointType::ExecGuard) {
+                            RemoveExecutionEx((LPVOID)baseAddress, optionalHeader.SizeOfImage);
+                        }
+                        else if (bpType == BreakpointType::Hardware)
                             SetHardwareBreakpointAuto(hThread, addr);
                         else {
                             BYTE orig;
@@ -489,7 +488,7 @@ int wmain(int argc, wchar_t* argv[]) {
             }
 
             break;
-        }
+        
 
         case EXCEPTION_DEBUG_EVENT: {
             auto& er = dbgEvent.u.Exception.ExceptionRecord;
