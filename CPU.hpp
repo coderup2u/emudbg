@@ -2331,8 +2331,28 @@ public:
                 if (!IsInEmulationRange(address)) {
 #if analyze_ENABLED
                     std::string fuction_name = GetExportedFunctionNameByAddress(address);
-                    if (!fuction_name.empty())
-                        LOG_analyze(CYAN, "Executing function: " << fuction_name.c_str() << " via [0x" << std::hex << g_regs.rip << "]");
+                    if (!fuction_name.empty()) {
+                     LOG_analyze(CYAN, "Executing function: " << fuction_name.c_str() << " via [0x" << std::hex << g_regs.rip << "]");
+                     if ( fuction_name == "VirtualAlloc") {
+
+                         if (g_regs.r9.q >= PAGE_EXECUTE && g_regs.r9.q <= PAGE_EXECUTE_WRITECOPY) {
+                             LOG_analyze(RED,
+                                 ">>> [VirtualAlloc] Program is requesting an EXECUTABLE memory region!"
+                                 << " (flProtect = 0x" << std::hex << g_regs.r9.q << ")"
+                                 << " via [0x" << std::hex << g_regs.rip << "]");
+
+                             if (bpType == BreakpointType::ExecGuard) {
+                                 LOG_analyze(YELLOW, ">>> [ExecGuard] Changing protection to PAGE_READWRITE (0x4)");
+                                 g_regs.r9.q = PAGE_READWRITE;  
+                                 ApplyRegistersToContext();
+                             }
+                         }
+
+
+                     }
+
+                    }
+                     
 
                     uint8_t buffer[16] = {};
                     if (ReadMemory(address, buffer, sizeof(buffer))) {
