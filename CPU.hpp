@@ -242,7 +242,7 @@ struct BreakpointInfo {
     int remainingHits;
 };
 
-BreakpointType bpType = BreakpointType::ExecGuard;
+BreakpointType bpType = BreakpointType::Software;
 std::vector<std::pair<uint64_t, uint64_t>> valid_ranges;
 #if FUll_user_MODE
 std::vector<std::pair<uint64_t, uint64_t>> system_modules_ranges;
