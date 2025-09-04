@@ -45,7 +45,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 // Enable automatic patching of hardware checks
@@ -2270,10 +2270,10 @@ public:
                 if (instr.mnemonic == ZYDIS_MNEMONIC_LSL)
                 {
                     if (bpType == BreakpointType::ExecGuard) {
-                        AddExecutionEx((LPVOID)g_regs.rip, instr.length);
+
                         ApplyRegistersToContext();
                         SingleStep();
-                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
+          
                         break;
                     }
                     else {
@@ -13790,8 +13790,8 @@ private:
 
         DEBUG_EVENT dbgEvent;
         while (true) {
-            if (!WaitForDebugEvent(&dbgEvent, INFINITE)) {
-                std::wcout << L"[!] WaitForDebugEvent failed" << std::endl;
+            if (!WaitForDebugEvent(&dbgEvent, 1000)) {
+                std::wcout << L"[!] WaitForDebugEvent failed at : 0x" << std::hex << g_regs.rip << std::endl;
                 break;
             }
 
@@ -14079,8 +14079,8 @@ private:
 
         DEBUG_EVENT dbgEvent;
         while (true) {
-            if (!WaitForDebugEvent(&dbgEvent, INFINITE)) {
-                std::wcout << L"[!] WaitForDebugEvent failed" << std::endl;
+            if (!WaitForDebugEvent(&dbgEvent, 1000)) {
+                std::wcout << L"[!] WaitForDebugEvent failed at : 0x" << std::hex << g_regs.rip << std::endl;
                 break;
             }
 
