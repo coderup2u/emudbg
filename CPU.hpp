@@ -133,7 +133,7 @@ bool addRVA(std::vector<RVAEntry>& entries, uint64_t rva, uint64_t size, RVAType
 std::vector<RVAEntry> entries;
 #endif
 
-
+std::pair<uint64_t, size_t>  noexec_range;
 
 #if LOG_ENABLED
 #define LOG(x) std::wcout << x << std::endl
@@ -1555,6 +1555,16 @@ BOOL RemoveExecutionEx(LPVOID start, size_t size) {
         return FALSE;
     }
 }
+BOOL RemoveExecutionEx_for_noexec_range() {
+    DWORD oldProtect;
+    if (VirtualProtectEx(pi.hProcess,(LPVOID) noexec_range.first, noexec_range.second, PAGE_READWRITE, &oldProtect)) {
+        return TRUE;
+    }
+    else {
+        printf("VirtualProtectEx failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+}
 BOOL AddExecutionEx(LPVOID start, size_t size) {
     DWORD oldProtect;
     if (VirtualProtectEx(pi.hProcess, start, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
@@ -1565,7 +1575,16 @@ BOOL AddExecutionEx(LPVOID start, size_t size) {
         return FALSE;
     }
 }
-
+BOOL AddExecutionEx_for_noexec_range() {
+    DWORD oldProtect;
+    if (VirtualProtectEx(pi.hProcess, (LPVOID)noexec_range.first, noexec_range.second, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        return TRUE;
+    }
+    else {
+        printf("VirtualProtectEx failed: %lu\n", GetLastError());
+        return FALSE;
+    }
+}
 
 
 bool SetBreakpoint(HANDLE hProcess, uint64_t address, BYTE& originalByte) {
@@ -2165,7 +2184,8 @@ public:
         //
         //        }
         //#endif
-
+        if (bpType == BreakpointType::ExecGuard)
+            AddExecutionEx_for_noexec_range();
         while (true) {
             //DumpRegisters();
             if (!ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, sizeof(buffer), &bytesRead) || bytesRead == 0) {
@@ -2237,10 +2257,8 @@ public:
                     addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase), instr.length, RVAType::SYSCALL, filename);
 #endif 
                     if (bpType == BreakpointType::ExecGuard) {
-                        AddExecutionEx((LPVOID)g_regs.rip, instr.length);
                         ApplyRegistersToContext();
                         SingleStep();
-                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
                         break;
                     }
                     else {
@@ -2267,7 +2285,17 @@ public:
                 if (instr.mnemonic == ZYDIS_MNEMONIC_INT3)
                 {
                     LOG_analyze(BLUE, "[+] INT3 at: 0x" << std::hex << g_regs.rip);
-                    return CPU_PAUSED;
+                    if (bpType == BreakpointType::ExecGuard) {
+
+                        ApplyRegistersToContext();
+                        SingleStep();
+
+                        break;
+                    }
+                    else {
+                        return CPU_PAUSED;
+                    }
+         
                 }
                 if (is_paused && instr.mnemonic == ZYDIS_MNEMONIC_JMP) {
                     is_paused = 0;
@@ -2333,23 +2361,6 @@ public:
                     std::string fuction_name = GetExportedFunctionNameByAddress(address);
                     if (!fuction_name.empty()) {
                      LOG_analyze(CYAN, "Executing function: " << fuction_name.c_str() << " via [0x" << std::hex << g_regs.rip << "]");
-                     if ( fuction_name == "VirtualAlloc") {
-
-                         if (g_regs.r9.q >= PAGE_EXECUTE && g_regs.r9.q <= PAGE_EXECUTE_WRITECOPY) {
-                             LOG_analyze(RED,
-                                 ">>> [VirtualAlloc] Program is requesting an EXECUTABLE memory region!"
-                                 << " (flProtect = 0x" << std::hex << g_regs.r9.q << ")"
-                                 << " via [0x" << std::hex << g_regs.rip << "]");
-
-                             if (bpType == BreakpointType::ExecGuard) {
-                                 LOG_analyze(YELLOW, ">>> [ExecGuard] Changing protection to PAGE_READWRITE (0x4)");
-                                 g_regs.r9.q = PAGE_READWRITE;  
-                                 ApplyRegistersToContext();
-                             }
-                         }
-
-
-                     }
 
                     }
                      
@@ -2365,8 +2376,11 @@ public:
                     }
 
 #endif
-                    if (bpType == BreakpointType::ExecGuard)
-                        return 0;
+                    if (bpType == BreakpointType::ExecGuard) {
+                     RemoveExecutionEx_for_noexec_range();
+                     return CPU_PAUSED;
+                    }
+                 
 #if FUll_user_MODE
                     if (IsInSystemRange(address))
 #endif
@@ -9677,6 +9691,13 @@ private:
         LOG_analyze(BLUE, "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
         LOG("[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
         is_paused = 1;
+        if (bpType == BreakpointType::ExecGuard)
+        {
+            AddExecutionEx((LPVOID)g_regs.rip, instr.length);
+            ApplyRegistersToContext();
+            SingleStep();
+            RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
+        }
     }
     void emulate_movq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];

@@ -279,7 +279,8 @@ int wmain(int argc, wchar_t* argv[]) {
                                 if (hThread) CloseHandle(hThread);
                             }
                             else if (!hasRVA && !waitForModule && bpType == BreakpointType::ExecGuard) {
-
+                                noexec_range.first = dllBase;
+                                noexec_range.second = dllSize;
                                 RemoveExecutionEx((LPVOID)dllBase, dllSize);
                             }
                         }
@@ -301,6 +302,8 @@ int wmain(int argc, wchar_t* argv[]) {
                         if (modEntryRVA) modTLSRVAs.push_back(modEntryRVA);
 
                         if (bpType == BreakpointType::ExecGuard) {
+                            noexec_range.first = moduleBase;
+                            noexec_range.second = optionalHeader.SizeOfImage;
                             RemoveExecutionEx((LPVOID)moduleBase, optionalHeader.SizeOfImage);
                         }
                         else {
@@ -473,6 +476,8 @@ int wmain(int argc, wchar_t* argv[]) {
                     for (auto& rva : tlsRVAs) {
                         uint64_t addr = baseAddress + rva;
                         if (bpType == BreakpointType::ExecGuard) {
+                            noexec_range.first = baseAddress;
+                            noexec_range.second = optionalHeader.SizeOfImage;
                             RemoveExecutionEx((LPVOID)baseAddress, optionalHeader.SizeOfImage);
                         }
                         else if (bpType == BreakpointType::Hardware)
