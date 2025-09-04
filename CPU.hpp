@@ -37,15 +37,15 @@ typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMas
 SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
 //LOG analyze 
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 //LOG everything
 #define LOG_ENABLED 0
 //test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 // Enable automatic patching of hardware checks
@@ -2356,9 +2356,9 @@ public:
                 address = g_regs.rip;
 
 
-
-#if analyze_ENABLED
                 if (!IsInEmulationRange(address)) {
+#if analyze_ENABLED
+
 
                     std::string fuction_name = GetExportedFunctionNameByAddress(address);
                     if (!fuction_name.empty()) {
