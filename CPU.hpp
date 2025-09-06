@@ -2287,10 +2287,10 @@ public:
                 if (instr.mnemonic == ZYDIS_MNEMONIC_LSL)
                 {
                     if (bpType == BreakpointType::ExecGuard) {
-
+                        AddExecutionEx((LPVOID)g_regs.rip, instr.length);
                         ApplyRegistersToContext();
                         SingleStep();
-          
+                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
                         break;
                     }
                     else {
