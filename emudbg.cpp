@@ -7,12 +7,10 @@ std::unordered_map<DWORD, CPU> cpuThreads;
 
 int wmain(int argc, wchar_t* argv[]) {
     if (argc < 2) {
-        wprintf(L"Usage: %s <exe_path> [-m target.dll] [-r <hex_rva>] [-b software|hardware|noexec] [-watch_section <section1 section2 ...|all>]\n", argv[0]);
+        wprintf(L"Usage: %s <exe_path> [-m target.dll] [-r <hex_rva>] [-b software|hardware]\n", argv[0]);
         wprintf(L"  Example:\n");
         wprintf(L"    %s program.exe -r 0x1234\n", argv[0]);
         wprintf(L"    %s program.exe -m ntdll.dll -r 0x500 -b hardware\n", argv[0]);
-        wprintf(L"    %s program.exe -m game.dll -watch_section .text .vm\n", argv[0]);
-        wprintf(L"    %s program.exe -watch_section all\n", argv[0]);
         return 1;
     }
 
@@ -54,24 +52,6 @@ int wmain(int argc, wchar_t* argv[]) {
                     return 1;
                 }
             }
-            else if (arg == L"-watch_section" && i + 1 < argc) {
-                hasWatchSection = true; 
-                while (i + 1 < argc) {
-                    std::wstring section = argv[i + 1];
-                    if (!section.empty() && section[0] == L'-') {
-                        break; 
-                    }
-                    ++i;
-                    if (section == L"all") {
-                        watchAllSections = true;
-                        watchSections.clear();
-                        break;
-                    }
-                    watchSections.push_back(section);
-                }
-            }
-
-
             else if ((arg == L"-r" || arg == L"-rva") && i + 1 < argc) {
                 std::wistringstream iss(argv[++i]);
                 iss >> std::hex >> targetRVA;
@@ -170,7 +150,6 @@ int wmain(int argc, wchar_t* argv[]) {
 #if AUTO_PATCH_HW
                     std::wstring lowerPatchTarget = patchModule;
                     std::transform(lowerPatchTarget.begin(), lowerPatchTarget.end(), lowerPatchTarget.begin(), ::towlower);
-
                     if ((lowerLoaded.find(lowerPatchTarget) != std::wstring::npos) && patchSectionAddress == 0 && !patchSection.empty()) {
                         uint64_t dllBase = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
                         patchModule_File_Path = lowerLoaded;
@@ -186,43 +165,51 @@ int wmain(int argc, wchar_t* argv[]) {
                             offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
                             ntHdr.FileHeader.SizeOfOptionalHeader;
 
+                        std::string patchSections(patchSection.begin(), patchSection.end());
+
                         for (DWORD i = 0; i < numberOfSections; i++) {
                             IMAGE_SECTION_HEADER secHdr{};
                             ReadProcessMemory(pi.hProcess,
                                 (LPCVOID)((uint64_t)ld.lpBaseOfDll + sectionOffset + i * sizeof(secHdr)),
                                 &secHdr, sizeof(secHdr), nullptr);
 
+                            size_t cmpLen = min(patchSections.size(), (size_t)IMAGE_SIZEOF_SHORT_NAME);
                             sections.push_back(secHdr);
-
-     
-                            char rawName[IMAGE_SIZEOF_SHORT_NAME + 1] = { 0 };
-                            memcpy(rawName, secHdr.Name, IMAGE_SIZEOF_SHORT_NAME);
-                            wchar_t wbuf[IMAGE_SIZEOF_SHORT_NAME + 1] = { 0 };
-                            mbstowcs(wbuf, rawName, IMAGE_SIZEOF_SHORT_NAME);
-                            std::wstring secName = wbuf;
-
-                            if (_wcsnicmp(secName.c_str(), patchSection.c_str(), patchSection.size()) == 0) {
+                            if (strncmp((char*)secHdr.Name, patchSections.c_str(), cmpLen) == 0) {
                                 patch_modules_ranges.first = dllBase;
                                 patch_modules_ranges.second = dllBase + ntHdr.OptionalHeader.SizeOfImage;
 
-                                patchSectionAddress = dllBase + secHdr.VirtualAddress;
-
-                           
-                                uint64_t secSize = std::max<uint64_t>(secHdr.Misc.VirtualSize, ntHdr.OptionalHeader.SectionAlignment);
-
+                                patchSectionAddress = (uint64_t)ld.lpBaseOfDll + secHdr.VirtualAddress;
                                 patch_section_ranges.first = patchSectionAddress;
-                                patch_section_ranges.second = patchSectionAddress + secSize;
-
-                                wprintf(L"%s section at: 0x%llx (size: 0x%llx)\n", patchSection.c_str(), patchSectionAddress, secSize);
+                                patch_section_ranges.second = patchSectionAddress + secHdr.Misc.VirtualSize;
+                                printf("%s section at: 0x%llx (size: 0x%x)\n",
+                                    patchSections.c_str(), patchSectionAddress, secHdr.Misc.VirtualSize);
                                 break;
                             }
                         }
                     }
 
 
-
 #endif
 
+                    if (hasRVA && waitForModule && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
+                        moduleBase = (uint64_t)ld.lpBaseOfDll;
+                        uint64_t targetAddr = moduleBase + targetRVA;
+
+                        HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
+                        if (hThread) {
+                            if (bpType == BreakpointType::Hardware)
+                                SetHardwareBreakpointAuto(hThread, targetAddr);
+                            else {
+                                BYTE orig;
+                                if (SetBreakpoint(pi.hProcess, targetAddr, orig))
+                                    breakpoints[targetAddr] = { orig, 1 };
+                            }
+                            CloseHandle(hThread);
+                        }
+                        LOG(L"[+] Breakpoint set on module '%s' at RVA 0x%llX -> 0x%llX",
+                            lowerTarget.c_str(), targetRVA, targetAddr);
+                    }
 
 #if Stealth_Mode_ENABLED
 
@@ -305,112 +292,34 @@ int wmain(int argc, wchar_t* argv[]) {
                         ntdll_rang.second = moduleBase + optionalHeader.SizeOfImage;
                     }
 #endif
-        
-                    if (waitForModule && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
+
+                    if (waitForModule && !hasRVA && lowerLoaded.find(lowerTarget) != std::wstring::npos) {
                         moduleBase = (uint64_t)ld.lpBaseOfDll;
+                        auto modEntryRVA = GetEntryPointRVA(buffer);
+                        auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
+                        valid_ranges.emplace_back(moduleBase, moduleBase + optionalHeader.SizeOfImage);
+                        HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
+                        if (modEntryRVA) modTLSRVAs.push_back(modEntryRVA);
 
-                        if (hasRVA) {
-                            uint64_t targetAddr = moduleBase + targetRVA;
-
-                            HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
-                            if (hThread) {
-                                if (bpType == BreakpointType::Hardware) {
-                                    SetHardwareBreakpointAuto(hThread, targetAddr);
-                                }
-                                else {
-                                    BYTE orig;
-                                    if (SetBreakpoint(pi.hProcess, targetAddr, orig))
-                                        breakpoints[targetAddr] = { orig, 1 };
-                                }
-                                CloseHandle(hThread);
-                            }
-
-                            LOG(L"[+] Breakpoint set on module '%s' at RVA 0x%llX -> 0x%llX",
-                                lowerTarget.c_str(), targetRVA, targetAddr);
+                        if (bpType == BreakpointType::ExecGuard) {
+                            noexec_range.first = moduleBase;
+                            noexec_range.second = optionalHeader.SizeOfImage;
+                            RemoveExecutionEx((LPVOID)moduleBase, optionalHeader.SizeOfImage);
                         }
                         else {
-                            auto modEntryRVA = GetEntryPointRVA(buffer);
-                            auto modTLSRVAs = GetTLSCallbackRVAs(buffer);
-                            valid_ranges.emplace_back(moduleBase, moduleBase + optionalHeader.SizeOfImage);
-
-                            HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, dbgEvent.dwThreadId);
-                            if (modEntryRVA) modTLSRVAs.push_back(modEntryRVA);
-
-                            if (bpType == BreakpointType::ExecGuard) {
-                                noexec_range.first = moduleBase;
-                                noexec_range.second = optionalHeader.SizeOfImage;
-                                RemoveExecutionEx((LPVOID)moduleBase, optionalHeader.SizeOfImage);
-                            }
-                            else {
-                                for (auto& rva : modTLSRVAs) {
-                                    uint64_t addr = moduleBase + rva;
-                                    if (bpType == BreakpointType::Hardware)
-                                        SetHardwareBreakpointAuto(hThread, addr);
-                                    else {
-                                        BYTE orig;
-                                        if (SetBreakpoint(pi.hProcess, addr, orig))
-                                            breakpoints[addr] = { orig, 1 };
-                                    }
-                                }
-                            }
-
-                            if (hThread) CloseHandle(hThread);
-                        }
-
-
-                        if (hasWatchSection) {
-                            uint64_t dllBase = reinterpret_cast<uint64_t>(ld.lpBaseOfDll);
-
-                            IMAGE_DOS_HEADER dosHdr{};
-                            ReadProcessMemory(pi.hProcess, ld.lpBaseOfDll, &dosHdr, sizeof(dosHdr), nullptr);
-
-                            IMAGE_NT_HEADERS64 ntHdr{};
-                            ReadProcessMemory(pi.hProcess,
-                                (LPCVOID)((uint64_t)ld.lpBaseOfDll + dosHdr.e_lfanew),
-                                &ntHdr, sizeof(ntHdr), nullptr);
-
-                            DWORD numberOfSections = ntHdr.FileHeader.NumberOfSections;
-                            DWORD sectionOffset = dosHdr.e_lfanew +
-                                offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
-                                ntHdr.FileHeader.SizeOfOptionalHeader;
-
-                            for (DWORD i = 0; i < numberOfSections; i++) {
-                                IMAGE_SECTION_HEADER secHdr{};
-                                ReadProcessMemory(pi.hProcess,
-                                    (LPCVOID)((uint64_t)ld.lpBaseOfDll + sectionOffset + i * sizeof(secHdr)),
-                                    &secHdr, sizeof(secHdr), nullptr);
-
-                  
-                                uint64_t start = dllBase + secHdr.VirtualAddress;
-                                uint64_t end = start + max((uint64_t)secHdr.Misc.VirtualSize, (uint64_t)ntHdr.OptionalHeader.SectionAlignment);
-
-                                char rawName[IMAGE_SIZEOF_SHORT_NAME + 1] = { 0 };
-                                memcpy(rawName, secHdr.Name, IMAGE_SIZEOF_SHORT_NAME);
-                                std::wstring wname;
-                                {
-                                    wchar_t buf[IMAGE_SIZEOF_SHORT_NAME + 1] = { 0 };
-                                    mbstowcs(buf, rawName, IMAGE_SIZEOF_SHORT_NAME);
-                                    wname = buf;
-                                }
-
-                                if (watchAllSections) {
-                                    sections_ranges.push_back({ start, end, wname });
-                                    printf("%ls section at: 0x%llx (size: 0x%llx)\n", wname.c_str(), start, end - start);
-                                }
+                            for (auto& rva : modTLSRVAs) {
+                                uint64_t addr = moduleBase + rva;
+                                if (bpType == BreakpointType::Hardware)
+                                    SetHardwareBreakpointAuto(hThread, addr);
                                 else {
-                                    for (auto& section_name : watchSections) {
-                                        if (_wcsicmp(wname.c_str(), section_name.c_str()) == 0) {
-                                            sections_ranges.push_back({ start, end, wname });
-                                            printf("%ls section at: 0x%llx (size: 0x%llx)\n", wname.c_str(), start, end - start);
-                                            break;
-                                        }
-                                    }
+                                    BYTE orig;
+                                    if (SetBreakpoint(pi.hProcess, addr, orig)) breakpoints[addr] = { orig, 1 };
                                 }
                             }
                         }
 
+                        if (hThread) CloseHandle(hThread);
                     }
-
                 }
             }
             if (ld.hFile) CloseHandle(ld.hFile);
@@ -580,56 +489,6 @@ int wmain(int argc, wchar_t* argv[]) {
                     }
                 }
 
-                if (hasWatchSection && !waitForModule) {
-                 
-
-                    IMAGE_DOS_HEADER dosHdr{};
-                    ReadProcessMemory(pi.hProcess, (LPCVOID)baseAddress, &dosHdr, sizeof(dosHdr), nullptr);
-
-                    IMAGE_NT_HEADERS64 ntHdr{};
-                    ReadProcessMemory(pi.hProcess,
-                        (LPCVOID)(baseAddress + dosHdr.e_lfanew),
-                        &ntHdr, sizeof(ntHdr), nullptr);
-
-                    DWORD numberOfSections = ntHdr.FileHeader.NumberOfSections;
-                    DWORD sectionOffset = dosHdr.e_lfanew +
-                        offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
-                        ntHdr.FileHeader.SizeOfOptionalHeader;
-
-                    for (DWORD i = 0; i < numberOfSections; i++) {
-                        IMAGE_SECTION_HEADER secHdr{};
-                        ReadProcessMemory(pi.hProcess,
-                            (LPCVOID)(baseAddress + sectionOffset + i * sizeof(secHdr)),
-                            &secHdr, sizeof(secHdr), nullptr);
-
-
-                        uint64_t start = baseAddress + secHdr.VirtualAddress;
-                        uint64_t end = start + max((uint64_t)secHdr.Misc.VirtualSize, (uint64_t)ntHdr.OptionalHeader.SectionAlignment);
-
-                        char rawName[IMAGE_SIZEOF_SHORT_NAME + 1] = { 0 };
-                        memcpy(rawName, secHdr.Name, IMAGE_SIZEOF_SHORT_NAME);
-                        std::wstring wname;
-                        {
-                            wchar_t buf[IMAGE_SIZEOF_SHORT_NAME + 1] = { 0 };
-                            mbstowcs(buf, rawName, IMAGE_SIZEOF_SHORT_NAME);
-                            wname = buf;
-                        }
-
-                        if (watchAllSections) {
-                            sections_ranges.push_back({ start, end, wname });
-                          
-                        }
-                        else {
-                            for (auto& section_name : watchSections) {
-                                if (_wcsicmp(wname.c_str(), section_name.c_str()) == 0) {
-                                    sections_ranges.push_back({ start, end, wname });
-                             
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
 
             }
 

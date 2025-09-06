@@ -45,7 +45,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //stealth 
 #define Stealth_Mode_ENABLED 1
 //emulate everything in dll user mode 
-#define FUll_user_MODE 0
+#define FUll_user_MODE 1
 //Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 // Enable automatic patching of hardware checks
@@ -1297,23 +1297,6 @@ inline void SetConsoleColor(ConsoleColor color) {
 #else
 #define LOG_analyze(color, x)
 #endif
-struct SectionRange {
-    uint64_t start;
-    uint64_t end;
-    std::wstring name;
-};
-std::vector<SectionRange> sections_ranges;
-bool hasWatchSection = false;
-std::vector<std::wstring> watchSections;
-bool watchAllSections = false;
-std::wstring GetSectionNameFromAddr(uint64_t addr) {
-    for (const auto& sec : sections_ranges) {
-        if (addr >= sec.start && addr < sec.end) {
-            return sec.name;
-        }
-    }
-    return L"";
-}
 
 #if AUTO_PATCH_HW
 const size_t patchOffsetFromInstruction = 4;
@@ -2354,24 +2337,6 @@ public:
                         {
                             g_regs.rip += instr.length;
                         }
-                        else if (hasWatchSection && IsInEmulationRange(address)) {
-                            std::wstring secName_here = GetSectionNameFromAddr(address);
-                            std::wstring secName_jump_to = GetSectionNameFromAddr(g_regs.rip);
-
-                            if (!(secName_here == secName_jump_to)) {
-                                 bool isWatched = watchAllSections ||
-                                (std::find(watchSections.begin(), watchSections.end(), secName_here) != watchSections.end()) ||
-                                (std::find(watchSections.begin(), watchSections.end(), secName_jump_to) != watchSections.end());
-
-                            if (isWatched) {
-                                LOG_analyze(BRIGHT_RED, L" >>>> [JMP]: From [" + secName_here + L"] To [" + secName_jump_to<<"] at [RIP :0x"<< std::hex << address<<"]");
-                        
-                            }
-                            }
-                           
-                            
-                        }
-
 
 
 #if DB_ENABLED
@@ -13825,9 +13790,8 @@ private:
 
         DEBUG_EVENT dbgEvent;
         while (true) {
-            if (!WaitForDebugEvent(&dbgEvent, 5000)) {
+            if (!WaitForDebugEvent(&dbgEvent, 1000)) {
                 std::wcout << L"[!] WaitForDebugEvent failed at : 0x" << std::hex << g_regs.rip << std::endl;
-                AddExecutionEx((LPVOID)g_regs.rip,instr.length);
                 break;
             }
 
@@ -14115,9 +14079,8 @@ private:
 
         DEBUG_EVENT dbgEvent;
         while (true) {
-            if (!WaitForDebugEvent(&dbgEvent, 5000)) {
+            if (!WaitForDebugEvent(&dbgEvent, 1000)) {
                 std::wcout << L"[!] WaitForDebugEvent failed at : 0x" << std::hex << g_regs.rip << std::endl;
-                AddExecutionEx((LPVOID)g_regs.rip, instr.length);
                 break;
             }
 
