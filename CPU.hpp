@@ -312,7 +312,7 @@ bool SetHardwareBreakpointAuto(HANDLE hThread, uint64_t address) {
 
   int slot = -1;
   for (int i = 0; i < 4; ++i) {
-    if ((ctx.Dr7 & (1 << (i * 2))) == 0) {
+    if ((ctx.Dr7 & (1ULL << (i * 2))) == 0) {
       slot = i;
       break;
     }
@@ -341,7 +341,7 @@ bool SetHardwareBreakpointAuto(HANDLE hThread, uint64_t address) {
   }
 
   // Enable the breakpoint locally
-  ctx.Dr7 |= (1 << (slot * 2)); // L0–L3 bits
+  ctx.Dr7 |= (1ULL << (slot * 2)); // L0–L3 bits
 
   // Set length = 1 byte (00), and type = execute (00)
   ctx.Dr7 &= ~(3 << (16 + slot * 4)); // Clear LEN bits
@@ -863,6 +863,7 @@ public:
         bool has_repne = (instr.attributes & ZYDIS_ATTRIB_HAS_REPNE) != 0;
         bool has_VEX = (instr.attributes & ZYDIS_ATTRIB_HAS_VEX) != 0;
 
+#if LOG_ENABLED
         if (has_lock)
           LOG(L"[~] LOCK prefix detected.");
         if (has_rep)
@@ -871,6 +872,8 @@ public:
           LOG(L"[~] REPNE prefix detected.");
         if (has_VEX)
           LOG(L"[~] VEX prefix detected.");
+#endif
+
         if (instr.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
           LOG_analyze(BLUE, "[+] syscall in : " << std::hex << g_regs.rip
                                                 << " rax : " << std::hex
@@ -2590,7 +2593,24 @@ private:
 
   // ------------------- Flag Helpers -------------------
 
+  bool parity(int value) {
+    value ^= value >> 16;
+    value ^= value >> 8;
+    value ^= value >> 4;
+    value &= 0xf;
+    return (0x6996 >> value) & 1;
+  }
+
   bool parity(uint8_t value) {
+    value ^= value >> 4;
+    value &= 0xf;
+    return (0x6996 >> value) & 1;
+  }
+
+  bool parity(uint64_t value) {
+    value ^= value >> 32;
+    value ^= value >> 16;
+    value ^= value >> 8;
     value ^= value >> 4;
     value &= 0xf;
     return (0x6996 >> value) & 1;
@@ -4939,7 +4959,7 @@ private:
       return;
     }
 
-    uint8_t src_size = src.size;
+    uint16_t src_size = src.size;
     if (src_size == 0) {
       LOG(L"[!] Source size is zero, cannot proceed");
       return;
@@ -5256,7 +5276,7 @@ private:
                          : 0;
     uint64_t value = base + index * mem.scale + mem.disp.value;
 
-    uint8_t width = dst.size;
+    uint16_t width = dst.size;
 
     if (!write_operand_value(dst, width, value)) {
       LOG(L"[!] Failed to write LEA result");
@@ -5351,13 +5371,13 @@ private:
     } else {
       switch (width) {
       case 8:
-        g_regs.rax.l = dstVal;
+        g_regs.rax.l = (uint8_t)dstVal;
         break;
       case 16:
-        g_regs.rax.w = dstVal;
+        g_regs.rax.w = (uint16_t)dstVal;
         break;
       case 32:
-        g_regs.rax.d = dstVal;
+        g_regs.rax.d = (uint32_t)dstVal;
         break;
       case 64:
         g_regs.rax.q = dstVal;
@@ -9867,7 +9887,7 @@ private:
 
     double src_double = src_val.m128d_f64[0];
 
-    uint8_t dst_size = dst.size;
+    uint16_t dst_size = dst.size;
 
     int64_t result_int = 0;
 
@@ -10577,7 +10597,7 @@ private:
       return;
     }
 
-    int rounding_mode = imm.imm.value.u; // bits 1:0 define mode
+    uint64_t rounding_mode = imm.imm.value.u; // bits 1:0 define mode
 
     __m128 result;
     switch (rounding_mode & 0x3) {
@@ -10822,7 +10842,7 @@ private:
   void emulate_roundps(const ZydisDisassembledInstruction *instr) {
     const auto &dst = instr->operands[0];
     const auto &src = instr->operands[1];
-    int roundMode = instr->operands[2].imm.value.u;
+    uint64_t roundMode = instr->operands[2].imm.value.u;
 
     __m128 val;
     if (!read_operand_value(src, 128, val)) {
@@ -10851,7 +10871,7 @@ private:
     };
 
     for (int i = 0; i < 4; i++)
-      tmp[i] = round_float(tmp[i], roundMode);
+      tmp[i] = round_float(tmp[i], (int)roundMode);
 
     __m128 result = _mm_loadu_ps(tmp);
 
@@ -10869,7 +10889,7 @@ private:
   void emulate_vroundps(const ZydisDisassembledInstruction *instr) {
     const auto &dst = instr->operands[0];
     const auto &src = instr->operands[1];
-    int roundMode = instr->operands[2].imm.value.u;
+    uint64_t roundMode = instr->operands[2].imm.value.u;
 
     __m256 val;
     if (!read_operand_value(src, 256, val)) {
@@ -10898,7 +10918,7 @@ private:
     };
 
     for (int i = 0; i < 8; i++)
-      tmp[i] = round_float(tmp[i], roundMode);
+      tmp[i] = round_float(tmp[i], (int)roundMode);
 
     __m256 result = _mm256_loadu_ps(tmp);
 
@@ -11141,7 +11161,7 @@ private:
   void emulate_vextractf128(const ZydisDisassembledInstruction *instr) {
     const auto &dst = instr->operands[0];
     const auto &src = instr->operands[1];
-    int lane = instr->operands[2].imm.value.u;
+    uint64_t lane = instr->operands[2].imm.value.u;
 
     if (lane != 0 && lane != 1) {
       LOG(L"[!] Invalid lane for VEXTRACTF128: " << lane);

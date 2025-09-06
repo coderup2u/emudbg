@@ -94,4 +94,6 @@ bool compareRegState(const RegState &a, const RegState &b) {
     if (!compareGPR(*gprs_a[i], *gprs_b[i]))
       return false;
   }
+
+  return true;
 }

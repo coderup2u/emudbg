@@ -392,7 +392,10 @@ int wmain(int argc, wchar_t *argv[]) {
                       std::wstring wname;
                       {
                           wchar_t buf[IMAGE_SIZEOF_SHORT_NAME + 1] = { 0 };
-                          mbstowcs(buf, rawName, IMAGE_SIZEOF_SHORT_NAME);
+                          size_t converted = 0;
+                          mbstowcs_s(&converted, buf,
+                                     IMAGE_SIZEOF_SHORT_NAME + 1, rawName,
+                                     IMAGE_SIZEOF_SHORT_NAME);
                           wname = buf;
                       }
 
@@ -625,7 +628,9 @@ int wmain(int argc, wchar_t *argv[]) {
               std::wstring wname;
               {
                   wchar_t buf[IMAGE_SIZEOF_SHORT_NAME + 1] = { 0 };
-                  mbstowcs(buf, rawName, IMAGE_SIZEOF_SHORT_NAME);
+                  size_t converted = 0;
+                  mbstowcs_s(&converted, buf, IMAGE_SIZEOF_SHORT_NAME + 1,
+                             rawName, IMAGE_SIZEOF_SHORT_NAME);
                   wname = buf;
               }
 
