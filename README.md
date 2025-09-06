@@ -83,7 +83,19 @@ emudbg.exe <exe_path> [-m target.dll] [-b software|hardware]
 | `<exe_path>`     | ✅       | Path to the target executable you want to debug                   |
 | `-m <target.dll>`| ❌       | Wait for a specific DLL to load before setting breakpoints        |
 | `-b <type>`      | ❌       | Breakpoint type: `software` (default) or `hardware` or `noexec`              |
-| `-r <rva>`      | ❌       | Set a breakpoint at a Relative Virtual Address (RVA) inside the target module.           |
+| `-r <rva>`      | ❌       | Set a breakpoint at a Relative Virtual Address (RVA) inside the target module. Note: Cannot be used together with -b noexec           |
+| `-watch_section <section1 section2 , all>`      | ❌       | Monitor execution in specific sections.|
+
+
+## 📌 Note on -watch_section:
+When using the -watch_section option, emudbg will log the sections being executed or accessed. For example, it will record transitions like from which section to which section the code jumps.
+Examples:
+```bash
+emudbg program.exe -m game.dll -watch_section .text .vm
+emudbg program.exe -watch_section all
+```
+
+
 
 ### 💡 Examples
 
