@@ -1,52 +1,43 @@
 #pragma once
 
 #include <windows.h>
-#include <iostream>
+#include <immintrin.h>
+#include <tchar.h>
+#include <tlhelp32.h>
+#include <winternl.h>
+#include <psapi.h>
+
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
-#include <vector>
-#include <unordered_map>
+#include <iostream>
 #include <map>
 #include <string>
-#include <filesystem>
-#include <cstdint>
+#include <unordered_map>
+#include <vector>
+
+#include "SaveRVA.hpp"
+#include "XState.hpp"
+#include "Structs.hpp"
+#include "PE.hpp"
+#include "Registers.hpp"
+
 #include "deps/zydis_wrapper.h"
-#include <tlhelp32.h>
-#include <tchar.h>
-#include <winternl.h>  
-#include <immintrin.h>
 
+#define CPU_PAUSED (0x1)
 
-#define CPU_PAUSED (0x1)      
-
-#define XSTATE_AVX                          (XSTATE_GSSE)
-#define XSTATE_MASK_AVX                     (XSTATE_MASK_GSSE)
-
-typedef DWORD64(WINAPI* PGETENABLEDXSTATEFEATURES)();
-PGETENABLEDXSTATEFEATURES pfnGetEnabledXStateFeatures = NULL;
-
-typedef BOOL(WINAPI* PINITIALIZECONTEXT)(PVOID Buffer, DWORD ContextFlags, PCONTEXT* Context, PDWORD ContextLength);
-PINITIALIZECONTEXT pfnInitializeContext = NULL;
-
-typedef BOOL(WINAPI* PGETXSTATEFEATURESMASK)(PCONTEXT Context, PDWORD64 FeatureMask);
-PGETXSTATEFEATURESMASK pfnGetXStateFeaturesMask = NULL;
-
-typedef PVOID(WINAPI* LOCATEXSTATEFEATURE)(PCONTEXT Context, DWORD FeatureId, PDWORD Length);
-LOCATEXSTATEFEATURE pfnLocateXStateFeature = NULL;
-
-typedef BOOL(WINAPI* SETXSTATEFEATURESMASK)(PCONTEXT Context, DWORD64 FeatureMask);
-SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 //------------------------------------------
-//LOG analyze 
+// LOG analyze
 #define analyze_ENABLED 1
-//LOG everything
+// LOG everything
 #define LOG_ENABLED 0
-//test with real cpu
+// test with real cpu
 #define DB_ENABLED 0
-//stealth 
+// stealth
 #define Stealth_Mode_ENABLED 1
-//emulate everything in dll user mode 
+// emulate everything in dll user mode
 #define FUll_user_MODE 1
-//Multithread_the_MultiThread
+// Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 // Enable automatic patching of hardware checks
 #define AUTO_PATCH_HW 0
@@ -54,86 +45,7 @@ SETXSTATEFEATURESMASK pfnSetXStateFeaturesMask = NULL;
 #define Save_Rva 0
 //------------------------------------------
 
-#if Save_Rva
-std::pair<uint64_t, uint64_t>  ntdll_rang;
-std::string filename = "rva_list.txt";
-
-enum class RVAType {
-    CPUID,
-    KUSER_SHARED_DATA,
-    SYSCALL,
-    NTDLL,
-    XGETBV,
-    RCPSS,
-    CMPXCHG,
-    UNKNOWN
-};
-
-std::string typeToString(RVAType type) {
-    switch (type) {
-    case RVAType::CPUID: return "CPUID";
-    case RVAType::KUSER_SHARED_DATA: return "KUSER_SHARED_DATA";
-    case RVAType::SYSCALL: return "SYSCALL";
-    case RVAType::NTDLL: return "NTDLL";
-    case RVAType::XGETBV: return "XGETBV";
-    case RVAType::RCPSS: return "RCPSS";
-    case RVAType::CMPXCHG: return "CMPXCHG";
-    default: return "UNKNOWN";
-    }
-}
-
-RVAType stringToType(const std::string& s) {
-    if (s == "CPUID") return RVAType::CPUID;
-    if (s == "KUSER_SHARED_DATA") return RVAType::KUSER_SHARED_DATA;
-    if (s == "SYSCALL") return RVAType::SYSCALL;
-    if (s == "NTDLL") return RVAType::NTDLL;
-    if (s == "XGETBV") return RVAType::XGETBV;
-    if (s == "RCPSS") return RVAType::RCPSS;
-    if (s == "CMPXCHG") return RVAType::CMPXCHG;
-    return RVAType::UNKNOWN;
-}
-
-
-struct RVAEntry {
-    uint64_t rva;
-    uint64_t size;   
-    RVAType type;
-
-    void save(std::ofstream& out) const {
-        out << std::hex << rva << " " << size << " " << typeToString(type) << "\n";
-    }
-
-    static RVAEntry load(std::ifstream& in) {
-        RVAEntry entry;
-        std::string typeStr;
-        in >> std::hex >> entry.rva >> entry.size >> typeStr;
-        entry.type = stringToType(typeStr);
-        return entry;
-    }
-};
-
-bool addRVA(std::vector<RVAEntry>& entries, uint64_t rva, uint64_t size, RVAType type, const std::string& filename) {
-    for (const auto& e : entries) {
-        if (e.rva == rva) {
-            return false; 
-        }
-    }
-
-    RVAEntry newEntry{ rva, size, type };
-    entries.push_back(newEntry);
-
-    std::ofstream out(filename, std::ios::app);
-    if (out.is_open()) {
-        newEntry.save(out);
-    }
-
-    return true;
-}
-
-std::vector<RVAEntry> entries;
-#endif
-
-std::pair<uint64_t, size_t>  noexec_range;
+std::pair<uint64_t, size_t> noexec_range;
 
 #if LOG_ENABLED
 #define LOG(x) std::wcout << x << std::endl
@@ -143,61 +55,6 @@ std::pair<uint64_t, size_t>  noexec_range;
 
 std::wstring exePath;
 
-union GPR {
-    uint64_t q;
-    uint32_t d;
-    uint16_t w;
-    struct { uint8_t l, h; };
-};
-union YMM {
-    struct {
-        uint8_t xmm[16];
-        uint8_t ymmh[16];
-    };
-    uint8_t full[32];
-};
-struct Flags {
-    uint64_t CF : 1;   // bit 0
-    uint64_t always1 : 1;
-    uint64_t PF : 1;   // bit 2
-    uint64_t reserved3 : 1;
-    uint64_t AF : 1;   // bit 4
-    uint64_t reserved5 : 1;
-    uint64_t ZF : 1;   // bit 6
-    uint64_t SF : 1;   // bit 7
-    uint64_t TF : 1;   // bit 8
-    uint64_t IF : 1;   // bit 9
-    uint64_t DF : 1;   // bit 10
-    uint64_t OF : 1;   // bit 11
-    uint64_t IOPL : 2; // bits 12-13
-    uint64_t NT : 1;   // bit 14
-    uint64_t reserved15 : 1;
-    uint64_t RF : 1;   // bit 16
-    uint64_t VM : 1;   // bit 17
-    uint64_t AC : 1;   // bit 18
-    uint64_t VIF : 1;  // bit 19
-    uint64_t VIP : 1;  // bit 20
-    uint64_t ID : 1;   // bit 21
-    uint64_t reserved22 : 42;
-};
-
-union RFlags {
-    uint64_t value;
-    Flags flags;
-};
-
-
-struct RegState {
-    GPR rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp;
-    GPR r8, r9, r10, r11, r12, r13, r14, r15;
-    uint64_t rip;
-    RFlags rflags;
-    YMM ymm[16];
-    uint64_t gs_base;
-    uint64_t fs_base;
-    uint64_t peb_address;
-    uint64_t peb_ldr;
-};
 enum class ThreadState {
     Unknown,
     Running,
@@ -208,1058 +65,14 @@ enum class ThreadState {
     Sleeping,
     Blocked,
 };
-#pragma pack(push, 1)
 
-#ifdef _WIN64  
-using GDTRStruct = struct {
-    uint16_t limit;
-    uint64_t base;
-};
-#else
-using GDTRStruct = struct {
-    uint16_t limit;
-    uint32_t base;
-};
-#endif
-
-#pragma pack(pop)
-
-GDTRStruct gdtr = {};
-
-extern "C" void read_mxcsr_asm(uint32_t* dest);
-extern "C" void fnstcw_asm(void* dest);
-extern "C" uint64_t __cdecl xgetbv_asm(uint32_t ecx);
-extern "C" uint64_t rdtsc_asm();
-extern "C" void ReadGDTR(GDTRStruct* gdtr);
-
-enum class BreakpointType {
-    Software,
-    Hardware,
-    ExecGuard
-};
+enum class BreakpointType { Software, Hardware, ExecGuard };
 struct BreakpointInfo {
     BYTE originalByte;
     int remainingHits;
 };
 
 BreakpointType bpType = BreakpointType::Software;
-std::vector<std::pair<uint64_t, uint64_t>> valid_ranges;
-#if FUll_user_MODE
-std::vector<std::pair<uint64_t, uint64_t>> system_modules_ranges;
-std::vector<std::wstring> system_modules_names;
-std::wstring GetSystemModuleNameFromAddress(uint64_t addr) {
-    for (size_t i = 0; i < system_modules_ranges.size(); ++i) {
-        auto [start, end] = system_modules_ranges[i];
-        if (addr >= start && addr < end) {
-            return system_modules_names[i];
-        }
-    }
-    return L"";
-}
-#endif
-PROCESS_INFORMATION pi;
-IMAGE_OPTIONAL_HEADER64 optionalHeader;
-#if Stealth_Mode_ENABLED
-uint64_t kernelBase_address;
-#endif
-
-#if analyze_ENABLED
-#include <psapi.h>  
-uint64_t ntdllBase = 0;
-bool is_first_time = 1;
-
-
-typedef enum _NT_PRODUCT_TYPE
-{
-    NtProductWinNt = 1,
-    NtProductLanManNt,
-    NtProductServer
-} NT_PRODUCT_TYPE, * PNT_PRODUCT_TYPE;
-
-
-
-typedef struct _KSYSTEM_TIME
-{
-    ULONG LowPart;
-    LONG High1Time;
-    LONG High2Time;
-} KSYSTEM_TIME, * PKSYSTEM_TIME;
-
-typedef enum _ALTERNATIVE_ARCHITECTURE_TYPE
-{
-    StandardDesign,
-    NEC98x86,
-    EndAlternatives
-} ALTERNATIVE_ARCHITECTURE_TYPE;
-#define PROCESSOR_FEATURE_MAX 64
-
-typedef struct _KUSER_SHARED_DATA {
-    ULONG                         TickCountLowDeprecated;
-    ULONG                         TickCountMultiplier;
-    KSYSTEM_TIME                  InterruptTime;
-    KSYSTEM_TIME                  SystemTime;
-    KSYSTEM_TIME                  TimeZoneBias;
-    USHORT                        ImageNumberLow;
-    USHORT                        ImageNumberHigh;
-    WCHAR                         NtSystemRoot[260];
-    ULONG                         MaxStackTraceDepth;
-    ULONG                         CryptoExponent;
-    ULONG                         TimeZoneId;
-    ULONG                         LargePageMinimum;
-    ULONG                         AitSamplingValue;
-    ULONG                         AppCompatFlag;
-    ULONGLONG                     RNGSeedVersion;
-    ULONG                         GlobalValidationRunlevel;
-    LONG                          TimeZoneBiasStamp;
-    ULONG                         NtBuildNumber;
-    NT_PRODUCT_TYPE               NtProductType;
-    BOOLEAN                       ProductTypeIsValid;
-    BOOLEAN                       Reserved0[1];
-    USHORT                        NativeProcessorArchitecture;
-    ULONG                         NtMajorVersion;
-    ULONG                         NtMinorVersion;
-    BOOLEAN                       ProcessorFeatures[PROCESSOR_FEATURE_MAX];
-    ULONG                         Reserved1;
-    ULONG                         Reserved3;
-    ULONG                         TimeSlip;
-    ALTERNATIVE_ARCHITECTURE_TYPE AlternativeArchitecture;
-    ULONG                         BootId;
-    LARGE_INTEGER                 SystemExpirationDate;
-    ULONG                         SuiteMask;
-    BOOLEAN                       KdDebuggerEnabled;
-    union {
-        UCHAR MitigationPolicies;
-        struct {
-            UCHAR NXSupportPolicy : 2;
-            UCHAR SEHValidationPolicy : 2;
-            UCHAR CurDirDevicesSkippedForDlls : 2;
-            UCHAR Reserved : 2;
-        };
-    };
-    USHORT                        CyclesPerYield;
-    ULONG                         ActiveConsoleId;
-    ULONG                         DismountCount;
-    ULONG                         ComPlusPackage;
-    ULONG                         LastSystemRITEventTickCount;
-    ULONG                         NumberOfPhysicalPages;
-    BOOLEAN                       SafeBootMode;
-    union {
-        UCHAR VirtualizationFlags;
-        struct {
-            UCHAR ArchStartedInEl2 : 1;
-            UCHAR QcSlIsSupported : 1;
-        };
-    };
-    UCHAR                         Reserved12[2];
-    union {
-        ULONG SharedDataFlags;
-        struct {
-            ULONG DbgErrorPortPresent : 1;
-            ULONG DbgElevationEnabled : 1;
-            ULONG DbgVirtEnabled : 1;
-            ULONG DbgInstallerDetectEnabled : 1;
-            ULONG DbgLkgEnabled : 1;
-            ULONG DbgDynProcessorEnabled : 1;
-            ULONG DbgConsoleBrokerEnabled : 1;
-            ULONG DbgSecureBootEnabled : 1;
-            ULONG DbgMultiSessionSku : 1;
-            ULONG DbgMultiUsersInSessionSku : 1;
-            ULONG DbgStateSeparationEnabled : 1;
-            ULONG SpareBits : 21;
-        } DUMMYSTRUCTNAME2;
-    } DUMMYUNIONNAME2;
-    ULONG                         DataFlagsPad[1];
-    ULONGLONG                     TestRetInstruction;
-    LONGLONG                      QpcFrequency;
-    ULONG                         SystemCall;
-    ULONG                         Reserved2;
-    ULONGLONG                     FullNumberOfPhysicalPages;
-    ULONGLONG                     SystemCallPad[1];
-    union {
-        KSYSTEM_TIME TickCount;
-        ULONG64      TickCountQuad;
-        struct {
-            ULONG ReservedTickCountOverlay[3];
-            ULONG TickCountPad[1];
-        } DUMMYSTRUCTNAME;
-    } DUMMYUNIONNAME3;
-    ULONG                         Cookie;
-    ULONG                         CookiePad[1];
-    LONGLONG                      ConsoleSessionForegroundProcessId;
-    ULONGLONG                     TimeUpdateLock;
-    ULONGLONG                     BaselineSystemTimeQpc;
-    ULONGLONG                     BaselineInterruptTimeQpc;
-    ULONGLONG                     QpcSystemTimeIncrement;
-    ULONGLONG                     QpcInterruptTimeIncrement;
-    UCHAR                         QpcSystemTimeIncrementShift;
-    UCHAR                         QpcInterruptTimeIncrementShift;
-    USHORT                        UnparkedProcessorCount;
-    ULONG                         EnclaveFeatureMask[4];
-    ULONG                         TelemetryCoverageRound;
-    USHORT                        UserModeGlobalLogger[16];
-    ULONG                         ImageFileExecutionOptions;
-    ULONG                         LangGenerationCount;
-    ULONGLONG                     Reserved4;
-    ULONGLONG                     InterruptTimeBias;
-    ULONGLONG                     QpcBias;
-    ULONG                         ActiveProcessorCount;
-    UCHAR                         ActiveGroupCount;
-    UCHAR                         Reserved9;
-    union {
-        USHORT QpcData;
-        struct {
-            UCHAR QpcBypassEnabled;
-            UCHAR QpcReserved;
-        };
-    };
-    LARGE_INTEGER                 TimeZoneBiasEffectiveStart;
-    LARGE_INTEGER                 TimeZoneBiasEffectiveEnd;
-    XSTATE_CONFIGURATION          XState;
-    KSYSTEM_TIME                  FeatureConfigurationChangeStamp;
-    ULONG                         Spare;
-    ULONG64                       UserPointerAuthMask;
-    XSTATE_CONFIGURATION          XStateArm64;
-    ULONG                         Reserved10[210];
-} KUSER_SHARED_DATA, * PKUSER_SHARED_DATA;
-
-extern KUSER_SHARED_DATA g_kuser_shared_data;
-
-
-struct OffsetName {
-    size_t offset;
-    const char* name;
-};
-
-#define FIELD_INFO(field) {offsetof(KUSER_SHARED_DATA, field), #field}
-
-OffsetName kuser_offsets[] = {
-    FIELD_INFO(TickCountLowDeprecated),
-    FIELD_INFO(TickCountMultiplier),
-    FIELD_INFO(InterruptTime),
-    FIELD_INFO(SystemTime),
-    FIELD_INFO(TimeZoneBias),
-    FIELD_INFO(ImageNumberLow),
-    FIELD_INFO(ImageNumberHigh),
-    FIELD_INFO(NtSystemRoot),
-    FIELD_INFO(MaxStackTraceDepth),
-    FIELD_INFO(CryptoExponent),
-    FIELD_INFO(TimeZoneId),
-    FIELD_INFO(LargePageMinimum),
-    FIELD_INFO(AitSamplingValue),
-    FIELD_INFO(AppCompatFlag),
-    FIELD_INFO(RNGSeedVersion),
-    FIELD_INFO(GlobalValidationRunlevel),
-    FIELD_INFO(TimeZoneBiasStamp),
-    FIELD_INFO(NtBuildNumber),
-    FIELD_INFO(NtProductType),
-    FIELD_INFO(ProductTypeIsValid),
-    FIELD_INFO(NativeProcessorArchitecture),
-    FIELD_INFO(NtMajorVersion),
-    FIELD_INFO(NtMinorVersion),
-    FIELD_INFO(ProcessorFeatures),
-    FIELD_INFO(Reserved1),
-    FIELD_INFO(Reserved3),
-    FIELD_INFO(TimeSlip),
-    FIELD_INFO(AlternativeArchitecture),
-    FIELD_INFO(BootId),
-    FIELD_INFO(SystemExpirationDate),
-    FIELD_INFO(SuiteMask),
-    FIELD_INFO(KdDebuggerEnabled),
-    FIELD_INFO(MitigationPolicies),
-    FIELD_INFO(CyclesPerYield),
-    FIELD_INFO(ActiveConsoleId),
-    FIELD_INFO(DismountCount),
-    FIELD_INFO(ComPlusPackage),
-    FIELD_INFO(LastSystemRITEventTickCount),
-    FIELD_INFO(NumberOfPhysicalPages),
-    FIELD_INFO(SafeBootMode),
-    FIELD_INFO(VirtualizationFlags),
-    FIELD_INFO(Reserved12),
-    FIELD_INFO(SharedDataFlags),
-    FIELD_INFO(DataFlagsPad),
-    FIELD_INFO(TestRetInstruction),
-    FIELD_INFO(QpcFrequency),
-    FIELD_INFO(SystemCall),
-    FIELD_INFO(Reserved2),
-    FIELD_INFO(FullNumberOfPhysicalPages),
-    FIELD_INFO(SystemCallPad),
-    FIELD_INFO(TickCount),
-    FIELD_INFO(Cookie),
-    FIELD_INFO(CookiePad),
-    FIELD_INFO(ConsoleSessionForegroundProcessId),
-    FIELD_INFO(TimeUpdateLock),
-    FIELD_INFO(BaselineSystemTimeQpc),
-    FIELD_INFO(BaselineInterruptTimeQpc),
-    FIELD_INFO(QpcSystemTimeIncrement),
-    FIELD_INFO(QpcInterruptTimeIncrement),
-    FIELD_INFO(QpcSystemTimeIncrementShift),
-    FIELD_INFO(QpcInterruptTimeIncrementShift),
-    FIELD_INFO(UnparkedProcessorCount),
-    FIELD_INFO(EnclaveFeatureMask),
-    FIELD_INFO(TelemetryCoverageRound),
-    FIELD_INFO(UserModeGlobalLogger),
-    FIELD_INFO(ImageFileExecutionOptions),
-    FIELD_INFO(LangGenerationCount),
-    FIELD_INFO(Reserved4),
-    FIELD_INFO(InterruptTimeBias),
-    FIELD_INFO(QpcBias),
-    FIELD_INFO(ActiveProcessorCount),
-    FIELD_INFO(ActiveGroupCount),
-    FIELD_INFO(Reserved9),
-    FIELD_INFO(QpcData),
-    FIELD_INFO(TimeZoneBiasEffectiveStart),
-    FIELD_INFO(TimeZoneBiasEffectiveEnd),
-    FIELD_INFO(XState),
-    FIELD_INFO(FeatureConfigurationChangeStamp),
-    FIELD_INFO(Spare),
-    FIELD_INFO(UserPointerAuthMask),
-    FIELD_INFO(XStateArm64),
-    FIELD_INFO(Reserved10),
-};
-std::string get_kuser_field_name(uint64_t offset) {
-    std::string result = "Unknown";
-    for (size_t i = 0; i < sizeof(kuser_offsets) / sizeof(kuser_offsets[0]); ++i) {
-        if (offset == kuser_offsets[i].offset) {
-            return kuser_offsets[i].name;
-        }
-        else if (offset > kuser_offsets[i].offset) {
-            std::stringstream ss;
-            ss << kuser_offsets[i].name << " + 0x" << std::hex << (offset - kuser_offsets[i].offset);
-            result = ss.str();
-        }
-    }
-    return result;
-}
-bool compareGPR(const GPR& a, const GPR& b) {
-    return a.q == b.q;
-}
-bool compareRegState(const RegState& a, const RegState& b) {
-    const GPR* gprs_a[] = { &a.rbx, &a.rcx, &a.rdx, &a.rsi, &a.rdi, &a.rbp,
-                            &a.r8, &a.r9, &a.r10, &a.r11, &a.r12, &a.r13, &a.r14, &a.r15 };
-    const GPR* gprs_b[] = { &b.rbx, &b.rcx, &b.rdx, &b.rsi, &b.rdi, &b.rbp,
-                            &b.r8, &b.r9, &b.r10, &b.r11, &b.r12, &b.r13, &b.r14, &b.r15 };
-
-    for (int i = 0; i < 14; ++i) {
-        if (!compareGPR(*gprs_a[i], *gprs_b[i]))
-            return false;
-    }
-}
-//RegState g_regs_first_time;
-static const std::map<uint64_t, std::string> ntdll_directory_offsets = {
-    {0x00000070, "Export Directory RVA"},
-    {0x00000078, "Export Directory Size"},
-
-    {0x00000080, "Import Directory RVA"},
-    {0x00000088, "Import Directory Size"},
-
-    {0x00000090, "Resource Directory RVA"},
-    {0x00000098, "Resource Directory Size"},
-
-    {0x000000A0, "Exception Directory RVA"},
-    {0x000000A8, "Exception Directory Size"},
-
-    {0x000000B0, "Security Directory RVA"},
-    {0x000000B8, "Security Directory Size"},
-
-    {0x000000C0, "Relocation Directory RVA"},
-    {0x000000C8, "Relocation Directory Size"},
-
-    {0x000000D0, "Debug Directory RVA"},
-    {0x000000D8, "Debug Directory Size"},
-
-    {0x000000E0, "Architecture Directory RVA"},
-    {0x000000E8, "Architecture Directory Size"},
-
-    {0x000000F0, "Global Ptr RVA"},
-    {0x000000F8, "Global Ptr Size"},
-
-    {0x00000100, "TLS Directory RVA"},
-    {0x00000108, "TLS Directory Size"},
-
-    {0x00000110, "Load Config Directory RVA"},
-    {0x00000118, "Load Config Directory Size"},
-
-    {0x00000120, "Bound Import Directory RVA"},
-    {0x00000128, "Bound Import Directory Size"},
-
-    {0x00000130, "IAT Directory RVA"},
-    {0x00000138, "IAT Directory Size"},
-
-    {0x00000140, "Delay Import Descriptor RVA"},
-    {0x00000148, "Delay Import Descriptor Size"},
-
-    {0x00000150, "CLR Runtime Header RVA"},
-    {0x00000158, "CLR Runtime Header Size"},
-
-    {0x00000160, "Reserved (Zero) RVA"},
-    {0x00000168, "Reserved (Zero) Size"},
-};
-
-struct ExportedFunctionInfo {
-    std::unordered_map<uint64_t, std::string> addrToName;
-};
-std::unordered_map<uint64_t, ExportedFunctionInfo> exportsCache_;
-DWORD RvaToOffset(LPVOID fileBase, DWORD rva) {
-    auto dos = reinterpret_cast<PIMAGE_DOS_HEADER>(fileBase);
-    auto nt = reinterpret_cast<PIMAGE_NT_HEADERS>((BYTE*)fileBase + dos->e_lfanew);
-    auto section = IMAGE_FIRST_SECTION(nt);
-
-    for (int i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
-        DWORD start = section->VirtualAddress;
-        DWORD size = section->Misc.VirtualSize;
-        if (rva >= start && rva < start + size) {
-            return section->PointerToRawData + (rva - start);
-        }
-    }
-    return 0;
-}
-std::string GetExportedFunctionNameByAddress(uint64_t addr) {
-    HMODULE hMods[1024];
-    DWORD cbNeeded;
-
-    if (!EnumProcessModules(pi.hProcess, hMods, sizeof(hMods), &cbNeeded))
-        return "";
-
-    for (DWORD i = 0; i < cbNeeded / sizeof(HMODULE); ++i) {
-        MODULEINFO modInfo;
-        if (!GetModuleInformation(pi.hProcess, hMods[i], &modInfo, sizeof(modInfo)))
-            continue;
-
-        uint64_t base = reinterpret_cast<uint64_t>(modInfo.lpBaseOfDll);
-        uint64_t end = base + modInfo.SizeOfImage;
-        if (addr < base || addr >= end)
-            continue;
-
-        // Check if cache exists
-        auto it = exportsCache_.find(base);
-        if (it != exportsCache_.end()) {
-            const auto& map = it->second.addrToName;
-            auto found = map.find(addr);
-            if (found != map.end())
-                return found->second;
-        }
-
-        // Load the module from disk
-        char path[MAX_PATH];
-        if (!GetModuleFileNameExA(pi.hProcess, hMods[i], path, MAX_PATH))
-            continue;
-
-        HANDLE hFile = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-        if (hFile == INVALID_HANDLE_VALUE)
-            continue;
-
-        HANDLE hMap = CreateFileMappingA(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
-        if (!hMap) {
-            CloseHandle(hFile);
-            continue;
-        }
-
-        LPVOID baseMap = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
-        if (!baseMap) {
-            CloseHandle(hMap);
-            CloseHandle(hFile);
-            continue;
-        }
-
-        auto dos = reinterpret_cast<PIMAGE_DOS_HEADER>(baseMap);
-        auto nt = reinterpret_cast<PIMAGE_NT_HEADERS>((BYTE*)baseMap + dos->e_lfanew);
-
-        DWORD exportRVA = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
-        if (!exportRVA) {
-            UnmapViewOfFile(baseMap);
-            CloseHandle(hMap);
-            CloseHandle(hFile);
-            continue;
-        }
-
-        auto exportDir = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>((BYTE*)baseMap + RvaToOffset(baseMap, exportRVA));
-        DWORD* functions = (DWORD*)((BYTE*)baseMap + RvaToOffset(baseMap, exportDir->AddressOfFunctions));
-        DWORD* names = (DWORD*)((BYTE*)baseMap + RvaToOffset(baseMap, exportDir->AddressOfNames));
-        WORD* ordinals = (WORD*)((BYTE*)baseMap + RvaToOffset(baseMap, exportDir->AddressOfNameOrdinals));
-
-        ExportedFunctionInfo info;
-
-        for (DWORD j = 0; j < exportDir->NumberOfFunctions; ++j) {
-            uint64_t funcAddr = base + functions[j];
-            std::string funcName;
-
-            for (DWORD k = 0; k < exportDir->NumberOfNames; ++k) {
-                if (ordinals[k] == j) {
-                    const char* name = (const char*)baseMap + RvaToOffset(baseMap, names[k]);
-                    funcName = name;
-                    break;
-                }
-            }
-
-            info.addrToName[funcAddr] = funcName;
-        }
-
-        // Clean up
-        UnmapViewOfFile(baseMap);
-        CloseHandle(hMap);
-        CloseHandle(hFile);
-
-        exportsCache_[base] = std::move(info);
-
-        auto found = exportsCache_[base].addrToName.find(addr);
-        if (found != exportsCache_[base].addrToName.end())
-            return found->second;
-
-        return "";
-    }
-
-    return "";
-}
-
-typedef struct _ACTIVATION_CONTEXT* PACTIVATION_CONTEXT;
-typedef struct _ACTIVATION_CONTEXT_DATA* PACTIVATION_CONTEXT_DATA;
-typedef struct _ACTIVATION_CONTEXT_DATA
-{
-    ULONG Magic;
-    ULONG HeaderSize;
-    ULONG FormatVersion;
-    ULONG TotalSize;
-    ULONG DefaultTocOffset; // to ACTIVATION_CONTEXT_DATA_TOC_HEADER
-    ULONG ExtendedTocOffset; // to ACTIVATION_CONTEXT_DATA_EXTENDED_TOC_HEADER
-    ULONG AssemblyRosterOffset; // to ACTIVATION_CONTEXT_DATA_ASSEMBLY_ROSTER_HEADER
-    ULONG Flags; // ACTIVATION_CONTEXT_FLAG_*
-} ACTIVATION_CONTEXT_DATA, * PACTIVATION_CONTEXT_DATA;
-typedef VOID(NTAPI* PACTIVATION_CONTEXT_NOTIFY_ROUTINE)(
-    _In_ ULONG NotificationType, // ACTIVATION_CONTEXT_NOTIFICATION_*
-    _In_ PACTIVATION_CONTEXT ActivationContext,
-    _In_ PACTIVATION_CONTEXT_DATA ActivationContextData,
-    _In_opt_ PVOID NotificationContext,
-    _In_opt_ PVOID NotificationData,
-    _Inout_ PBOOLEAN DisableThisNotification
-    );
-typedef struct _ASSEMBLY_STORAGE_MAP_ENTRY
-{
-    ULONG Flags;
-    UNICODE_STRING DosPath;
-    HANDLE Handle;
-} ASSEMBLY_STORAGE_MAP_ENTRY, * PASSEMBLY_STORAGE_MAP_ENTRY;
-typedef struct _ASSEMBLY_STORAGE_MAP
-{
-    ULONG Flags;
-    ULONG AssemblyCount;
-    PASSEMBLY_STORAGE_MAP_ENTRY* AssemblyArray;
-} ASSEMBLY_STORAGE_MAP, * PASSEMBLY_STORAGE_MAP;
-typedef struct _ACTIVATION_CONTEXT
-{
-    LONG RefCount;
-    ULONG Flags;
-    PACTIVATION_CONTEXT_DATA ActivationContextData;
-    PACTIVATION_CONTEXT_NOTIFY_ROUTINE NotificationRoutine;
-    PVOID NotificationContext;
-    ULONG SentNotifications[8];
-    ULONG DisabledNotifications[8];
-    ASSEMBLY_STORAGE_MAP StorageMap;
-    PASSEMBLY_STORAGE_MAP_ENTRY InlineStorageMapEntries[32];
-} ACTIVATION_CONTEXT, * PACTIVATION_CONTEXT;
-typedef struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME
-{
-    struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME* Previous;
-    PACTIVATION_CONTEXT ActivationContext;
-    ULONG Flags; // RTL_ACTIVATION_CONTEXT_STACK_FRAME_FLAG_*
-} RTL_ACTIVATION_CONTEXT_STACK_FRAME, * PRTL_ACTIVATION_CONTEXT_STACK_FRAME;
-typedef struct _ACTIVATION_CONTEXT_STACK
-{
-    PRTL_ACTIVATION_CONTEXT_STACK_FRAME ActiveFrame;
-    LIST_ENTRY FrameListCache;
-    ULONG Flags; // ACTIVATION_CONTEXT_STACK_FLAG_*
-    ULONG NextCookieSequenceNumber;
-    ULONG StackId;
-} ACTIVATION_CONTEXT_STACK, * PACTIVATION_CONTEXT_STACK;
-#define GDI_BATCH_BUFFER_SIZE 310
-typedef struct _GDI_TEB_BATCH
-{
-    ULONG Offset;
-    ULONG_PTR HDC;
-    ULONG Buffer[GDI_BATCH_BUFFER_SIZE];
-} GDI_TEB_BATCH, * PGDI_TEB_BATCH;
-#define WIN32_CLIENT_INFO_LENGTH 62
-#define STATIC_UNICODE_BUFFER_LENGTH 261
-typedef struct _TEB_ACTIVE_FRAME_CONTEXT
-{
-    ULONG Flags;
-    PCSTR FrameName;
-} TEB_ACTIVE_FRAME_CONTEXT, * PTEB64_ACTIVE_FRAME_CONTEXT;
-typedef struct _TEB_ACTIVE_FRAME
-{
-    ULONG Flags;
-    struct _TEB_ACTIVE_FRAME* Previous;
-    PTEB64_ACTIVE_FRAME_CONTEXT Context;
-} TEB_ACTIVE_FRAME, * PTEB64_ACTIVE_FRAME;
-typedef struct tagSOleTlsData
-{
-    PVOID ThreadBase;
-    PVOID SmAllocator;
-    DWORD               dwApartmentID;      // Per thread "process ID"
-    DWORD               dwFlags;            // see OLETLSFLAGS above
-
-    // counters
-    DWORD               cComInits;          // number of per-thread inits
-    DWORD               cOleInits;          // number of per-thread OLE inits
-#if DBG==1
-    LONG                cTraceNestingLevel; // call nesting level for OLETRACE
-#endif
-
-
-    // Object RPC data
-    UUID                LogicalThreadId;    // current logical thread id
-    DWORD               dwTIDCaller;        // TID of current calling app
-    ULONG               fault;              // fault value
-    LONG                cORPCNestingLevel;  // call nesting level (DBG only)
-#ifdef DCOM
-    CChannelCallInfo* pCallInfo;          // channel call info
-    DWORD               cDebugData;         // count of bytes of debug data in call
-    void* pOXIDEntry;         // ptr to OXIDEntry for this thread.
-    CObjServer* pObjServer;         // Activation Server Object.
-    CRemoteUnknown* pRemoteUnk;         // CRemUnknown for this thread.
-    CAptCallCtrl* pCallCtrl;          // new call control for RPC
-    CSrvCallState* pTopSCS;            // top server-side callctrl state
-    IMessageFilter* pMsgFilter;         // temp storage for App MsgFilter
-    ULONG               cPreRegOidsAvail;   // count of server-side OIDs avail
-    unsigned hyper* pPreRegOids;	    // ptr to array of pre-reg OIDs
-    IUnknown* pCallContext;       // call context object
-    DWORD               dwAuthnLevel;       // security level of current call
-#else
-    void* pChanCtrl;          // channel control
-    void* pService;           // per-thread service object
-    void* pServiceList;
-    void* pCallCont;          // call control
-    void* pDdeCallCont;       // dde call control
-    void* pCALLINFO;          // callinfo
-    DWORD               dwEndPoint;         // endpoint id
-#ifdef _CHICAGO_
-    HWND                hwndOleRpcNotify;
-#endif
-#endif // DCOM
-
-    // DDE data
-    HWND                hwndDdeServer;      // Per thread Common DDE server
-    HWND                hwndDdeClient;      // Per thread Common DDE client
-
-
-    // upper layer data
-    HWND                hwndClip;           // Clipboard window
-    IUnknown* punkState;          // Per thread "state" object
-#ifdef WX86OLE
-    IUnknown* punkStateWx86;      // Per thread "state" object for Wx86
-#endif
-    void* pDragCursors;       // Per thread drag cursor table.
-
-#ifdef _CHICAGO_
-    LPVOID              pWcstokContext;     // Scan context for wcstok
-#endif
-
-    IUnknown* punkError;          // Per thread error object.
-    ULONG               cbErrorData;        // Maximum size of error data.
-} SOleTlsData, * PSOleTlsData;
-typedef struct _TEB64
-{
-
-    NT_TIB NtTib;
-    PVOID EnvironmentPointer;
-    CLIENT_ID ClientId;
-    PVOID ActiveRpcHandle;
-    PVOID ThreadLocalStoragePointer;
-    PPEB ProcessEnvironmentBlock;
-    ULONG LastErrorValue;
-    ULONG CountOfOwnedCriticalSections;
-    PVOID CsrClientThread;
-    PVOID Win32ThreadInfo;
-    ULONG User32Reserved[26];
-    ULONG UserReserved[5];
-    PVOID WOW32Reserved;
-    LCID CurrentLocale;
-    ULONG FpSoftwareStatusRegister;
-    PVOID ReservedForDebuggerInstrumentation[16];
-#ifdef _WIN64
-    PVOID SystemReserved1[25];
-    PVOID HeapFlsData;
-    ULONG_PTR RngState[4];
-#else
-    PVOID SystemReserved1[26];
-#endif
-    CHAR PlaceholderCompatibilityMode;
-    BOOLEAN PlaceholderHydrationAlwaysExplicit;
-    CHAR PlaceholderReserved[10];
-    ULONG ProxiedProcessId;
-    ACTIVATION_CONTEXT_STACK ActivationStack;
-    UCHAR WorkingOnBehalfTicket[8];
-    NTSTATUS ExceptionCode;
-    PACTIVATION_CONTEXT_STACK ActivationContextStackPointer;
-    ULONG_PTR InstrumentationCallbackSp;
-    ULONG_PTR InstrumentationCallbackPreviousPc;
-    ULONG_PTR InstrumentationCallbackPreviousSp;
-#ifdef _WIN64
-    ULONG TxFsContext;
-#endif
-    BOOLEAN InstrumentationCallbackDisabled;
-#ifdef _WIN64
-    BOOLEAN UnalignedLoadStoreExceptions;
-#endif
-#ifndef _WIN64
-    UCHAR SpareBytes[23];
-    ULONG TxFsContext;
-#endif
-    GDI_TEB_BATCH GdiTebBatch;
-    CLIENT_ID RealClientId;
-    HANDLE GdiCachedProcessHandle;
-    ULONG GdiClientPID;
-    ULONG GdiClientTID;
-    PVOID GdiThreadLocalInfo;
-    ULONG_PTR Win32ClientInfo[WIN32_CLIENT_INFO_LENGTH];
-    PVOID glDispatchTable[233];
-    ULONG_PTR glReserved1[29];
-    PVOID glReserved2;
-    PVOID glSectionInfo;
-    PVOID glSection;
-    PVOID glTable;
-    PVOID glCurrentRC;
-    PVOID glContext;
-    NTSTATUS LastStatusValue;
-    UNICODE_STRING StaticUnicodeString;
-    WCHAR StaticUnicodeBuffer[STATIC_UNICODE_BUFFER_LENGTH];
-    PVOID DeallocationStack;
-    PVOID TlsSlots[TLS_MINIMUM_AVAILABLE];
-    LIST_ENTRY TlsLinks;
-    PVOID Vdm;
-    PVOID ReservedForNtRpc;
-    PVOID DbgSsReserved[2];
-    ULONG HardErrorMode;
-#ifdef _WIN64
-    PVOID Instrumentation[11];
-#else
-    PVOID Instrumentation[9];
-#endif
-    GUID ActivityId;
-    PVOID SubProcessTag;
-    PVOID PerflibData;
-    PVOID EtwTraceData;
-    HANDLE WinSockData;
-    ULONG GdiBatchCount;
-    union
-    {
-        PROCESSOR_NUMBER CurrentIdealProcessor;
-        ULONG IdealProcessorValue;
-        struct
-        {
-            UCHAR ReservedPad0;
-            UCHAR ReservedPad1;
-            UCHAR ReservedPad2;
-            UCHAR IdealProcessor;
-        };
-    };
-    ULONG GuaranteedStackBytes;
-    PVOID ReservedForPerf;
-    PSOleTlsData ReservedForOle;
-    ULONG WaitingOnLoaderLock;
-    PVOID SavedPriorityState;
-    ULONG_PTR ReservedForCodeCoverage;
-    PVOID ThreadPoolData;
-    PVOID* TlsExpansionSlots;
-#ifdef _WIN64
-    PVOID ChpeV2CpuAreaInfo;
-    PVOID Unused;
-#endif
-    ULONG MuiGeneration;
-    ULONG IsImpersonating;
-    PVOID NlsCache;
-    PVOID pShimData;
-    ULONG HeapData;
-    HANDLE CurrentTransactionHandle;
-    PTEB64_ACTIVE_FRAME ActiveFrame;
-    PVOID FlsData;
-    PVOID PreferredLanguages;
-    PVOID UserPrefLanguages;
-    PVOID MergedPrefLanguages;
-    ULONG MuiImpersonation;
-    union
-    {
-        USHORT CrossTebFlags;
-        USHORT SpareCrossTebBits : 16;
-    };
-    union
-    {
-        USHORT SameTebFlags;
-        struct
-        {
-            USHORT SafeThunkCall : 1;
-            USHORT InDebugPrint : 1;            // Indicates if the thread is currently in a debug print routine.
-            USHORT HasFiberData : 1;            // Indicates if the thread has local fiber-local storage (FLS).
-            USHORT SkipThreadAttach : 1;        // Indicates if the thread should suppress DLL_THREAD_ATTACH notifications.
-            USHORT WerInShipAssertCode : 1;
-            USHORT RanProcessInit : 1;          // Indicates if the thread has run process initialization code.
-            USHORT ClonedThread : 1;            // Indicates if the thread is a clone of a different thread.
-            USHORT SuppressDebugMsg : 1;        // Indicates if the thread should suppress LOAD_DLL_DEBUG_INFO notifications.
-            USHORT DisableUserStackWalk : 1;
-            USHORT RtlExceptionAttached : 1;
-            USHORT InitialThread : 1;           // Indicates if the thread is the initial thread of the process.
-            USHORT SessionAware : 1;
-            USHORT LoadOwner : 1;               // Indicates if the thread is the owner of the process loader lock.
-            USHORT LoaderWorker : 1;
-            USHORT SkipLoaderInit : 1;
-            USHORT SkipFileAPIBrokering : 1;
-        };
-    };
-    PVOID TxnScopeEnterCallback;
-    PVOID TxnScopeExitCallback;
-    PVOID TxnScopeContext;
-    ULONG LockCount;
-    LONG WowTebOffset;
-    PVOID ResourceRetValue;
-    PVOID ReservedForWdf;
-    ULONGLONG ReservedForCrt;
-    GUID EffectiveContainerId;
-    ULONGLONG LastSleepCounter; // since Win11
-    ULONG SpinCallCount;
-    ULONGLONG ExtendedFeatureDisableMask;
-    PVOID SchedulerSharedDataSlot; // since 24H2
-    PVOID HeapWalkContext;
-    GROUP_AFFINITY PrimaryGroupAffinity;
-    ULONG Rcu[2];
-} _TEB64, * PTEB64;
-#define FIELD_INFO_TEB64(field) {offsetof(_TEB64, field), #field}
-
-struct Teb64FieldMapper {
-    std::vector<std::pair<size_t, std::string_view>> members_ = {
-        FIELD_INFO_TEB64(NtTib),
-        FIELD_INFO_TEB64(EnvironmentPointer),
-        FIELD_INFO_TEB64(ClientId),
-        FIELD_INFO_TEB64(ActiveRpcHandle),
-        FIELD_INFO_TEB64(ThreadLocalStoragePointer),
-        FIELD_INFO_TEB64(ProcessEnvironmentBlock),
-        FIELD_INFO_TEB64(LastErrorValue),
-        FIELD_INFO_TEB64(CountOfOwnedCriticalSections),
-        FIELD_INFO_TEB64(CsrClientThread),
-        FIELD_INFO_TEB64(Win32ThreadInfo),
-        FIELD_INFO_TEB64(User32Reserved),
-        FIELD_INFO_TEB64(UserReserved),
-        FIELD_INFO_TEB64(WOW32Reserved),
-        FIELD_INFO_TEB64(CurrentLocale),
-        FIELD_INFO_TEB64(FpSoftwareStatusRegister),
-        FIELD_INFO_TEB64(ReservedForDebuggerInstrumentation),
-        FIELD_INFO_TEB64(SystemReserved1),
-        FIELD_INFO_TEB64(HeapFlsData),
-        FIELD_INFO_TEB64(RngState),
-        FIELD_INFO_TEB64(PlaceholderCompatibilityMode),
-        FIELD_INFO_TEB64(PlaceholderHydrationAlwaysExplicit),
-        FIELD_INFO_TEB64(PlaceholderReserved),
-        FIELD_INFO_TEB64(ProxiedProcessId),
-        FIELD_INFO_TEB64(ActivationStack),
-        FIELD_INFO_TEB64(WorkingOnBehalfTicket),
-        FIELD_INFO_TEB64(ExceptionCode),
-        FIELD_INFO_TEB64(ActivationContextStackPointer),
-        FIELD_INFO_TEB64(InstrumentationCallbackSp),
-        FIELD_INFO_TEB64(InstrumentationCallbackPreviousPc),
-        FIELD_INFO_TEB64(InstrumentationCallbackPreviousSp),
-        FIELD_INFO_TEB64(TxFsContext),
-        FIELD_INFO_TEB64(InstrumentationCallbackDisabled),
-        FIELD_INFO_TEB64(UnalignedLoadStoreExceptions),
-        FIELD_INFO_TEB64(GdiTebBatch),
-        FIELD_INFO_TEB64(RealClientId),
-        FIELD_INFO_TEB64(GdiCachedProcessHandle),
-        FIELD_INFO_TEB64(GdiClientPID),
-        FIELD_INFO_TEB64(GdiClientTID),
-        FIELD_INFO_TEB64(GdiThreadLocalInfo),
-        FIELD_INFO_TEB64(Win32ClientInfo),
-        FIELD_INFO_TEB64(glDispatchTable),
-        FIELD_INFO_TEB64(glReserved1),
-        FIELD_INFO_TEB64(glReserved2),
-        FIELD_INFO_TEB64(glSectionInfo),
-        FIELD_INFO_TEB64(glSection),
-        FIELD_INFO_TEB64(glTable),
-        FIELD_INFO_TEB64(glCurrentRC),
-        FIELD_INFO_TEB64(glContext),
-        FIELD_INFO_TEB64(LastStatusValue),
-        FIELD_INFO_TEB64(StaticUnicodeString),
-        FIELD_INFO_TEB64(StaticUnicodeBuffer),
-        FIELD_INFO_TEB64(DeallocationStack),
-        FIELD_INFO_TEB64(TlsSlots),
-        FIELD_INFO_TEB64(TlsLinks),
-        FIELD_INFO_TEB64(Vdm),
-        FIELD_INFO_TEB64(ReservedForNtRpc),
-        FIELD_INFO_TEB64(DbgSsReserved),
-        FIELD_INFO_TEB64(HardErrorMode),
-        FIELD_INFO_TEB64(Instrumentation),
-        FIELD_INFO_TEB64(ActivityId),
-        FIELD_INFO_TEB64(SubProcessTag),
-        FIELD_INFO_TEB64(PerflibData),
-        FIELD_INFO_TEB64(EtwTraceData),
-        FIELD_INFO_TEB64(WinSockData),
-        FIELD_INFO_TEB64(GdiBatchCount),
-        FIELD_INFO_TEB64(CurrentIdealProcessor),
-        FIELD_INFO_TEB64(GuaranteedStackBytes),
-        FIELD_INFO_TEB64(ReservedForPerf),
-        FIELD_INFO_TEB64(ReservedForOle),
-        FIELD_INFO_TEB64(WaitingOnLoaderLock),
-        FIELD_INFO_TEB64(SavedPriorityState),
-        FIELD_INFO_TEB64(ReservedForCodeCoverage),
-        FIELD_INFO_TEB64(ThreadPoolData),
-        FIELD_INFO_TEB64(TlsExpansionSlots),
-        FIELD_INFO_TEB64(ChpeV2CpuAreaInfo),
-        FIELD_INFO_TEB64(Unused),
-        FIELD_INFO_TEB64(MuiGeneration),
-        FIELD_INFO_TEB64(IsImpersonating),
-        FIELD_INFO_TEB64(NlsCache),
-        FIELD_INFO_TEB64(pShimData),
-        FIELD_INFO_TEB64(HeapData),
-        FIELD_INFO_TEB64(CurrentTransactionHandle),
-        FIELD_INFO_TEB64(ActiveFrame),
-        FIELD_INFO_TEB64(FlsData),
-        FIELD_INFO_TEB64(PreferredLanguages),
-        FIELD_INFO_TEB64(UserPrefLanguages),
-        FIELD_INFO_TEB64(MergedPrefLanguages),
-        FIELD_INFO_TEB64(MuiImpersonation),
-        FIELD_INFO_TEB64(CrossTebFlags),
-        FIELD_INFO_TEB64(SameTebFlags),
-        FIELD_INFO_TEB64(TxnScopeEnterCallback),
-        FIELD_INFO_TEB64(TxnScopeExitCallback),
-        FIELD_INFO_TEB64(TxnScopeContext),
-        FIELD_INFO_TEB64(LockCount),
-        FIELD_INFO_TEB64(WowTebOffset),
-        FIELD_INFO_TEB64(ResourceRetValue),
-        FIELD_INFO_TEB64(ReservedForWdf),
-        FIELD_INFO_TEB64(ReservedForCrt),
-        FIELD_INFO_TEB64(EffectiveContainerId),
-        FIELD_INFO_TEB64(LastSleepCounter),
-        FIELD_INFO_TEB64(SpinCallCount),
-        FIELD_INFO_TEB64(ExtendedFeatureDisableMask),
-        FIELD_INFO_TEB64(SchedulerSharedDataSlot),
-        FIELD_INFO_TEB64(HeapWalkContext),
-        FIELD_INFO_TEB64(PrimaryGroupAffinity),
-        FIELD_INFO_TEB64(Rcu),
-    };
-
-    std::string get_member_name(size_t offset) const {
-        size_t last_offset{};
-        std::string_view last_member{};
-
-        for (const auto& member : members_) {
-            if (offset == member.first)
-                return std::string(member.second);
-
-            if (offset < member.first) {
-                size_t diff = offset - last_offset;
-                std::stringstream ss;
-                ss << last_member << " + 0x" << std::hex << diff;
-                return ss.str();
-            }
-
-            last_offset = member.first;
-            last_member = member.second;
-        }
-
-        if (!members_.empty()) {
-            size_t diff = offset - members_.back().first;
-            std::stringstream ss;
-            ss << members_.back().second << " + 0x" << std::hex << diff;
-            return ss.str();
-        }
-
-        return "<N/A>";
-    }
-};
-
-
-//LDR
-#define FIELD_INFO_LDR(field) {offsetof(_PEB_LDR_DATA, field), #field}
-
-struct PebLdrFieldMapper {
-    std::vector<std::pair<size_t, std::string_view>> members_ = {
-        FIELD_INFO_LDR(Reserved1),
-        FIELD_INFO_LDR(Reserved2),
-        FIELD_INFO_LDR(InMemoryOrderModuleList),
-    };
-
-    std::string get_member_name(size_t offset) const {
-        size_t last_offset{};
-        std::string_view last_member{};
-
-        for (const auto& member : members_) {
-            if (offset == member.first)
-                return std::string(member.second);
-
-            if (offset < member.first) {
-                size_t diff = offset - last_offset;
-                std::stringstream ss;
-                ss << last_member << " + 0x" << std::hex << diff;
-                return ss.str();
-            }
-
-            last_offset = member.first;
-            last_member = member.second;
-        }
-
-        if (!members_.empty()) {
-            size_t diff = offset - members_.back().first;
-            std::stringstream ss;
-            ss << members_.back().second << " + 0x" << std::hex << diff;
-            return ss.str();
-        }
-
-        return "<N/A>";
-    }
-};
-
-
-#define FIELD_INFO_PEB(field) {offsetof(_PEB, field), #field}
-
-struct PebFieldMapper {
-    std::vector<std::pair<size_t, std::string_view>> members_ = {
-        FIELD_INFO_PEB(Reserved1),
-        FIELD_INFO_PEB(BeingDebugged),
-        FIELD_INFO_PEB(Reserved2),
-        FIELD_INFO_PEB(Reserved3),
-        FIELD_INFO_PEB(Ldr),
-        FIELD_INFO_PEB(ProcessParameters),
-        FIELD_INFO_PEB(Reserved4),
-        FIELD_INFO_PEB(AtlThunkSListPtr),
-        FIELD_INFO_PEB(Reserved5),
-        FIELD_INFO_PEB(Reserved6),
-        FIELD_INFO_PEB(Reserved7),
-        FIELD_INFO_PEB(Reserved8),
-        FIELD_INFO_PEB(AtlThunkSListPtr32),
-        FIELD_INFO_PEB(Reserved9),
-        FIELD_INFO_PEB(Reserved10),
-        FIELD_INFO_PEB(PostProcessInitRoutine),
-        FIELD_INFO_PEB(Reserved11),
-        FIELD_INFO_PEB(Reserved12),
-        FIELD_INFO_PEB(SessionId),
-    };
-
-    std::string get_member_name(size_t offset) const {
-        size_t last_offset{};
-        std::string_view last_member{};
-
-        for (const auto& member : members_) {
-            if (offset == member.first)
-                return std::string(member.second);
-
-            if (offset < member.first) {
-                size_t diff = offset - last_offset;
-                std::stringstream ss;
-                ss << last_member << " + 0x" << std::hex << diff;
-                return ss.str();
-            }
-
-            last_offset = member.first;
-            last_member = member.second;
-        }
-
-        if (!members_.empty()) {
-            size_t diff = offset - members_.back().first;
-            std::stringstream ss;
-            ss << members_.back().second << " + 0x" << std::hex << diff;
-            return ss.str();
-        }
-
-        return "<N/A>";
-    }
-};
-
 
 enum ConsoleColor {
     BLACK = 0,
@@ -1270,7 +83,6 @@ enum ConsoleColor {
     MAGENTA = 5,
     YELLOW = 6,
     WHITE = 7,
-
 
     BRIGHT_BLACK = 8,
     BRIGHT_BLUE = 9,
@@ -1287,16 +99,12 @@ inline void SetConsoleColor(ConsoleColor color) {
     SetConsoleTextAttribute(hConsole, static_cast<WORD>(color));
 }
 
-
-#define LOG_analyze(color, x)                        \
-    do {                                     \
-        SetConsoleColor(color);              \
-        std::wcout << x << std::endl;        \
-        SetConsoleColor(WHITE);              \
-    } while(0)
-#else
-#define LOG_analyze(color, x)
-#endif
+#define LOG_analyze(color, x)                                                  \
+  do {                                                                         \
+    SetConsoleColor(color);                                                    \
+    std::wcout << x << std::endl;                                              \
+    SetConsoleColor(WHITE);                                                    \
+  } while (0)
 
 #if AUTO_PATCH_HW
 const size_t patchOffsetFromInstruction = 4;
@@ -1307,7 +115,6 @@ std::pair<uint64_t, uint64_t> patch_modules_ranges;
 std::pair<uint64_t, uint64_t> patch_section_ranges;
 std::vector<IMAGE_SECTION_HEADER> sections;
 bool IsInPatchSectionRange(uint64_t addr) {
-
     if (addr >= patch_section_ranges.first && addr <= patch_section_ranges.second)
         return true;
 
@@ -1315,7 +122,6 @@ bool IsInPatchSectionRange(uint64_t addr) {
 }
 
 bool IsInPatchRange(uint64_t addr) {
-
     if (addr >= patch_modules_ranges.first && addr <= patch_modules_ranges.second)
         return true;
 
@@ -1328,7 +134,8 @@ struct PatchInfo {
 };
 
 bool PatchFileAtMemoryOffsets(const std::vector<PatchInfo>& patches) {
-    std::wstring originalFilePath = patchModule.empty() ? exePath : patchModule_File_Path;
+    std::wstring originalFilePath =
+        patchModule.empty() ? exePath : patchModule_File_Path;
     std::wstring patchedFilePath = originalFilePath + L"_patched";
 
     {
@@ -1347,7 +154,8 @@ bool PatchFileAtMemoryOffsets(const std::vector<PatchInfo>& patches) {
         dst << src.rdbuf();
     }
 
-    std::fstream outFile(patchedFilePath, std::ios::binary | std::ios::in | std::ios::out);
+    std::fstream outFile(patchedFilePath,
+        std::ios::binary | std::ios::in | std::ios::out);
     if (!outFile) {
         std::wcerr << L"Failed to open patched file for writing.\n";
         return false;
@@ -1380,15 +188,17 @@ bool PatchFileAtMemoryOffsets(const std::vector<PatchInfo>& patches) {
             continue;
         }
 
-        uint64_t fileOffset = (rva - secHdr.VirtualAddress) + secHdr.PointerToRawData;
-        std::cout << "Patching at fileOffset: 0x" << std::hex << fileOffset << std::endl;
+        uint64_t fileOffset =
+            (rva - secHdr.VirtualAddress) + secHdr.PointerToRawData;
+        std::cout << "Patching at fileOffset: 0x" << std::hex << fileOffset
+            << std::endl;
 
         outFile.seekp(fileOffset, std::ios::beg);
         outFile.write(patch.patchData, patch.patchSize);
 
         if (!outFile) {
-            std::wcerr << L"Failed to write patch at address 0x"
-                << std::hex << patch.memoryAddress << L".\n";
+            std::wcerr << L"Failed to write patch at address 0x" << std::hex
+                << patch.memoryAddress << L".\n";
             return false;
         }
     }
@@ -1396,13 +206,14 @@ bool PatchFileAtMemoryOffsets(const std::vector<PatchInfo>& patches) {
     outFile.close();
     return true;
 }
-bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patchSize) {
-    std::wstring baseFilePath = patchModule.empty() ? exePath : patchModule_File_Path;
+bool PatchFileSingle(uint64_t memoryAddress, const char* patchData,
+    size_t patchSize) {
+    std::wstring baseFilePath =
+        patchModule.empty() ? exePath : patchModule_File_Path;
     std::wstring patchedFilePath = baseFilePath + L"_patched";
 
     std::ifstream checkPatched(patchedFilePath, std::ios::binary);
     if (!checkPatched.good()) {
-
         std::ifstream src(baseFilePath, std::ios::binary);
         if (!src) {
             std::wcerr << L"Failed to open original file.\n";
@@ -1419,7 +230,8 @@ bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patch
         std::wcout << L"Created patched file: " << patchedFilePath << std::endl;
     }
     else {
-        // std::wcout << L"Patched file already exists, applying new patch on it.\n";
+        // std::wcout << L"Patched file already exists, applying new patch on
+        // it.\n";
     }
     checkPatched.close();
 
@@ -1449,7 +261,8 @@ bool PatchFileSingle(uint64_t memoryAddress, const char* patchData, size_t patch
 
     uint64_t fileOffset = (rva - secHdr.VirtualAddress) + secHdr.PointerToRawData;
 
-    std::fstream outFile(patchedFilePath, std::ios::binary | std::ios::in | std::ios::out);
+    std::fstream outFile(patchedFilePath,
+        std::ios::binary | std::ios::in | std::ios::out);
     if (!outFile) {
         std::wcerr << L"Failed to open patched file for writing.\n";
         return false;
@@ -1490,24 +303,33 @@ bool SetHardwareBreakpointAuto(HANDLE hThread, uint64_t address) {
     }
 
     if (slot == -1) {
-        std::cout << "No available hardware breakpoint slots. All 4 are in use." << std::endl;
+        std::cout << "No available hardware breakpoint slots. All 4 are in use."
+            << std::endl;
         return false;
     }
 
     // Set the address in the corresponding debug register
     switch (slot) {
-    case 0: ctx.Dr0 = address; break;
-    case 1: ctx.Dr1 = address; break;
-    case 2: ctx.Dr2 = address; break;
-    case 3: ctx.Dr3 = address; break;
+    case 0:
+        ctx.Dr0 = address;
+        break;
+    case 1:
+        ctx.Dr1 = address;
+        break;
+    case 2:
+        ctx.Dr2 = address;
+        break;
+    case 3:
+        ctx.Dr3 = address;
+        break;
     }
 
     // Enable the breakpoint locally
-    ctx.Dr7 |= (1 << (slot * 2));          // L0–L3 bits
+    ctx.Dr7 |= (1 << (slot * 2)); // L0–L3 bits
 
     // Set length = 1 byte (00), and type = execute (00)
-    ctx.Dr7 &= ~(3 << (16 + slot * 4));    // Clear LEN bits
-    ctx.Dr7 &= ~(3 << (18 + slot * 4));    // Clear RW bits
+    ctx.Dr7 &= ~(3 << (16 + slot * 4)); // Clear LEN bits
+    ctx.Dr7 &= ~(3 << (18 + slot * 4)); // Clear RW bits
 
     return SetThreadContext(hThread, &ctx);
 }
@@ -1521,19 +343,34 @@ bool RemoveHardwareBreakpointByAddress(HANDLE hThread, uint64_t address) {
     for (int slot = 0; slot < 4; ++slot) {
         uint64_t drVal = 0;
         switch (slot) {
-        case 0: drVal = ctx.Dr0; break;
-        case 1: drVal = ctx.Dr1; break;
-        case 2: drVal = ctx.Dr2; break;
-        case 3: drVal = ctx.Dr3; break;
+        case 0:
+            drVal = ctx.Dr0;
+            break;
+        case 1:
+            drVal = ctx.Dr1;
+            break;
+        case 2:
+            drVal = ctx.Dr2;
+            break;
+        case 3:
+            drVal = ctx.Dr3;
+            break;
         }
 
         if (drVal == address) {
-
             switch (slot) {
-            case 0: ctx.Dr0 = 0; break;
-            case 1: ctx.Dr1 = 0; break;
-            case 2: ctx.Dr2 = 0; break;
-            case 3: ctx.Dr3 = 0; break;
+            case 0:
+                ctx.Dr0 = 0;
+                break;
+            case 1:
+                ctx.Dr1 = 0;
+                break;
+            case 2:
+                ctx.Dr2 = 0;
+                break;
+            case 3:
+                ctx.Dr3 = 0;
+                break;
             }
             ctx.Dr7 &= ~(1 << (slot * 2)); // disable local enable bit
             ctx.Dr7 &= ~(1 << (slot * 2 + 1));
@@ -1557,7 +394,8 @@ BOOL RemoveExecutionEx(LPVOID start, size_t size) {
 }
 BOOL RemoveExecutionEx_for_noexec_range() {
     DWORD oldProtect;
-    if (VirtualProtectEx(pi.hProcess,(LPVOID) noexec_range.first, noexec_range.second, PAGE_READWRITE, &oldProtect)) {
+    if (VirtualProtectEx(pi.hProcess, (LPVOID)noexec_range.first,
+        noexec_range.second, PAGE_READWRITE, &oldProtect)) {
         return TRUE;
     }
     else {
@@ -1567,7 +405,8 @@ BOOL RemoveExecutionEx_for_noexec_range() {
 }
 BOOL AddExecutionEx(LPVOID start, size_t size) {
     DWORD oldProtect;
-    if (VirtualProtectEx(pi.hProcess, start, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+    if (VirtualProtectEx(pi.hProcess, start, size, PAGE_EXECUTE_READWRITE,
+        &oldProtect)) {
         return TRUE;
     }
     else {
@@ -1577,7 +416,9 @@ BOOL AddExecutionEx(LPVOID start, size_t size) {
 }
 BOOL AddExecutionEx_for_noexec_range() {
     DWORD oldProtect;
-    if (VirtualProtectEx(pi.hProcess, (LPVOID)noexec_range.first, noexec_range.second, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+    if (VirtualProtectEx(pi.hProcess, (LPVOID)noexec_range.first,
+        noexec_range.second, PAGE_EXECUTE_READWRITE,
+        &oldProtect)) {
         return TRUE;
     }
     else {
@@ -1586,9 +427,7 @@ BOOL AddExecutionEx_for_noexec_range() {
     }
 }
 
-
 bool SetBreakpoint(HANDLE hProcess, uint64_t address, BYTE& originalByte) {
-
     BYTE int3 = 0xCC;
     if (!ReadProcessMemory(hProcess, (LPCVOID)address, &originalByte, 1, nullptr))
         return false;
@@ -1602,543 +441,319 @@ bool RemoveBreakpoint(HANDLE hProcess, uint64_t address, BYTE originalByte) {
     WriteProcessMemory(hProcess, (LPVOID)address, &originalByte, 1, nullptr);
     return true;
 }
-void RemoveAllBreakpoints(HANDLE hProcess, std::unordered_map<uint64_t, BreakpointInfo> breakpoints) {
+void RemoveAllBreakpoints(
+    HANDLE hProcess, std::unordered_map<uint64_t, BreakpointInfo> breakpoints) {
     for (auto& [address, info] : breakpoints) {
         RemoveBreakpoint(hProcess, address, info.originalByte);
     }
 }
 
-void RestoreAllBreakpoints(HANDLE hProcess, std::unordered_map<uint64_t, BreakpointInfo> breakpoints) {
+void RestoreAllBreakpoints(
+    HANDLE hProcess, std::unordered_map<uint64_t, BreakpointInfo> breakpoints) {
     for (auto& [address, info] : breakpoints) {
         BYTE temp;
         SetBreakpoint(hProcess, address, temp);
     }
 }
 
-// ----------------------------- Structs & Typedefs -----------------------------
-
-
-
-
-typedef struct _THREAD_BASIC_INFORMATION {
-    NTSTATUS ExitStatus;
-    PVOID TebBaseAddress;
-    CLIENT_ID ClientId;
-    KAFFINITY AffinityMask;
-    LONG Priority;
-    LONG BasePriority;
-} THREAD_BASIC_INFORMATION;
-
-typedef NTSTATUS(NTAPI* NtQueryInformationThreadPtr)(
-    HANDLE ThreadHandle,
-    THREADINFOCLASS ThreadInformationClass,
-    PVOID ThreadInformation,
-    ULONG ThreadInformationLength,
-    PULONG ReturnLength
-    );
-
-extern "C" NTSTATUS NTAPI NtQueryInformationThread(
-    HANDLE ThreadHandle,
-    THREADINFOCLASS ThreadInformationClass,
-    PVOID ThreadInformation,
-    ULONG ThreadInformationLength,
-    PULONG ReturnLength
-);
-struct memory_mange
-{
-    uint64_t address;
-    SIZE_T size;
-    char  buffer[1024];
-    bool is_write;
-};
-
-
-
-// ------------------- PE Helpers -------------------
-
-bool IsInEmulationRange(uint64_t addr) {
-    for (const auto& range : valid_ranges) {
-        if (addr >= range.first && addr <= range.second)
-            return true;
-    }
-    return false;
-}
-#if FUll_user_MODE
-bool IsInSystemRange(uint64_t addr) {
-    for (const auto& range : system_modules_ranges) {
-        if (addr >= range.first && addr <= range.second)
-            return true;
-    }
-    return false;
-}
-#endif 
-uint64_t GetTEBAddress(HANDLE hThread) {
-    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-    if (!ntdll) return 0;
-
-    auto NtQueryInformationThread = reinterpret_cast<NtQueryInformationThreadPtr>(
-        GetProcAddress(ntdll, "NtQueryInformationThread"));
-
-    if (!NtQueryInformationThread) return 0;
-
-    THREAD_BASIC_INFORMATION tbi = {};
-    if (NtQueryInformationThread(hThread, static_cast<THREADINFOCLASS>(0), &tbi, sizeof(tbi), nullptr) != 0)
-        return 0;
-
-    return reinterpret_cast<uint64_t>(tbi.TebBaseAddress);
-}
-
-
-
-std::vector<uint32_t> GetTLSCallbackRVAs(const std::wstring& exePath) {
-    std::vector<uint32_t> tlsCallbacks;
-    std::ifstream file(exePath, std::ios::binary);
-    if (!file) return tlsCallbacks;
-    IMAGE_DOS_HEADER dosHeader;
-    file.read(reinterpret_cast<char*>(&dosHeader), sizeof(dosHeader));
-    if (dosHeader.e_magic != IMAGE_DOS_SIGNATURE) return tlsCallbacks;
-    file.seekg(dosHeader.e_lfanew, std::ios::beg);
-    DWORD ntSignature;
-    file.read(reinterpret_cast<char*>(&ntSignature), sizeof(ntSignature));
-    if (ntSignature != IMAGE_NT_SIGNATURE) return tlsCallbacks;
-    IMAGE_FILE_HEADER fileHeader;
-    file.read(reinterpret_cast<char*>(&fileHeader), sizeof(fileHeader));
-    IMAGE_OPTIONAL_HEADER64 optionalHeader;
-    file.read(reinterpret_cast<char*>(&optionalHeader), sizeof(optionalHeader));
-    DWORD tlsDirRVA = optionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress;
-    if (tlsDirRVA == 0) return tlsCallbacks;
-    std::vector<IMAGE_SECTION_HEADER> sections(fileHeader.NumberOfSections);
-    file.seekg(dosHeader.e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER) + fileHeader.SizeOfOptionalHeader);
-    file.read(reinterpret_cast<char*>(sections.data()), sizeof(IMAGE_SECTION_HEADER) * fileHeader.NumberOfSections);
-    DWORD tlsOffset = 0;
-    for (const auto& sec : sections) {
-        if (tlsDirRVA >= sec.VirtualAddress && tlsDirRVA < sec.VirtualAddress + sec.Misc.VirtualSize) {
-            tlsOffset = tlsDirRVA - sec.VirtualAddress + sec.PointerToRawData;
-            break;
-        }
-    }
-    if (tlsOffset == 0) return tlsCallbacks;
-    file.seekg(tlsOffset, std::ios::beg);
-    IMAGE_TLS_DIRECTORY64 tlsDir;
-    file.read(reinterpret_cast<char*>(&tlsDir), sizeof(tlsDir));
-    uint64_t callbackVA = tlsDir.AddressOfCallBacks;
-    if (callbackVA == 0) return tlsCallbacks;
-    uint64_t fileOffset = 0;
-    for (const auto& sec : sections) {
-        if (callbackVA >= optionalHeader.ImageBase + sec.VirtualAddress &&
-            callbackVA < optionalHeader.ImageBase + sec.VirtualAddress + sec.Misc.VirtualSize) {
-            fileOffset = callbackVA - optionalHeader.ImageBase - sec.VirtualAddress + sec.PointerToRawData;
-            break;
-        }
-    }
-    if (fileOffset == 0) return tlsCallbacks;
-    file.seekg(fileOffset, std::ios::beg);
-    uint64_t callback = 0;
-    file.read(reinterpret_cast<char*>(&callback), sizeof(callback));
-    if (callback)
-        tlsCallbacks.push_back(static_cast<uint32_t>(callback - optionalHeader.ImageBase));
-    return tlsCallbacks;
-}
-
-
-uint32_t GetEntryPointRVA(const std::wstring& exePath) {
-    std::ifstream file(exePath, std::ios::binary);
-    if (!file) return 0;
-    IMAGE_DOS_HEADER dosHeader;
-    file.read(reinterpret_cast<char*>(&dosHeader), sizeof(dosHeader));
-    if (dosHeader.e_magic != IMAGE_DOS_SIGNATURE) return 0;
-    file.seekg(dosHeader.e_lfanew, std::ios::beg);
-    DWORD ntSignature;
-    file.read(reinterpret_cast<char*>(&ntSignature), sizeof(ntSignature));
-    if (ntSignature != IMAGE_NT_SIGNATURE) return 0;
-    IMAGE_FILE_HEADER fileHeader;
-    file.read(reinterpret_cast<char*>(&fileHeader), sizeof(fileHeader));
-    file.read(reinterpret_cast<char*>(&optionalHeader), sizeof(optionalHeader));
-    return optionalHeader.AddressOfEntryPoint;
-}
-
-bool EnableStealthMode(HANDLE hThread) {
-    uint64_t tebAddr = GetTEBAddress(hThread);
-    if (tebAddr == 0) return false;
-
-    uint64_t pebAddr = 0;
-    if (!ReadProcessMemory(pi.hProcess, (LPCVOID)(tebAddr + 0x60), &pebAddr, sizeof(pebAddr), nullptr)) {
-        return false;
-    }
-
-    BYTE zero = 0;
-
-    // 1. Clear BeingDebugged (PEB+0x2)
-    if (!WriteProcessMemory(pi.hProcess, (LPVOID)(pebAddr + 0x2), &zero, sizeof(zero), nullptr)) {
-        return false;
-    }
-
-    // 2. Clear NtGlobalFlag (PEB+0xBC)
-    if (!WriteProcessMemory(pi.hProcess, (LPVOID)(pebAddr + 0xBC), &zero, sizeof(zero), nullptr)) {
-        return false;
-    }
-
-    // 3. Clear HeapFlags and HeapForceFlags
-    uint64_t processHeapAddr = 0;
-    if (!ReadProcessMemory(pi.hProcess, (LPCVOID)(pebAddr + 0x30), &processHeapAddr, sizeof(processHeapAddr), nullptr)) {
-        return false;
-    }
-
-    DWORD heapFlags = 0;
-    DWORD heapForceFlags = 0;
-
-    // HeapFlags = ProcessHeap + 0x70
-  //  WriteProcessMemory(pi.hProcess, (LPVOID)(processHeapAddr + 0x70), &heapFlags, sizeof(heapFlags), nullptr);
-
-    // HeapForceFlags = ProcessHeap + 0x74
-  //  WriteProcessMemory(pi.hProcess, (LPVOID)(processHeapAddr + 0x74), &heapForceFlags, sizeof(heapForceFlags), nullptr);
-
-
-
-    return true;
-}
-#include <Windows.h>
-#include <string>
-
-bool PatchKernelBaseFunction(HANDLE hProcess, uintptr_t kernelBase_address, const std::string& funcName, const BYTE* patchBytes, size_t patchSize) {
-    if (!kernelBase_address) return false;
-
-    HMODULE hLocalKernelBase = GetModuleHandleW(L"kernelbase.dll");
-    if (!hLocalKernelBase) return false;
-
-    FARPROC localFunc = GetProcAddress(hLocalKernelBase, funcName.c_str());
-    if (!localFunc) return false;
-
-
-    uintptr_t offset = (uintptr_t)localFunc - (uintptr_t)hLocalKernelBase;
-    LPVOID remoteFuncAddr = (LPVOID)(kernelBase_address + offset);
-
-    DWORD oldProtect;
-    if (!VirtualProtectEx(hProcess, remoteFuncAddr, patchSize, PAGE_EXECUTE_READWRITE, &oldProtect))
-        return false;
-
-    bool success = WriteProcessMemory(hProcess, remoteFuncAddr, patchBytes, patchSize, nullptr) != 0;
-
-    VirtualProtectEx(hProcess, remoteFuncAddr, patchSize, oldProtect, &oldProtect);
-
-    return success;
-}
-#if Stealth_Mode_ENABLED
-bool Patch_CheckRemoteDebuggerPresent() {
-
-    BYTE patch[] = {
-     0x48, 0x31, 0xC0,  // xor rax, rax
-     0xC3               // ret
-    };
-
-    return  PatchKernelBaseFunction(pi.hProcess, kernelBase_address, "CheckRemoteDebuggerPresent", patch, sizeof(patch));
-}
-#endif
 // ----------------------------- CPU Class Definition -----------------------------
 bool is_paused = 0;
 class CPU {
 public:
     // ------------------- CPU Context -------------------
     HANDLE hThread;
-    //test with real cpu 
+    // test with real cpu
 
 #if DB_ENABLED
     memory_mange my_mange;
-    bool is_cpuid, is_OVERFLOW_FLAG_SKIP, is_Auxiliary_Carry_FLAG_SKIP, is_Zero_FLAG_SKIP, is_Parity_FLAG_SKIP, is_Sign_FLAG_SKIP, is_rdtsc; // ,is_reading_time;
+    bool is_cpuid, is_OVERFLOW_FLAG_SKIP, is_Auxiliary_Carry_FLAG_SKIP,
+        is_Zero_FLAG_SKIP, is_Parity_FLAG_SKIP, is_Sign_FLAG_SKIP,
+        is_rdtsc; // ,is_reading_time;
 #endif
 
-
-
-    ThreadState CPUThreadState = ThreadState::Unknown;
+    ThreadState ThreadState = ThreadState::Unknown;
 
     // ------------------- Constructor -------------------
-    CPU(HANDLE thread)
-        : hThread(thread) {
-
-
-
+    CPU(HANDLE thread) : hThread(thread) {
         dispatch_table = {
-            { ZYDIS_MNEMONIC_MOV, &CPU::emulate_mov },
-            { ZYDIS_MNEMONIC_ADD, &CPU::emulate_add },
-            { ZYDIS_MNEMONIC_SUB, &CPU::emulate_sub },
-            { ZYDIS_MNEMONIC_XOR, &CPU::emulate_xor },
-            { ZYDIS_MNEMONIC_AND, &CPU::emulate_and },
-            { ZYDIS_MNEMONIC_OR, &CPU::emulate_or },
-            { ZYDIS_MNEMONIC_CMP, &CPU::emulate_cmp },
-            { ZYDIS_MNEMONIC_TEST, &CPU::emulate_test },
-            { ZYDIS_MNEMONIC_SHL, &CPU::emulate_shl },
-            { ZYDIS_MNEMONIC_SHR, &CPU::emulate_shr },
-            { ZYDIS_MNEMONIC_SAR, &CPU::emulate_sar },
-            { ZYDIS_MNEMONIC_ROL, &CPU::emulate_rol },
-            { ZYDIS_MNEMONIC_ROR, &CPU::emulate_ror },
-            { ZYDIS_MNEMONIC_JZ, &CPU::emulate_jz },
-            { ZYDIS_MNEMONIC_JNZ, &CPU::emulate_jnz },
-            { ZYDIS_MNEMONIC_NOP, &CPU::emulate_nop },
-            { ZYDIS_MNEMONIC_PUSH, &CPU::emulate_push },
-            { ZYDIS_MNEMONIC_POP, &CPU::emulate_pop },
-            { ZYDIS_MNEMONIC_CALL, &CPU::emulate_call },
-            { ZYDIS_MNEMONIC_RET, &CPU::emulate_ret },
-            { ZYDIS_MNEMONIC_JMP, &CPU::emulate_jmp },
-            { ZYDIS_MNEMONIC_LEA, &CPU::emulate_lea },
-            { ZYDIS_MNEMONIC_CPUID, &CPU::emulate_cpuid },
-            { ZYDIS_MNEMONIC_NOT, &CPU::emulate_not },
-            { ZYDIS_MNEMONIC_NEG, &CPU::emulate_neg },
-            { ZYDIS_MNEMONIC_XCHG, &CPU::emulate_xchg },
-            { ZYDIS_MNEMONIC_MUL, &CPU::emulate_mul },
-            { ZYDIS_MNEMONIC_IMUL, &CPU::emulate_imul },
-            { ZYDIS_MNEMONIC_SETNZ, &CPU::emulate_setnz },
-            { ZYDIS_MNEMONIC_SETZ, &CPU::emulate_setz },
-            { ZYDIS_MNEMONIC_BT, &CPU::emulate_bt },
-            { ZYDIS_MNEMONIC_BTR, &CPU::emulate_btr },
-            { ZYDIS_MNEMONIC_JNB, &CPU::emulate_jnb },
-            { ZYDIS_MNEMONIC_XGETBV, &CPU::emulate_xgetbv },
-            { ZYDIS_MNEMONIC_JL, &CPU::emulate_jl },
-            { ZYDIS_MNEMONIC_CMPXCHG, &CPU::emulate_cmpxchg },
-            { ZYDIS_MNEMONIC_JLE, &CPU::emulate_jle },
-            { ZYDIS_MNEMONIC_MOVSXD, &CPU::emulate_movsxd },
-            { ZYDIS_MNEMONIC_MOVZX, &CPU::emulate_movzx },
-            { ZYDIS_MNEMONIC_DEC, &CPU::emulate_dec },
-            { ZYDIS_MNEMONIC_JB, &CPU::emulate_jb },
-            { ZYDIS_MNEMONIC_JBE, &CPU::emulate_jbe },
-            { ZYDIS_MNEMONIC_POPFQ, &CPU::emulate_popfq },
-            { ZYDIS_MNEMONIC_PUSHFQ, &CPU::emulate_pushfq },
-            { ZYDIS_MNEMONIC_CMOVZ, &CPU::emulate_cmovz },
-            { ZYDIS_MNEMONIC_INC, &CPU::emulate_inc },
-            { ZYDIS_MNEMONIC_DIV, &CPU::emulate_div },
-            { ZYDIS_MNEMONIC_MOVQ, &CPU::emulate_movq },
-            { ZYDIS_MNEMONIC_JNBE, &CPU::emulate_jnbe },
-            { ZYDIS_MNEMONIC_PUNPCKLQDQ, &CPU::emulate_punpcklqdq },
-            { ZYDIS_MNEMONIC_MOVDQA, &CPU::emulate_movdqa },
-            { ZYDIS_MNEMONIC_VINSERTF128, &CPU::emulate_vinsertf128 },
-            { ZYDIS_MNEMONIC_VMOVDQU, &CPU::emulate_vmovdqu },
-            { ZYDIS_MNEMONIC_VZEROUPPER, &CPU::emulate_vzeroupper },
-            { ZYDIS_MNEMONIC_MOVUPS, &CPU::emulate_movups },
-            { ZYDIS_MNEMONIC_MOVDQU, &CPU::emulate_movdqu },
-            { ZYDIS_MNEMONIC_XORPS, &CPU::emulate_xorps },
-            { ZYDIS_MNEMONIC_STOSW, &CPU::emulate_stosw },
-            { ZYDIS_MNEMONIC_SBB, &CPU::emulate_sbb },
-            { ZYDIS_MNEMONIC_CMOVB, &CPU::emulate_cmovb },
-            { ZYDIS_MNEMONIC_VMOVDQA, &CPU::emulate_vmovdqa },
-            { ZYDIS_MNEMONIC_SETBE, &CPU::emulate_setbe },
-            { ZYDIS_MNEMONIC_CMOVNZ, &CPU::emulate_cmovnz },
-            { ZYDIS_MNEMONIC_XADD, &CPU::emulate_xadd },
-            { ZYDIS_MNEMONIC_CMOVNBE, &CPU::emulate_cmovnbe },
-            { ZYDIS_MNEMONIC_STOSQ, &CPU::emulate_stosq },
-            { ZYDIS_MNEMONIC_CDQE,&CPU::emulate_cdqe },
-            { ZYDIS_MNEMONIC_MOVSX, &CPU::emulate_movsx },
-            { ZYDIS_MNEMONIC_RCR, &CPU::emulate_rcr },
-            { ZYDIS_MNEMONIC_CLC, &CPU::emulate_clc },
-            { ZYDIS_MNEMONIC_ADC, &CPU::emulate_adc },
-            { ZYDIS_MNEMONIC_STC, &CPU::emulate_stc },
-            { ZYDIS_MNEMONIC_STOSD, &CPU::emulate_stosd },
-            { ZYDIS_MNEMONIC_STOSB, &CPU::emulate_stosb },
-            { ZYDIS_MNEMONIC_MOVAPS, &CPU::emulate_movaps },
-            { ZYDIS_MNEMONIC_JNLE, &CPU::emulate_jnle },
-            { ZYDIS_MNEMONIC_JNL, &CPU::emulate_jnl },
-            { ZYDIS_MNEMONIC_JS, &CPU::emulate_js },
-            { ZYDIS_MNEMONIC_JNS, &CPU::emulate_jns },
-            { ZYDIS_MNEMONIC_CMOVS, &CPU::emulate_cmovs },
-            { ZYDIS_MNEMONIC_CMOVNL, &CPU::emulate_cmovnl },
-            { ZYDIS_MNEMONIC_CMOVBE, &CPU::emulate_cmovbe },
-            { ZYDIS_MNEMONIC_SETB, &CPU::emulate_setb },
-            { ZYDIS_MNEMONIC_SETNBE, &CPU::emulate_setnbe },
-            { ZYDIS_MNEMONIC_CMOVNB, &CPU::emulate_cmovnb },
-            { ZYDIS_MNEMONIC_CMOVL, &CPU::emulate_cmovl },
-            { ZYDIS_MNEMONIC_MOVSD, &CPU::emulate_movsd },
-            { ZYDIS_MNEMONIC_PSRLDQ, &CPU::emulate_psrldq },
-            { ZYDIS_MNEMONIC_MOVD, &CPU::emulate_movd },
-            { ZYDIS_MNEMONIC_RCL, &CPU::emulate_rcl },
-            { ZYDIS_MNEMONIC_SHLD, &CPU::emulate_shld },
-            { ZYDIS_MNEMONIC_SHRD, &CPU::emulate_shrd },
-            { ZYDIS_MNEMONIC_CMOVNS, &CPU::emulate_cmovns },
-            { ZYDIS_MNEMONIC_MOVSB, &CPU::emulate_movsb },
-            { ZYDIS_MNEMONIC_MOVLHPS, &CPU::emulate_movlhps },
-            { ZYDIS_MNEMONIC_VMOVUPS, &CPU::emulate_vmovups },
-            { ZYDIS_MNEMONIC_VMOVAPS, &CPU::emulate_vmovaps },
-            { ZYDIS_MNEMONIC_SETNB, &CPU::emulate_setnb },
-            { ZYDIS_MNEMONIC_SCASD, &CPU::emulate_scasd },
-            { ZYDIS_MNEMONIC_BSR, &CPU::emulate_bsr },
-            { ZYDIS_MNEMONIC_PUNPCKLBW, &CPU::emulate_punpcklbw },
-            { ZYDIS_MNEMONIC_CMOVO, &CPU::emulate_cmovo },
-            { ZYDIS_MNEMONIC_BSWAP, &CPU::emulate_bswap },
-            { ZYDIS_MNEMONIC_CMOVP, &CPU::emulate_cmovp },
-            { ZYDIS_MNEMONIC_CMOVNP, &CPU::emulate_cmovnp },
-            { ZYDIS_MNEMONIC_JNP, &CPU::emulate_jnp },
-            { ZYDIS_MNEMONIC_SETNS, &CPU::emulate_setns },
-            { ZYDIS_MNEMONIC_CMOVNO, &CPU::emulate_cmovno },
-            { ZYDIS_MNEMONIC_JP, &CPU::emulate_jp },
-            { ZYDIS_MNEMONIC_CMOVLE, &CPU::emulate_cmovle },
-            { ZYDIS_MNEMONIC_PREFETCHW, &CPU::emulate_prefetchw },
-            { ZYDIS_MNEMONIC_BTS, &CPU::emulate_bts },
-            { ZYDIS_MNEMONIC_SETP, &CPU::emulate_setp },
-            { ZYDIS_MNEMONIC_SETNLE, &CPU::emulate_setnle },
-            { ZYDIS_MNEMONIC_JNO, &CPU::emulate_jno },
-            { ZYDIS_MNEMONIC_SETL, &CPU::emulate_setl },
-            { ZYDIS_MNEMONIC_JO, &CPU::emulate_jo },
-            { ZYDIS_MNEMONIC_CMOVNLE, &CPU::emulate_cmovnle },
-            { ZYDIS_MNEMONIC_SETNP, &CPU::emulate_setnp },
-            { ZYDIS_MNEMONIC_SETNL, &CPU::emulate_setnl },
-            { ZYDIS_MNEMONIC_SETS, &CPU::emulate_sets },
-            { ZYDIS_MNEMONIC_SETNO, &CPU::emulate_setno },
-            { ZYDIS_MNEMONIC_SETLE, &CPU::emulate_setle },
-            { ZYDIS_MNEMONIC_SETO, &CPU::emulate_seto },
-            { ZYDIS_MNEMONIC_MOVSS, &CPU::emulate_movss },
-            { ZYDIS_MNEMONIC_MOVSQ, &CPU::emulate_movsq },
-            { ZYDIS_MNEMONIC_RDTSC, &CPU::emulate_rdtsc },
-            { ZYDIS_MNEMONIC_MULSS, &CPU::emulate_mulss },
-            { ZYDIS_MNEMONIC_COMISS, &CPU::emulate_comiss },
-            { ZYDIS_MNEMONIC_CVTTSS2SI, &CPU::emulate_cvttss2si },
-            { ZYDIS_MNEMONIC_CVTSI2SS, &CPU::emulate_cvtsi2ss },
-            { ZYDIS_MNEMONIC_TZCNT, &CPU::emulate_tzcnt },
-            { ZYDIS_MNEMONIC_RCPSS, &CPU::emulate_rcpss },
-            { ZYDIS_MNEMONIC_DIVSS, &CPU::emulate_divss },
-            { ZYDIS_MNEMONIC_CVTSS2SD, &CPU::emulate_cvtss2sd },
-            { ZYDIS_MNEMONIC_ANDPS, &CPU::emulate_andps },
-            { ZYDIS_MNEMONIC_CVTDQ2PS, &CPU::emulate_cvtdq2ps },
-            { ZYDIS_MNEMONIC_ADDSS, &CPU::emulate_addss },
-            { ZYDIS_MNEMONIC_CDQ, &CPU::emulate_cdq },
-            { ZYDIS_MNEMONIC_CQO, &CPU::emulate_cqo },
-            { ZYDIS_MNEMONIC_CVTSI2SD, &CPU::emulate_cvtsi2sd },
-            { ZYDIS_MNEMONIC_DIVSD, &CPU::emulate_divsd },
-            { ZYDIS_MNEMONIC_MULSD, &CPU::emulate_mulsd },
-            { ZYDIS_MNEMONIC_SUBSS, &CPU::emulate_subss },
-            { ZYDIS_MNEMONIC_ADDSD, &CPU::emulate_addsd },
-            { ZYDIS_MNEMONIC_SUBSD, &CPU::emulate_subsd },
-            { ZYDIS_MNEMONIC_SQRTPD, &CPU::emulate_sqrtpd },
-            { ZYDIS_MNEMONIC_IDIV, &CPU::emulate_idiv },
-            { ZYDIS_MNEMONIC_LFENCE, &CPU::emulate_lfence },
-            { ZYDIS_MNEMONIC_VPXOR, &CPU::emulate_vpxor },
-            { ZYDIS_MNEMONIC_VPCMPEQW, &CPU::emulate_vpcmpeqw },
-            { ZYDIS_MNEMONIC_VPMOVMSKB, &CPU::emulate_vpmovmskb },
-            { ZYDIS_MNEMONIC_PCMPISTRI, &CPU::emulate_pcmpistri },
-            { ZYDIS_MNEMONIC_BSF, &CPU::emulate_bsf },
-            { ZYDIS_MNEMONIC_CMPXCHG16B, &CPU::emulate_cmpxchg16b },
-            { ZYDIS_MNEMONIC_UNPCKHPD, &CPU::emulate_unpckhpd },
-            { ZYDIS_MNEMONIC_BTC, &CPU::emulate_btc },
-            { ZYDIS_MNEMONIC_VPCMPEQB, &CPU::emulate_vpcmpeqb },
-            { ZYDIS_MNEMONIC_PSHUFLW, &CPU::emulate_pshuflw },
-            { ZYDIS_MNEMONIC_PCMPEQB, &CPU::emulate_pcmpeqb },
-            { ZYDIS_MNEMONIC_PSHUFD, &CPU::emulate_pshufd },
-            { ZYDIS_MNEMONIC_POR, &CPU::emulate_por },
-            { ZYDIS_MNEMONIC_PMOVMSKB, &CPU::emulate_pmovmskb },
-            { ZYDIS_MNEMONIC_PAUSE, &CPU::emulate_pause },
-            { ZYDIS_MNEMONIC_SHUFPS, &CPU::emulate_shufps },
-            { ZYDIS_MNEMONIC_UNPCKLPS, &CPU::emulate_unpcklps },
-            { ZYDIS_MNEMONIC_SQRTSS, &CPU::emulate_sqrtss },
-            { ZYDIS_MNEMONIC_RSQRTPS, &CPU::emulate_rsqrtps },
-            { ZYDIS_MNEMONIC_DIVPS, &CPU::emulate_divps },
-            { ZYDIS_MNEMONIC_CVTPS2PD, &CPU::emulate_cvtps2pd },
-            { ZYDIS_MNEMONIC_PCMPEQW, &CPU::emulate_pcmpeqw },
-            { ZYDIS_MNEMONIC_VMOVNTDQ, &CPU::emulate_vmovntdq },
-            { ZYDIS_MNEMONIC_SFENCE, &CPU::emulate_sfence },
-            { ZYDIS_MNEMONIC_MOVHPD, &CPU::emulate_movhpd },
-            { ZYDIS_MNEMONIC_PADDQ, &CPU::emulate_paddq },
-            { ZYDIS_MNEMONIC_CVTTSD2SI, &CPU::emulate_cvttsd2si },
-            { ZYDIS_MNEMONIC_STMXCSR, &CPU::emulate_stmxcsr },
-            { ZYDIS_MNEMONIC_FNSTCW, &CPU::emulate_fnstcw },
-            { ZYDIS_MNEMONIC_UCOMISS, &CPU::emulate_ucomiss },
-            { ZYDIS_MNEMONIC_ROUNDSS, &CPU::emulate_roundss },
-            { ZYDIS_MNEMONIC_LEAVE, &CPU::emulate_leave },
-            { ZYDIS_MNEMONIC_PUSHF, &CPU::emulate_pushf },
-            { ZYDIS_MNEMONIC_PUSHFD, &CPU::emulate_pushfd },
-            { ZYDIS_MNEMONIC_VMOVD, &CPU::emulate_vmovd },
-            { ZYDIS_MNEMONIC_ORPS, &CPU::emulate_orps },
-            { ZYDIS_MNEMONIC_SCASB, &CPU::emulate_scasb },
-            { ZYDIS_MNEMONIC_CMC, &CPU::emulate_cmc },
-            { ZYDIS_MNEMONIC_LAHF, &CPU::emulate_lahf },
-            { ZYDIS_MNEMONIC_CBW, &CPU::emulate_cbw },
-            { ZYDIS_MNEMONIC_CWDE, &CPU::emulate_cwde },
-            { ZYDIS_MNEMONIC_LODSB, &CPU::emulate_lodsb },
-            { ZYDIS_MNEMONIC_LODSW, &CPU::emulate_lodsw },
-            { ZYDIS_MNEMONIC_LODSD, &CPU::emulate_lodsd },
-            { ZYDIS_MNEMONIC_LODSQ, &CPU::emulate_lodsq },
-            { ZYDIS_MNEMONIC_VPSHUFB, &CPU::emulate_vpshufb },
-            { ZYDIS_MNEMONIC_LZCNT, &CPU::emulate_lzcnt },
-            { ZYDIS_MNEMONIC_VPMASKMOVD, &CPU::emulate_vpmaskmovd },
-            { ZYDIS_MNEMONIC_VPAND, &CPU::emulate_vpand },
-            { ZYDIS_MNEMONIC_PSHUFB, &CPU::emulate_pshufb },
-            { ZYDIS_MNEMONIC_FXSAVE, &CPU::emulate_fxsave },
-            { ZYDIS_MNEMONIC_FXRSTOR, &CPU::emulate_fxrstor },
-            { ZYDIS_MNEMONIC_SGDT, &CPU::emulate_sgdt },
-            { ZYDIS_MNEMONIC_SAHF, &CPU::emulate_sahf },
-            { ZYDIS_MNEMONIC_XLAT, &CPU::emulate_xlatb },
-            { ZYDIS_MNEMONIC_VPADDQ, &CPU::emulate_vpaddq },
-            { ZYDIS_MNEMONIC_VPSUBQ, &CPU::emulate_vpsubq },
-            { ZYDIS_MNEMONIC_VPOR, &CPU::emulate_vpor },
-            { ZYDIS_MNEMONIC_VPMULUDQ, &CPU::emulate_vpmuludq },
-            { ZYDIS_MNEMONIC_VPCMPEQQ, &CPU::emulate_vpcmpeqq },
-            { ZYDIS_MNEMONIC_VPSLLQ, &CPU::emulate_vpsllq },
-            { ZYDIS_MNEMONIC_VPANDN, &CPU::emulate_vpandn },
-            { ZYDIS_MNEMONIC_VPSLLVQ, &CPU::emulate_vpsllvq },
-            { ZYDIS_MNEMONIC_VPCMPGTQ, &CPU::emulate_vpcmpgtq },
-            { ZYDIS_MNEMONIC_VPBLENDVB, &CPU::emulate_vpblendvb },
-            { ZYDIS_MNEMONIC_VPERMQ, &CPU::emulate_vpermq },
-            { ZYDIS_MNEMONIC_VPSHUFD, &CPU::emulate_vpshufd },
-            { ZYDIS_MNEMONIC_VPUNPCKLQDQ, &CPU::emulate_vpunpcklqdq },
-            { ZYDIS_MNEMONIC_VPUNPCKHQDQ, &CPU::emulate_vpunpckhqdq },
-            { ZYDIS_MNEMONIC_VPACKUSDW, &CPU::emulate_vpackusdw },
-            { ZYDIS_MNEMONIC_VPMADDWD, &CPU::emulate_vpmaddwd },
-            { ZYDIS_MNEMONIC_VPSADBW, &CPU::emulate_vpsadbw },
-            { ZYDIS_MNEMONIC_VPALIGNR, &CPU::emulate_vpalignr },
-            { ZYDIS_MNEMONIC_VPGATHERDD, &CPU::emulate_vpgatherdd },
-            { ZYDIS_MNEMONIC_VCVTDQ2PS, &CPU::emulate_vcvtdq2ps },
-            { ZYDIS_MNEMONIC_VMULPS, &CPU::emulate_vmulps },
-            { ZYDIS_MNEMONIC_VADDPS, &CPU::emulate_vaddps },
-            { ZYDIS_MNEMONIC_VCVTPS2DQ, &CPU::emulate_vcvtps2dq },
-            { ZYDIS_MNEMONIC_VHADDPS, &CPU::emulate_vhaddps },
-            { ZYDIS_MNEMONIC_VPERMD, &CPU::emulate_vpermd },
-            { ZYDIS_MNEMONIC_VPMULLW, &CPU::emulate_vpmullw },
-            { ZYDIS_MNEMONIC_VPMULHW, &CPU::emulate_vpmulhw },
-            { ZYDIS_MNEMONIC_VPTEST, &CPU::emulate_vptest },
-            { ZYDIS_MNEMONIC_VPMOVSXWD, &CPU::emulate_vpmovsxwd },
-            { ZYDIS_MNEMONIC_VPADDD, &CPU::emulate_vpaddd },
-            { ZYDIS_MNEMONIC_PADDD, &CPU::emulate_paddd },
-            { ZYDIS_MNEMONIC_PADDW, &CPU::emulate_paddw },
-            { ZYDIS_MNEMONIC_PADDB, &CPU::emulate_paddb },
-            { ZYDIS_MNEMONIC_PMOVZXDQ, &CPU::emulate_pmovzxdq },
-            { ZYDIS_MNEMONIC_PSUBQ, &CPU::emulate_psubq },
-            { ZYDIS_MNEMONIC_VPMOVZXBW, &CPU::emulate_vpmovzxbw },
-            { ZYDIS_MNEMONIC_PMOVZXWD, &CPU::emulate_pmovzxwd },
-            { ZYDIS_MNEMONIC_VBLENDPS, &CPU::emulate_vblendps },
-            { ZYDIS_MNEMONIC_VFMADD213PS, &CPU::emulate_vfmadd213ps },
-            { ZYDIS_MNEMONIC_PXOR, &CPU::emulate_pxor },
-            { ZYDIS_MNEMONIC_PMOVSXWD, &CPU::emulate_pmovsxwd },
-            { ZYDIS_MNEMONIC_PMOVSXWQ, &CPU::emulate_pmovsxwq },
-            { ZYDIS_MNEMONIC_KMOVB, &CPU::emulate_kmovb },
-            { ZYDIS_MNEMONIC_KMOVW, &CPU::emulate_kmovw },
-            { ZYDIS_MNEMONIC_KMOVD, &CPU::emulate_kmovd },
-            { ZYDIS_MNEMONIC_KMOVQ, &CPU::emulate_kmovq },
-            { ZYDIS_MNEMONIC_ROUNDPS, &CPU::emulate_roundps },
-            { ZYDIS_MNEMONIC_VROUNDPS, &CPU::emulate_vroundps },
-            { ZYDIS_MNEMONIC_VPERMILPS, &CPU::emulate_vpermilps },
-            { ZYDIS_MNEMONIC_VMOVAPD, &CPU::emulate_vmovapd },
-            { ZYDIS_MNEMONIC_VMOVUPD, &CPU::emulate_vmovupd },
-            { ZYDIS_MNEMONIC_VEXTRACTF128, &CPU::emulate_vextractf128 },
-            { ZYDIS_MNEMONIC_VBROADCASTSS, &CPU::emulate_vbroadcastss },
-            { ZYDIS_MNEMONIC_VBROADCASTSD, &CPU::emulate_vbroadcastsd },
-            { ZYDIS_MNEMONIC_VBROADCASTF128, &CPU::emulate_vbroadcastf128 },
-            { ZYDIS_MNEMONIC_PMINUB, &CPU::emulate_pminub },
-            { ZYDIS_MNEMONIC_PMINUW, &CPU::emulate_pminuw },
-            { ZYDIS_MNEMONIC_VPMINUB, &CPU::emulate_vpminub },
-            { ZYDIS_MNEMONIC_VPMINUW, &CPU::emulate_vpminuw },
-            { ZYDIS_MNEMONIC_VPADDW, &CPU::emulate_vpaddw },
-            { ZYDIS_MNEMONIC_VTESTPS, &CPU::emulate_vtestps },
-            { ZYDIS_MNEMONIC_VTESTPD, &CPU::emulate_vtestpd },
-            { ZYDIS_MNEMONIC_VPERMILPD, &CPU::emulate_vpermilpd },
-            { ZYDIS_MNEMONIC_VPERM2F128, &CPU::emulate_vperm2f128 },
-            { ZYDIS_MNEMONIC_VPERM2I128, &CPU::emulate_vperm2i128 },
-            { ZYDIS_MNEMONIC_VINSERTI128, &CPU::emulate_vinserti128 },
-            { ZYDIS_MNEMONIC_VEXTRACTI128, &CPU::emulate_vextracti128 },
-            { ZYDIS_MNEMONIC_CLD, &CPU::emulate_cld },
-            { ZYDIS_MNEMONIC_CVTSD2SS, &CPU::emulate_cvtsd2ss },
-            { ZYDIS_MNEMONIC_COMISD, &CPU::emulate_comisd },
-            { ZYDIS_MNEMONIC_SYSCALL, &CPU::emulate_syscall },
-            { ZYDIS_MNEMONIC_LSL, &CPU::emulate_lsl },
-
+            {ZYDIS_MNEMONIC_MOV, &CPU::emulate_mov},
+            {ZYDIS_MNEMONIC_ADD, &CPU::emulate_add},
+            {ZYDIS_MNEMONIC_SUB, &CPU::emulate_sub},
+            {ZYDIS_MNEMONIC_XOR, &CPU::emulate_xor},
+            {ZYDIS_MNEMONIC_AND, &CPU::emulate_and},
+            {ZYDIS_MNEMONIC_OR, &CPU::emulate_or},
+            {ZYDIS_MNEMONIC_CMP, &CPU::emulate_cmp},
+            {ZYDIS_MNEMONIC_TEST, &CPU::emulate_test},
+            {ZYDIS_MNEMONIC_SHL, &CPU::emulate_shl},
+            {ZYDIS_MNEMONIC_SHR, &CPU::emulate_shr},
+            {ZYDIS_MNEMONIC_SAR, &CPU::emulate_sar},
+            {ZYDIS_MNEMONIC_ROL, &CPU::emulate_rol},
+            {ZYDIS_MNEMONIC_ROR, &CPU::emulate_ror},
+            {ZYDIS_MNEMONIC_JZ, &CPU::emulate_jz},
+            {ZYDIS_MNEMONIC_JNZ, &CPU::emulate_jnz},
+            {ZYDIS_MNEMONIC_NOP, &CPU::emulate_nop},
+            {ZYDIS_MNEMONIC_PUSH, &CPU::emulate_push},
+            {ZYDIS_MNEMONIC_POP, &CPU::emulate_pop},
+            {ZYDIS_MNEMONIC_CALL, &CPU::emulate_call},
+            {ZYDIS_MNEMONIC_RET, &CPU::emulate_ret},
+            {ZYDIS_MNEMONIC_JMP, &CPU::emulate_jmp},
+            {ZYDIS_MNEMONIC_LEA, &CPU::emulate_lea},
+            {ZYDIS_MNEMONIC_CPUID, &CPU::emulate_cpuid},
+            {ZYDIS_MNEMONIC_NOT, &CPU::emulate_not},
+            {ZYDIS_MNEMONIC_NEG, &CPU::emulate_neg},
+            {ZYDIS_MNEMONIC_XCHG, &CPU::emulate_xchg},
+            {ZYDIS_MNEMONIC_MUL, &CPU::emulate_mul},
+            {ZYDIS_MNEMONIC_IMUL, &CPU::emulate_imul},
+            {ZYDIS_MNEMONIC_SETNZ, &CPU::emulate_setnz},
+            {ZYDIS_MNEMONIC_SETZ, &CPU::emulate_setz},
+            {ZYDIS_MNEMONIC_BT, &CPU::emulate_bt},
+            {ZYDIS_MNEMONIC_BTR, &CPU::emulate_btr},
+            {ZYDIS_MNEMONIC_JNB, &CPU::emulate_jnb},
+            {ZYDIS_MNEMONIC_XGETBV, &CPU::emulate_xgetbv},
+            {ZYDIS_MNEMONIC_JL, &CPU::emulate_jl},
+            {ZYDIS_MNEMONIC_CMPXCHG, &CPU::emulate_cmpxchg},
+            {ZYDIS_MNEMONIC_JLE, &CPU::emulate_jle},
+            {ZYDIS_MNEMONIC_MOVSXD, &CPU::emulate_movsxd},
+            {ZYDIS_MNEMONIC_MOVZX, &CPU::emulate_movzx},
+            {ZYDIS_MNEMONIC_DEC, &CPU::emulate_dec},
+            {ZYDIS_MNEMONIC_JB, &CPU::emulate_jb},
+            {ZYDIS_MNEMONIC_JBE, &CPU::emulate_jbe},
+            {ZYDIS_MNEMONIC_POPFQ, &CPU::emulate_popfq},
+            {ZYDIS_MNEMONIC_PUSHFQ, &CPU::emulate_pushfq},
+            {ZYDIS_MNEMONIC_CMOVZ, &CPU::emulate_cmovz},
+            {ZYDIS_MNEMONIC_INC, &CPU::emulate_inc},
+            {ZYDIS_MNEMONIC_DIV, &CPU::emulate_div},
+            {ZYDIS_MNEMONIC_MOVQ, &CPU::emulate_movq},
+            {ZYDIS_MNEMONIC_JNBE, &CPU::emulate_jnbe},
+            {ZYDIS_MNEMONIC_PUNPCKLQDQ, &CPU::emulate_punpcklqdq},
+            {ZYDIS_MNEMONIC_MOVDQA, &CPU::emulate_movdqa},
+            {ZYDIS_MNEMONIC_VINSERTF128, &CPU::emulate_vinsertf128},
+            {ZYDIS_MNEMONIC_VMOVDQU, &CPU::emulate_vmovdqu},
+            {ZYDIS_MNEMONIC_VZEROUPPER, &CPU::emulate_vzeroupper},
+            {ZYDIS_MNEMONIC_MOVUPS, &CPU::emulate_movups},
+            {ZYDIS_MNEMONIC_MOVDQU, &CPU::emulate_movdqu},
+            {ZYDIS_MNEMONIC_XORPS, &CPU::emulate_xorps},
+            {ZYDIS_MNEMONIC_STOSW, &CPU::emulate_stosw},
+            {ZYDIS_MNEMONIC_SBB, &CPU::emulate_sbb},
+            {ZYDIS_MNEMONIC_CMOVB, &CPU::emulate_cmovb},
+            {ZYDIS_MNEMONIC_VMOVDQA, &CPU::emulate_vmovdqa},
+            {ZYDIS_MNEMONIC_SETBE, &CPU::emulate_setbe},
+            {ZYDIS_MNEMONIC_CMOVNZ, &CPU::emulate_cmovnz},
+            {ZYDIS_MNEMONIC_XADD, &CPU::emulate_xadd},
+            {ZYDIS_MNEMONIC_CMOVNBE, &CPU::emulate_cmovnbe},
+            {ZYDIS_MNEMONIC_STOSQ, &CPU::emulate_stosq},
+            {ZYDIS_MNEMONIC_CDQE, &CPU::emulate_cdqe},
+            {ZYDIS_MNEMONIC_MOVSX, &CPU::emulate_movsx},
+            {ZYDIS_MNEMONIC_RCR, &CPU::emulate_rcr},
+            {ZYDIS_MNEMONIC_CLC, &CPU::emulate_clc},
+            {ZYDIS_MNEMONIC_ADC, &CPU::emulate_adc},
+            {ZYDIS_MNEMONIC_STC, &CPU::emulate_stc},
+            {ZYDIS_MNEMONIC_STOSD, &CPU::emulate_stosd},
+            {ZYDIS_MNEMONIC_STOSB, &CPU::emulate_stosb},
+            {ZYDIS_MNEMONIC_MOVAPS, &CPU::emulate_movaps},
+            {ZYDIS_MNEMONIC_JNLE, &CPU::emulate_jnle},
+            {ZYDIS_MNEMONIC_JNL, &CPU::emulate_jnl},
+            {ZYDIS_MNEMONIC_JS, &CPU::emulate_js},
+            {ZYDIS_MNEMONIC_JNS, &CPU::emulate_jns},
+            {ZYDIS_MNEMONIC_CMOVS, &CPU::emulate_cmovs},
+            {ZYDIS_MNEMONIC_CMOVNL, &CPU::emulate_cmovnl},
+            {ZYDIS_MNEMONIC_CMOVBE, &CPU::emulate_cmovbe},
+            {ZYDIS_MNEMONIC_SETB, &CPU::emulate_setb},
+            {ZYDIS_MNEMONIC_SETNBE, &CPU::emulate_setnbe},
+            {ZYDIS_MNEMONIC_CMOVNB, &CPU::emulate_cmovnb},
+            {ZYDIS_MNEMONIC_CMOVL, &CPU::emulate_cmovl},
+            {ZYDIS_MNEMONIC_MOVSD, &CPU::emulate_movsd},
+            {ZYDIS_MNEMONIC_PSRLDQ, &CPU::emulate_psrldq},
+            {ZYDIS_MNEMONIC_MOVD, &CPU::emulate_movd},
+            {ZYDIS_MNEMONIC_RCL, &CPU::emulate_rcl},
+            {ZYDIS_MNEMONIC_SHLD, &CPU::emulate_shld},
+            {ZYDIS_MNEMONIC_SHRD, &CPU::emulate_shrd},
+            {ZYDIS_MNEMONIC_CMOVNS, &CPU::emulate_cmovns},
+            {ZYDIS_MNEMONIC_MOVSB, &CPU::emulate_movsb},
+            {ZYDIS_MNEMONIC_MOVLHPS, &CPU::emulate_movlhps},
+            {ZYDIS_MNEMONIC_VMOVUPS, &CPU::emulate_vmovups},
+            {ZYDIS_MNEMONIC_VMOVAPS, &CPU::emulate_vmovaps},
+            {ZYDIS_MNEMONIC_SETNB, &CPU::emulate_setnb},
+            {ZYDIS_MNEMONIC_SCASD, &CPU::emulate_scasd},
+            {ZYDIS_MNEMONIC_BSR, &CPU::emulate_bsr},
+            {ZYDIS_MNEMONIC_PUNPCKLBW, &CPU::emulate_punpcklbw},
+            {ZYDIS_MNEMONIC_CMOVO, &CPU::emulate_cmovo},
+            {ZYDIS_MNEMONIC_BSWAP, &CPU::emulate_bswap},
+            {ZYDIS_MNEMONIC_CMOVP, &CPU::emulate_cmovp},
+            {ZYDIS_MNEMONIC_CMOVNP, &CPU::emulate_cmovnp},
+            {ZYDIS_MNEMONIC_JNP, &CPU::emulate_jnp},
+            {ZYDIS_MNEMONIC_SETNS, &CPU::emulate_setns},
+            {ZYDIS_MNEMONIC_CMOVNO, &CPU::emulate_cmovno},
+            {ZYDIS_MNEMONIC_JP, &CPU::emulate_jp},
+            {ZYDIS_MNEMONIC_CMOVLE, &CPU::emulate_cmovle},
+            {ZYDIS_MNEMONIC_PREFETCHW, &CPU::emulate_prefetchw},
+            {ZYDIS_MNEMONIC_BTS, &CPU::emulate_bts},
+            {ZYDIS_MNEMONIC_SETP, &CPU::emulate_setp},
+            {ZYDIS_MNEMONIC_SETNLE, &CPU::emulate_setnle},
+            {ZYDIS_MNEMONIC_JNO, &CPU::emulate_jno},
+            {ZYDIS_MNEMONIC_SETL, &CPU::emulate_setl},
+            {ZYDIS_MNEMONIC_JO, &CPU::emulate_jo},
+            {ZYDIS_MNEMONIC_CMOVNLE, &CPU::emulate_cmovnle},
+            {ZYDIS_MNEMONIC_SETNP, &CPU::emulate_setnp},
+            {ZYDIS_MNEMONIC_SETNL, &CPU::emulate_setnl},
+            {ZYDIS_MNEMONIC_SETS, &CPU::emulate_sets},
+            {ZYDIS_MNEMONIC_SETNO, &CPU::emulate_setno},
+            {ZYDIS_MNEMONIC_SETLE, &CPU::emulate_setle},
+            {ZYDIS_MNEMONIC_SETO, &CPU::emulate_seto},
+            {ZYDIS_MNEMONIC_MOVSS, &CPU::emulate_movss},
+            {ZYDIS_MNEMONIC_MOVSQ, &CPU::emulate_movsq},
+            {ZYDIS_MNEMONIC_RDTSC, &CPU::emulate_rdtsc},
+            {ZYDIS_MNEMONIC_MULSS, &CPU::emulate_mulss},
+            {ZYDIS_MNEMONIC_COMISS, &CPU::emulate_comiss},
+            {ZYDIS_MNEMONIC_CVTTSS2SI, &CPU::emulate_cvttss2si},
+            {ZYDIS_MNEMONIC_CVTSI2SS, &CPU::emulate_cvtsi2ss},
+            {ZYDIS_MNEMONIC_TZCNT, &CPU::emulate_tzcnt},
+            {ZYDIS_MNEMONIC_RCPSS, &CPU::emulate_rcpss},
+            {ZYDIS_MNEMONIC_DIVSS, &CPU::emulate_divss},
+            {ZYDIS_MNEMONIC_CVTSS2SD, &CPU::emulate_cvtss2sd},
+            {ZYDIS_MNEMONIC_ANDPS, &CPU::emulate_andps},
+            {ZYDIS_MNEMONIC_CVTDQ2PS, &CPU::emulate_cvtdq2ps},
+            {ZYDIS_MNEMONIC_ADDSS, &CPU::emulate_addss},
+            {ZYDIS_MNEMONIC_CDQ, &CPU::emulate_cdq},
+            {ZYDIS_MNEMONIC_CQO, &CPU::emulate_cqo},
+            {ZYDIS_MNEMONIC_CVTSI2SD, &CPU::emulate_cvtsi2sd},
+            {ZYDIS_MNEMONIC_DIVSD, &CPU::emulate_divsd},
+            {ZYDIS_MNEMONIC_MULSD, &CPU::emulate_mulsd},
+            {ZYDIS_MNEMONIC_SUBSS, &CPU::emulate_subss},
+            {ZYDIS_MNEMONIC_ADDSD, &CPU::emulate_addsd},
+            {ZYDIS_MNEMONIC_SUBSD, &CPU::emulate_subsd},
+            {ZYDIS_MNEMONIC_SQRTPD, &CPU::emulate_sqrtpd},
+            {ZYDIS_MNEMONIC_IDIV, &CPU::emulate_idiv},
+            {ZYDIS_MNEMONIC_LFENCE, &CPU::emulate_lfence},
+            {ZYDIS_MNEMONIC_VPXOR, &CPU::emulate_vpxor},
+            {ZYDIS_MNEMONIC_VPCMPEQW, &CPU::emulate_vpcmpeqw},
+            {ZYDIS_MNEMONIC_VPMOVMSKB, &CPU::emulate_vpmovmskb},
+            {ZYDIS_MNEMONIC_PCMPISTRI, &CPU::emulate_pcmpistri},
+            {ZYDIS_MNEMONIC_BSF, &CPU::emulate_bsf},
+            {ZYDIS_MNEMONIC_CMPXCHG16B, &CPU::emulate_cmpxchg16b},
+            {ZYDIS_MNEMONIC_UNPCKHPD, &CPU::emulate_unpckhpd},
+            {ZYDIS_MNEMONIC_BTC, &CPU::emulate_btc},
+            {ZYDIS_MNEMONIC_VPCMPEQB, &CPU::emulate_vpcmpeqb},
+            {ZYDIS_MNEMONIC_PSHUFLW, &CPU::emulate_pshuflw},
+            {ZYDIS_MNEMONIC_PCMPEQB, &CPU::emulate_pcmpeqb},
+            {ZYDIS_MNEMONIC_PSHUFD, &CPU::emulate_pshufd},
+            {ZYDIS_MNEMONIC_POR, &CPU::emulate_por},
+            {ZYDIS_MNEMONIC_PMOVMSKB, &CPU::emulate_pmovmskb},
+            {ZYDIS_MNEMONIC_PAUSE, &CPU::emulate_pause},
+            {ZYDIS_MNEMONIC_SHUFPS, &CPU::emulate_shufps},
+            {ZYDIS_MNEMONIC_UNPCKLPS, &CPU::emulate_unpcklps},
+            {ZYDIS_MNEMONIC_SQRTSS, &CPU::emulate_sqrtss},
+            {ZYDIS_MNEMONIC_RSQRTPS, &CPU::emulate_rsqrtps},
+            {ZYDIS_MNEMONIC_DIVPS, &CPU::emulate_divps},
+            {ZYDIS_MNEMONIC_CVTPS2PD, &CPU::emulate_cvtps2pd},
+            {ZYDIS_MNEMONIC_PCMPEQW, &CPU::emulate_pcmpeqw},
+            {ZYDIS_MNEMONIC_VMOVNTDQ, &CPU::emulate_vmovntdq},
+            {ZYDIS_MNEMONIC_SFENCE, &CPU::emulate_sfence},
+            {ZYDIS_MNEMONIC_MOVHPD, &CPU::emulate_movhpd},
+            {ZYDIS_MNEMONIC_PADDQ, &CPU::emulate_paddq},
+            {ZYDIS_MNEMONIC_CVTTSD2SI, &CPU::emulate_cvttsd2si},
+            {ZYDIS_MNEMONIC_STMXCSR, &CPU::emulate_stmxcsr},
+            {ZYDIS_MNEMONIC_FNSTCW, &CPU::emulate_fnstcw},
+            {ZYDIS_MNEMONIC_UCOMISS, &CPU::emulate_ucomiss},
+            {ZYDIS_MNEMONIC_ROUNDSS, &CPU::emulate_roundss},
+            {ZYDIS_MNEMONIC_LEAVE, &CPU::emulate_leave},
+            {ZYDIS_MNEMONIC_PUSHF, &CPU::emulate_pushf},
+            {ZYDIS_MNEMONIC_PUSHFD, &CPU::emulate_pushfd},
+            {ZYDIS_MNEMONIC_VMOVD, &CPU::emulate_vmovd},
+            {ZYDIS_MNEMONIC_ORPS, &CPU::emulate_orps},
+            {ZYDIS_MNEMONIC_SCASB, &CPU::emulate_scasb},
+            {ZYDIS_MNEMONIC_CMC, &CPU::emulate_cmc},
+            {ZYDIS_MNEMONIC_LAHF, &CPU::emulate_lahf},
+            {ZYDIS_MNEMONIC_CBW, &CPU::emulate_cbw},
+            {ZYDIS_MNEMONIC_CWDE, &CPU::emulate_cwde},
+            {ZYDIS_MNEMONIC_LODSB, &CPU::emulate_lodsb},
+            {ZYDIS_MNEMONIC_LODSW, &CPU::emulate_lodsw},
+            {ZYDIS_MNEMONIC_LODSD, &CPU::emulate_lodsd},
+            {ZYDIS_MNEMONIC_LODSQ, &CPU::emulate_lodsq},
+            {ZYDIS_MNEMONIC_VPSHUFB, &CPU::emulate_vpshufb},
+            {ZYDIS_MNEMONIC_LZCNT, &CPU::emulate_lzcnt},
+            {ZYDIS_MNEMONIC_VPMASKMOVD, &CPU::emulate_vpmaskmovd},
+            {ZYDIS_MNEMONIC_VPAND, &CPU::emulate_vpand},
+            {ZYDIS_MNEMONIC_PSHUFB, &CPU::emulate_pshufb},
+            {ZYDIS_MNEMONIC_FXSAVE, &CPU::emulate_fxsave},
+            {ZYDIS_MNEMONIC_FXRSTOR, &CPU::emulate_fxrstor},
+            {ZYDIS_MNEMONIC_SGDT, &CPU::emulate_sgdt},
+            {ZYDIS_MNEMONIC_SAHF, &CPU::emulate_sahf},
+            {ZYDIS_MNEMONIC_XLAT, &CPU::emulate_xlatb},
+            {ZYDIS_MNEMONIC_VPADDQ, &CPU::emulate_vpaddq},
+            {ZYDIS_MNEMONIC_VPSUBQ, &CPU::emulate_vpsubq},
+            {ZYDIS_MNEMONIC_VPOR, &CPU::emulate_vpor},
+            {ZYDIS_MNEMONIC_VPMULUDQ, &CPU::emulate_vpmuludq},
+            {ZYDIS_MNEMONIC_VPCMPEQQ, &CPU::emulate_vpcmpeqq},
+            {ZYDIS_MNEMONIC_VPSLLQ, &CPU::emulate_vpsllq},
+            {ZYDIS_MNEMONIC_VPANDN, &CPU::emulate_vpandn},
+            {ZYDIS_MNEMONIC_VPSLLVQ, &CPU::emulate_vpsllvq},
+            {ZYDIS_MNEMONIC_VPCMPGTQ, &CPU::emulate_vpcmpgtq},
+            {ZYDIS_MNEMONIC_VPBLENDVB, &CPU::emulate_vpblendvb},
+            {ZYDIS_MNEMONIC_VPERMQ, &CPU::emulate_vpermq},
+            {ZYDIS_MNEMONIC_VPSHUFD, &CPU::emulate_vpshufd},
+            {ZYDIS_MNEMONIC_VPUNPCKLQDQ, &CPU::emulate_vpunpcklqdq},
+            {ZYDIS_MNEMONIC_VPUNPCKHQDQ, &CPU::emulate_vpunpckhqdq},
+            {ZYDIS_MNEMONIC_VPACKUSDW, &CPU::emulate_vpackusdw},
+            {ZYDIS_MNEMONIC_VPMADDWD, &CPU::emulate_vpmaddwd},
+            {ZYDIS_MNEMONIC_VPSADBW, &CPU::emulate_vpsadbw},
+            {ZYDIS_MNEMONIC_VPALIGNR, &CPU::emulate_vpalignr},
+            {ZYDIS_MNEMONIC_VPGATHERDD, &CPU::emulate_vpgatherdd},
+            {ZYDIS_MNEMONIC_VCVTDQ2PS, &CPU::emulate_vcvtdq2ps},
+            {ZYDIS_MNEMONIC_VMULPS, &CPU::emulate_vmulps},
+            {ZYDIS_MNEMONIC_VADDPS, &CPU::emulate_vaddps},
+            {ZYDIS_MNEMONIC_VCVTPS2DQ, &CPU::emulate_vcvtps2dq},
+            {ZYDIS_MNEMONIC_VHADDPS, &CPU::emulate_vhaddps},
+            {ZYDIS_MNEMONIC_VPERMD, &CPU::emulate_vpermd},
+            {ZYDIS_MNEMONIC_VPMULLW, &CPU::emulate_vpmullw},
+            {ZYDIS_MNEMONIC_VPMULHW, &CPU::emulate_vpmulhw},
+            {ZYDIS_MNEMONIC_VPTEST, &CPU::emulate_vptest},
+            {ZYDIS_MNEMONIC_VPMOVSXWD, &CPU::emulate_vpmovsxwd},
+            {ZYDIS_MNEMONIC_VPADDD, &CPU::emulate_vpaddd},
+            {ZYDIS_MNEMONIC_PADDD, &CPU::emulate_paddd},
+            {ZYDIS_MNEMONIC_PADDW, &CPU::emulate_paddw},
+            {ZYDIS_MNEMONIC_PADDB, &CPU::emulate_paddb},
+            {ZYDIS_MNEMONIC_PMOVZXDQ, &CPU::emulate_pmovzxdq},
+            {ZYDIS_MNEMONIC_PSUBQ, &CPU::emulate_psubq},
+            {ZYDIS_MNEMONIC_VPMOVZXBW, &CPU::emulate_vpmovzxbw},
+            {ZYDIS_MNEMONIC_PMOVZXWD, &CPU::emulate_pmovzxwd},
+            {ZYDIS_MNEMONIC_VBLENDPS, &CPU::emulate_vblendps},
+            {ZYDIS_MNEMONIC_VFMADD213PS, &CPU::emulate_vfmadd213ps},
+            {ZYDIS_MNEMONIC_PXOR, &CPU::emulate_pxor},
+            {ZYDIS_MNEMONIC_PMOVSXWD, &CPU::emulate_pmovsxwd},
+            {ZYDIS_MNEMONIC_PMOVSXWQ, &CPU::emulate_pmovsxwq},
+            {ZYDIS_MNEMONIC_KMOVB, &CPU::emulate_kmovb},
+            {ZYDIS_MNEMONIC_KMOVW, &CPU::emulate_kmovw},
+            {ZYDIS_MNEMONIC_KMOVD, &CPU::emulate_kmovd},
+            {ZYDIS_MNEMONIC_KMOVQ, &CPU::emulate_kmovq},
+            {ZYDIS_MNEMONIC_ROUNDPS, &CPU::emulate_roundps},
+            {ZYDIS_MNEMONIC_VROUNDPS, &CPU::emulate_vroundps},
+            {ZYDIS_MNEMONIC_VPERMILPS, &CPU::emulate_vpermilps},
+            {ZYDIS_MNEMONIC_VMOVAPD, &CPU::emulate_vmovapd},
+            {ZYDIS_MNEMONIC_VMOVUPD, &CPU::emulate_vmovupd},
+            {ZYDIS_MNEMONIC_VEXTRACTF128, &CPU::emulate_vextractf128},
+            {ZYDIS_MNEMONIC_VBROADCASTSS, &CPU::emulate_vbroadcastss},
+            {ZYDIS_MNEMONIC_VBROADCASTSD, &CPU::emulate_vbroadcastsd},
+            {ZYDIS_MNEMONIC_VBROADCASTF128, &CPU::emulate_vbroadcastf128},
+            {ZYDIS_MNEMONIC_PMINUB, &CPU::emulate_pminub},
+            {ZYDIS_MNEMONIC_PMINUW, &CPU::emulate_pminuw},
+            {ZYDIS_MNEMONIC_VPMINUB, &CPU::emulate_vpminub},
+            {ZYDIS_MNEMONIC_VPMINUW, &CPU::emulate_vpminuw},
+            {ZYDIS_MNEMONIC_VPADDW, &CPU::emulate_vpaddw},
+            {ZYDIS_MNEMONIC_VTESTPS, &CPU::emulate_vtestps},
+            {ZYDIS_MNEMONIC_VTESTPD, &CPU::emulate_vtestpd},
+            {ZYDIS_MNEMONIC_VPERMILPD, &CPU::emulate_vpermilpd},
+            {ZYDIS_MNEMONIC_VPERM2F128, &CPU::emulate_vperm2f128},
+            {ZYDIS_MNEMONIC_VPERM2I128, &CPU::emulate_vperm2i128},
+            {ZYDIS_MNEMONIC_VINSERTI128, &CPU::emulate_vinserti128},
+            {ZYDIS_MNEMONIC_VEXTRACTI128, &CPU::emulate_vextracti128},
+            {ZYDIS_MNEMONIC_CLD, &CPU::emulate_cld},
+            {ZYDIS_MNEMONIC_CVTSD2SS, &CPU::emulate_cvtsd2ss},
+            {ZYDIS_MNEMONIC_COMISD, &CPU::emulate_comisd},
+            {ZYDIS_MNEMONIC_SYSCALL, &CPU::emulate_syscall},
+            {ZYDIS_MNEMONIC_LSL, &CPU::emulate_lsl},
 
         };
-
-
     }
 
     // ------------------- Public Methods -------------------
@@ -2163,39 +778,38 @@ public:
     }
 
     uint64_t getThreadRealRIP() {
-
         uint64_t val = 0;
         if (!ReadMemory(g_regs.rdx.q, &val, sizeof(uint64_t))) {
             LOG(L"[!] Failed to read memory at 0x" << std::hex << g_regs.rdx.q);
         }
         return val;
     }
-    uint64_t start_emulation() {
+    uint64_t StartEmulation() {
         address = g_regs.rip;
         BYTE buffer[16] = { 0 };
         SIZE_T bytesRead = 0;
         Zydis disasm(true);
         //
-        //#if analyze_ENABLED
+        // #if analyze_ENABLED
         //
         //        if (is_first_time) {
         //
         //            g_regs_first_time = g_regs;
         //
         //        }
-        //#endif
+        // #endif
         if (bpType == BreakpointType::ExecGuard)
             AddExecutionEx_for_noexec_range();
         while (true) {
-            //DumpRegisters();
-            if (!ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, sizeof(buffer), &bytesRead) || bytesRead == 0) {
+            // DumpRegisters();
+            if (!ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer,
+                sizeof(buffer), &bytesRead) ||
+                bytesRead == 0) {
                 DWORD err = GetLastError();
-                LOG(L"[!] Failed to read memory at 0x" << std::hex << address
-                    << L", GetLastError = " << std::dec << err);
+                LOG(L"[!] Failed to read memory at 0x"
+                    << std::hex << address << L", GetLastError = " << std::dec << err);
                 break;
             }
-
-
 
             if (disasm.Disassemble(address, buffer, bytesRead)) {
 #if DB_ENABLED
@@ -2216,13 +830,12 @@ public:
                 if (patchDistance == patchOffsetFromInstruction) {
                     is_patch_cpuid = 0;
                     patchDistance = 0;
-                    const std::vector<uint8_t>& patch = BuildCpuidPatch(g_regs.rax.q, g_regs.rbx.q, g_regs.rcx.q, g_regs.rdx.q);
+                    const std::vector<uint8_t>& patch = BuildCpuidPatch(
+                        g_regs.rax.q, g_regs.rbx.q, g_regs.rcx.q, g_regs.rdx.q);
                     char* buffer = new char[patch.size()];
                     std::memcpy(buffer, patch.data(), patch.size());
                     ApplyInlineHook(buffer, patch.size());
                 }
-
-
 
 #endif
 
@@ -2230,8 +843,8 @@ public:
                 instr = op->info;
 
                 instrText = disasm.InstructionText();
-                LOG(L"0x" << std::hex << disasm.Address()
-                    << L": " << std::wstring(instrText.begin(), instrText.end()));
+                LOG(L"0x" << std::hex << disasm.Address() << L": "
+                    << std::wstring(instrText.begin(), instrText.end()));
 
                 has_lock = (instr.attributes & ZYDIS_ATTRIB_HAS_LOCK) != 0;
                 bool has_rep = (instr.attributes & ZYDIS_ATTRIB_HAS_REP) != 0;
@@ -2246,47 +859,42 @@ public:
                     LOG(L"[~] REPNE prefix detected.");
                 if (has_VEX)
                     LOG(L"[~] VEX prefix detected.");
-                if (instr.mnemonic == ZYDIS_MNEMONIC_SYSCALL)
-                {
-                    LOG_analyze(BLUE, "[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
-                    LOG("[+] syscall in : " << std::hex << g_regs.rip << " rax : " << std::hex << g_regs.rax.q);
-
+                if (instr.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
+                    LOG_analyze(BLUE, "[+] syscall in : " << std::hex << g_regs.rip
+                        << " rax : " << std::hex
+                        << g_regs.rax.q);
+                    LOG("[+] syscall in : " << std::hex << g_regs.rip
+                        << " rax : " << std::hex << g_regs.rax.q);
 
 #if Save_Rva
 
-                    addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase), instr.length, RVAType::SYSCALL, filename);
-#endif 
+                    addRVA(entries,
+                        g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),
+                        instr.length, RVAType::SYSCALL, filename);
+#endif
                     if (bpType == BreakpointType::ExecGuard) {
                         ApplyRegistersToContext();
                         SingleStep();
                         break;
                     }
                     else {
-                      return g_regs.rip + instr.length;
+                        return g_regs.rip + instr.length;
                     }
-
-                
                 }
-                if (instr.mnemonic == ZYDIS_MNEMONIC_LSL)
-                {
+                if (instr.mnemonic == ZYDIS_MNEMONIC_LSL) {
                     if (bpType == BreakpointType::ExecGuard) {
-                        AddExecutionEx((LPVOID)g_regs.rip, instr.length);
                         ApplyRegistersToContext();
                         SingleStep();
-                        RemoveExecutionEx((LPVOID)g_regs.rip, instr.length);
+
                         break;
                     }
                     else {
-                       return g_regs.rip + instr.length;
+                        return g_regs.rip + instr.length;
                     }
-
-      
                 }
-                if (instr.mnemonic == ZYDIS_MNEMONIC_INT3)
-                {
+                if (instr.mnemonic == ZYDIS_MNEMONIC_INT3) {
                     LOG_analyze(BLUE, "[+] INT3 at: 0x" << std::hex << g_regs.rip);
                     if (bpType == BreakpointType::ExecGuard) {
-
                         ApplyRegistersToContext();
                         SingleStep();
 
@@ -2295,25 +903,18 @@ public:
                     else {
                         return CPU_PAUSED;
                     }
-         
                 }
                 if (is_paused && instr.mnemonic == ZYDIS_MNEMONIC_JMP) {
                     is_paused = 0;
                     return g_regs.rip + instr.length;
                 }
 
-
                 auto it = dispatch_table.find(instr.mnemonic);
                 if (it != dispatch_table.end()) {
-
-
-
-                    if (has_rep || has_repne)
-                    {
+                    if (has_rep || has_repne) {
                         g_regs.rflags.flags.NT = 1;
 
-                        for (uint64_t count = g_regs.rcx.q; count > 0; count--)
-                        {
+                        for (uint64_t count = g_regs.rcx.q; count > 0; count--) {
                             (this->*it->second)(op);
                             g_regs.rcx.q--;
 
@@ -2322,22 +923,19 @@ public:
                                 g_regs.rip += instr.length;
                             }
 
-#if DB_ENABLED 
+#if DB_ENABLED
                             SingleStepAndCompare(pi.hProcess, pi.hThread);
-#endif 
+#endif
                         }
                     }
 
                     else {
                         (this->*it->second)(op);
 
-                        if (!disasm.IsJump() &&
-                            instr.mnemonic != ZYDIS_MNEMONIC_CALL &&
-                            instr.mnemonic != ZYDIS_MNEMONIC_RET)
-                        {
+                        if (!disasm.IsJump() && instr.mnemonic != ZYDIS_MNEMONIC_CALL &&
+                            instr.mnemonic != ZYDIS_MNEMONIC_RET) {
                             g_regs.rip += instr.length;
                         }
-
 
 #if DB_ENABLED
                         if (instr.mnemonic != ZYDIS_MNEMONIC_SGDT) {
@@ -2349,39 +947,40 @@ public:
                 }
                 else {
                     std::wcout << L"[!] Instruction not implemented: "
-                        << std::wstring(instrText.begin(), instrText.end()) << " at : " << std::hex << g_regs.rip << std::endl;
+                        << std::wstring(instrText.begin(), instrText.end())
+                        << " at : " << std::hex << g_regs.rip << std::endl;
                     exit(0);
                 }
 
                 address = g_regs.rip;
 
-
                 if (!IsInEmulationRange(address)) {
 #if analyze_ENABLED
 
-
                     std::string fuction_name = GetExportedFunctionNameByAddress(address);
                     if (!fuction_name.empty()) {
-                        LOG_analyze(CYAN, "Executing function: " << fuction_name.c_str() << " via [0x" << std::hex << g_regs.rip << "]");
+                        LOG_analyze(CYAN, "Executing function: " << fuction_name.c_str()
+                            << " via [0x" << std::hex
+                            << g_regs.rip << "]");
                     }
-                     
 
                     uint8_t buffer[16] = {};
                     if (ReadMemory(address, buffer, sizeof(buffer))) {
                         if (disasm.Disassemble(address, buffer, bytesRead)) {
                             const ZydisDisassembledInstruction* op = disasm.GetInstr();
                             if (op->info.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
-                                LOG_analyze(YELLOW, "indirect syscall from RIP[0x" << std::hex << g_regs.rip << "]");
+                                LOG_analyze(YELLOW, "indirect syscall from RIP[0x"
+                                    << std::hex << g_regs.rip << "]");
                             }
                         }
                     }
 
 #endif
                     if (bpType == BreakpointType::ExecGuard) {
-                     RemoveExecutionEx_for_noexec_range();
-                     return CPU_PAUSED;
+                        RemoveExecutionEx_for_noexec_range();
+                        return CPU_PAUSED;
                     }
-                 
+
 #if FUll_user_MODE
                     if (IsInSystemRange(address))
 #endif
@@ -2390,23 +989,15 @@ public:
                         ReadMemory(g_regs.rsp.q, &value, 8);
                         return value;
                     }
-
-
-
                 }
 
-
-
-
             }
-
 
             else {
-                std::wcout << L"Failed to disassemble at address 0x" << std::hex << address << std::endl;
+                std::wcout << L"Failed to disassemble at address 0x" << std::hex
+                    << address << std::endl;
                 break;
             }
-
-
         }
 
         if (bpType == BreakpointType::ExecGuard)
@@ -2414,15 +1005,14 @@ public:
         return -1;
     }
 
-
-
-
     void DumpRegisters() {
-        std::cout << "0x" << std::hex << address
-            << ": " << instrText.c_str() << std::endl;
+        std::cout << "0x" << std::hex << address << ": " << instrText.c_str()
+            << std::endl;
 
         std::wcout << L"===== Register Dump =====" << std::endl;
-#define DUMP(reg) std::wcout << L#reg << L": 0x" << std::hex << std::setw(16) << std::setfill(L'0') << g_regs.reg.q << std::endl
+#define DUMP(reg)                                                              \
+  std::wcout << L#reg << L": 0x" << std::hex << std::setw(16)                  \
+             << std::setfill(L'0') << g_regs.reg.q << std::endl
 
         DUMP(rax);
         DUMP(rbx);
@@ -2441,42 +1031,36 @@ public:
         DUMP(r14);
         DUMP(r15);
 
-        std::wcout << L"RIP: 0x" << std::hex << std::setw(16) << g_regs.rip << std::endl;
-        std::wcout << L"RFLAGS: 0x" << std::hex << std::setw(16) << g_regs.rflags.value << std::endl;
-
-        std::wcout << L"Flags => "
-            << L"CF=" << g_regs.rflags.flags.CF << L", "
-            << L"PF=" << g_regs.rflags.flags.PF << L", "
-            << L"ZF=" << g_regs.rflags.flags.ZF << L", "
-            << L"SF=" << g_regs.rflags.flags.SF << L", "
-            << L"OF=" << g_regs.rflags.flags.OF
+        std::wcout << L"RIP: 0x" << std::hex << std::setw(16) << g_regs.rip
             << std::endl;
-        std::wcout << L"GS:  0x" << std::hex << std::setw(16) << g_regs.gs_base << std::endl;
+        std::wcout << L"RFLAGS: 0x" << std::hex << std::setw(16)
+            << g_regs.rflags.value << std::endl;
+
+        std::wcout << L"Flags => " << L"CF=" << g_regs.rflags.flags.CF << L", "
+            << L"PF=" << g_regs.rflags.flags.PF << L", " << L"ZF="
+            << g_regs.rflags.flags.ZF << L", " << L"SF="
+            << g_regs.rflags.flags.SF << L", " << L"OF="
+            << g_regs.rflags.flags.OF << std::endl;
+        std::wcout << L"GS:  0x" << std::hex << std::setw(16) << g_regs.gs_base
+            << std::endl;
 
         // ----------------------------------------------
 
         std::wcout << L"==========================" << std::endl;
     }
 
-
-
-    void UpdateRegistersFromContext()
-    {
-
-
+    void UpdateRegistersFromContext() {
         g_regs.gs_base = GetTEBAddress(hThread);
-
 
         CONTEXT ctx = {};
         ctx.ContextFlags = CONTEXT_ALL | CONTEXT_XSTATE;
 
         DWORD ctxSize = 0;
-        if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-        {
+        if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) &&
+            GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
             LOG(L"[-] InitializeContext query size failed");
             return;
         }
-
 
         void* buf = malloc(ctxSize);
         if (!buf) {
@@ -2484,26 +1068,20 @@ public:
             return;
         }
 
-
         PCONTEXT pCtx = NULL;
-        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
-        {
+        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize)) {
             LOG(L"[-] InitializeContext failed");
             free(buf);
             return;
         }
 
-
-        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_AVX))
-        {
+        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_AVX)) {
             LOG(L"[-] SetXStateFeaturesMask failed");
             free(buf);
             return;
         }
 
-
-        if (!GetThreadContext(hThread, pCtx))
-        {
+        if (!GetThreadContext(hThread, pCtx)) {
             LOG(L"[-] GetThreadContext failed");
             free(buf);
             return;
@@ -2530,7 +1108,8 @@ public:
         LOG(L"[+] General registers copied");
 
         DWORD featureLength = 0;
-        PM128A pXmm = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
+        PM128A pXmm =
+            (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
         if (!pXmm || featureLength < 16 * sizeof(M128A)) {
             LOG(L"[-] LocateXStateFeature for XMM failed");
             free(buf);
@@ -2560,134 +1139,137 @@ public:
 #endif
 #if analyze_ENABLED
         SIZE_T read_peb;
-        ReadProcessMemory(pi.hProcess, (LPCVOID)(g_regs.gs_base + 0x60), &g_regs.peb_address, sizeof(g_regs.peb_address), &read_peb) && read_peb == sizeof(g_regs.peb_address);
-        ReadProcessMemory(pi.hProcess, (LPCVOID)(g_regs.peb_address + 0x18), &g_regs.peb_ldr, sizeof(g_regs.peb_ldr), &read_peb) && read_peb == sizeof(g_regs.peb_ldr);
+        ReadProcessMemory(pi.hProcess, (LPCVOID)(g_regs.gs_base + 0x60),
+            &g_regs.peb_address, sizeof(g_regs.peb_address),
+            &read_peb) &&
+            read_peb == sizeof(g_regs.peb_address);
+        ReadProcessMemory(pi.hProcess, (LPCVOID)(g_regs.peb_address + 0x18),
+            &g_regs.peb_ldr, sizeof(g_regs.peb_ldr), &read_peb) &&
+            read_peb == sizeof(g_regs.peb_ldr);
 #endif
         reg_lookup = {
             // RAX family
-            { ZYDIS_REGISTER_AL,  &g_regs.rax.l },
-            { ZYDIS_REGISTER_AH,  &g_regs.rax.h },
-            { ZYDIS_REGISTER_AX,  &g_regs.rax.w },
-            { ZYDIS_REGISTER_EAX, &g_regs.rax.d },
-            { ZYDIS_REGISTER_RAX, &g_regs.rax.q },
+            {ZYDIS_REGISTER_AL, &g_regs.rax.l},
+            {ZYDIS_REGISTER_AH, &g_regs.rax.h},
+            {ZYDIS_REGISTER_AX, &g_regs.rax.w},
+            {ZYDIS_REGISTER_EAX, &g_regs.rax.d},
+            {ZYDIS_REGISTER_RAX, &g_regs.rax.q},
             // RBX family
-            { ZYDIS_REGISTER_BL,  &g_regs.rbx.l },
-            { ZYDIS_REGISTER_BH,  &g_regs.rbx.h },
-            { ZYDIS_REGISTER_BX,  &g_regs.rbx.w },
-            { ZYDIS_REGISTER_EBX, &g_regs.rbx.d },
-            { ZYDIS_REGISTER_RBX, &g_regs.rbx.q },
+            {ZYDIS_REGISTER_BL, &g_regs.rbx.l},
+            {ZYDIS_REGISTER_BH, &g_regs.rbx.h},
+            {ZYDIS_REGISTER_BX, &g_regs.rbx.w},
+            {ZYDIS_REGISTER_EBX, &g_regs.rbx.d},
+            {ZYDIS_REGISTER_RBX, &g_regs.rbx.q},
             // RCX family
-            { ZYDIS_REGISTER_CL,  &g_regs.rcx.l },
-            { ZYDIS_REGISTER_CH,  &g_regs.rcx.h },
-            { ZYDIS_REGISTER_CX,  &g_regs.rcx.w },
-            { ZYDIS_REGISTER_ECX, &g_regs.rcx.d },
-            { ZYDIS_REGISTER_RCX, &g_regs.rcx.q },
+            {ZYDIS_REGISTER_CL, &g_regs.rcx.l},
+            {ZYDIS_REGISTER_CH, &g_regs.rcx.h},
+            {ZYDIS_REGISTER_CX, &g_regs.rcx.w},
+            {ZYDIS_REGISTER_ECX, &g_regs.rcx.d},
+            {ZYDIS_REGISTER_RCX, &g_regs.rcx.q},
             // RDX family
-            { ZYDIS_REGISTER_DL,  &g_regs.rdx.l },
-            { ZYDIS_REGISTER_DH,  &g_regs.rdx.h },
-            { ZYDIS_REGISTER_DX,  &g_regs.rdx.w },
-            { ZYDIS_REGISTER_EDX, &g_regs.rdx.d },
-            { ZYDIS_REGISTER_RDX, &g_regs.rdx.q },
+            {ZYDIS_REGISTER_DL, &g_regs.rdx.l},
+            {ZYDIS_REGISTER_DH, &g_regs.rdx.h},
+            {ZYDIS_REGISTER_DX, &g_regs.rdx.w},
+            {ZYDIS_REGISTER_EDX, &g_regs.rdx.d},
+            {ZYDIS_REGISTER_RDX, &g_regs.rdx.q},
             // RSI
-            { ZYDIS_REGISTER_SIL,  &g_regs.rsi.l },
-            { ZYDIS_REGISTER_SI,   &g_regs.rsi.w },
-            { ZYDIS_REGISTER_ESI,  &g_regs.rsi.d },
-            { ZYDIS_REGISTER_RSI,  &g_regs.rsi.q },
+            {ZYDIS_REGISTER_SIL, &g_regs.rsi.l},
+            {ZYDIS_REGISTER_SI, &g_regs.rsi.w},
+            {ZYDIS_REGISTER_ESI, &g_regs.rsi.d},
+            {ZYDIS_REGISTER_RSI, &g_regs.rsi.q},
             // RDI
-            { ZYDIS_REGISTER_DIL,  &g_regs.rdi.l },
-            { ZYDIS_REGISTER_DI,   &g_regs.rdi.w },
-            { ZYDIS_REGISTER_EDI,  &g_regs.rdi.d },
-            { ZYDIS_REGISTER_RDI,  &g_regs.rdi.q },
+            {ZYDIS_REGISTER_DIL, &g_regs.rdi.l},
+            {ZYDIS_REGISTER_DI, &g_regs.rdi.w},
+            {ZYDIS_REGISTER_EDI, &g_regs.rdi.d},
+            {ZYDIS_REGISTER_RDI, &g_regs.rdi.q},
             // RBP
-            { ZYDIS_REGISTER_BPL,  &g_regs.rbp.l },
-            { ZYDIS_REGISTER_BP,   &g_regs.rbp.w },
-            { ZYDIS_REGISTER_EBP,  &g_regs.rbp.d },
-            { ZYDIS_REGISTER_RBP,  &g_regs.rbp.q },
+            {ZYDIS_REGISTER_BPL, &g_regs.rbp.l},
+            {ZYDIS_REGISTER_BP, &g_regs.rbp.w},
+            {ZYDIS_REGISTER_EBP, &g_regs.rbp.d},
+            {ZYDIS_REGISTER_RBP, &g_regs.rbp.q},
             // RSP
-            { ZYDIS_REGISTER_SPL,  &g_regs.rsp.l },
-            { ZYDIS_REGISTER_SP,   &g_regs.rsp.w },
-            { ZYDIS_REGISTER_ESP,  &g_regs.rsp.d },
-            { ZYDIS_REGISTER_RSP,  &g_regs.rsp.q },
+            {ZYDIS_REGISTER_SPL, &g_regs.rsp.l},
+            {ZYDIS_REGISTER_SP, &g_regs.rsp.w},
+            {ZYDIS_REGISTER_ESP, &g_regs.rsp.d},
+            {ZYDIS_REGISTER_RSP, &g_regs.rsp.q},
             // R8 - R15
-            { ZYDIS_REGISTER_R8B,  &g_regs.r8.l },
-            { ZYDIS_REGISTER_R8W,  &g_regs.r8.w },
-            { ZYDIS_REGISTER_R8D,  &g_regs.r8.d },
-            { ZYDIS_REGISTER_R8,   &g_regs.r8.q },
-            { ZYDIS_REGISTER_R9B,  &g_regs.r9.l },
-            { ZYDIS_REGISTER_R9W,  &g_regs.r9.w },
-            { ZYDIS_REGISTER_R9D,  &g_regs.r9.d },
-            { ZYDIS_REGISTER_R9,   &g_regs.r9.q },
-            { ZYDIS_REGISTER_R10B, &g_regs.r10.l },
-            { ZYDIS_REGISTER_R10W, &g_regs.r10.w },
-            { ZYDIS_REGISTER_R10D, &g_regs.r10.d },
-            { ZYDIS_REGISTER_R10,  &g_regs.r10.q },
-            { ZYDIS_REGISTER_R11B, &g_regs.r11.l },
-            { ZYDIS_REGISTER_R11W, &g_regs.r11.w },
-            { ZYDIS_REGISTER_R11D, &g_regs.r11.d },
-            { ZYDIS_REGISTER_R11,  &g_regs.r11.q },
-            { ZYDIS_REGISTER_R12B, &g_regs.r12.l },
-            { ZYDIS_REGISTER_R12W, &g_regs.r12.w },
-            { ZYDIS_REGISTER_R12D, &g_regs.r12.d },
-            { ZYDIS_REGISTER_R12,  &g_regs.r12.q },
-            { ZYDIS_REGISTER_R13B, &g_regs.r13.l },
-            { ZYDIS_REGISTER_R13W, &g_regs.r13.w },
-            { ZYDIS_REGISTER_R13D, &g_regs.r13.d },
-            { ZYDIS_REGISTER_R13,  &g_regs.r13.q },
-            { ZYDIS_REGISTER_R14B, &g_regs.r14.l },
-            { ZYDIS_REGISTER_R14W, &g_regs.r14.w },
-            { ZYDIS_REGISTER_R14D, &g_regs.r14.d },
-            { ZYDIS_REGISTER_R14,  &g_regs.r14.q },
-            { ZYDIS_REGISTER_R15B, &g_regs.r15.l },
-            { ZYDIS_REGISTER_R15W, &g_regs.r15.w },
-            { ZYDIS_REGISTER_R15D, &g_regs.r15.d },
-            { ZYDIS_REGISTER_R15,  &g_regs.r15.q },
+            {ZYDIS_REGISTER_R8B, &g_regs.r8.l},
+            {ZYDIS_REGISTER_R8W, &g_regs.r8.w},
+            {ZYDIS_REGISTER_R8D, &g_regs.r8.d},
+            {ZYDIS_REGISTER_R8, &g_regs.r8.q},
+            {ZYDIS_REGISTER_R9B, &g_regs.r9.l},
+            {ZYDIS_REGISTER_R9W, &g_regs.r9.w},
+            {ZYDIS_REGISTER_R9D, &g_regs.r9.d},
+            {ZYDIS_REGISTER_R9, &g_regs.r9.q},
+            {ZYDIS_REGISTER_R10B, &g_regs.r10.l},
+            {ZYDIS_REGISTER_R10W, &g_regs.r10.w},
+            {ZYDIS_REGISTER_R10D, &g_regs.r10.d},
+            {ZYDIS_REGISTER_R10, &g_regs.r10.q},
+            {ZYDIS_REGISTER_R11B, &g_regs.r11.l},
+            {ZYDIS_REGISTER_R11W, &g_regs.r11.w},
+            {ZYDIS_REGISTER_R11D, &g_regs.r11.d},
+            {ZYDIS_REGISTER_R11, &g_regs.r11.q},
+            {ZYDIS_REGISTER_R12B, &g_regs.r12.l},
+            {ZYDIS_REGISTER_R12W, &g_regs.r12.w},
+            {ZYDIS_REGISTER_R12D, &g_regs.r12.d},
+            {ZYDIS_REGISTER_R12, &g_regs.r12.q},
+            {ZYDIS_REGISTER_R13B, &g_regs.r13.l},
+            {ZYDIS_REGISTER_R13W, &g_regs.r13.w},
+            {ZYDIS_REGISTER_R13D, &g_regs.r13.d},
+            {ZYDIS_REGISTER_R13, &g_regs.r13.q},
+            {ZYDIS_REGISTER_R14B, &g_regs.r14.l},
+            {ZYDIS_REGISTER_R14W, &g_regs.r14.w},
+            {ZYDIS_REGISTER_R14D, &g_regs.r14.d},
+            {ZYDIS_REGISTER_R14, &g_regs.r14.q},
+            {ZYDIS_REGISTER_R15B, &g_regs.r15.l},
+            {ZYDIS_REGISTER_R15W, &g_regs.r15.w},
+            {ZYDIS_REGISTER_R15D, &g_regs.r15.d},
+            {ZYDIS_REGISTER_R15, &g_regs.r15.q},
             // RIP
-            { ZYDIS_REGISTER_RIP, &g_regs.rip },
+            {ZYDIS_REGISTER_RIP, &g_regs.rip},
             // RFLAGS
-            { ZYDIS_REGISTER_RFLAGS, &g_regs.rflags },
-            { ZYDIS_REGISTER_GS, &g_regs.gs_base },
+            {ZYDIS_REGISTER_RFLAGS, &g_regs.rflags},
+            {ZYDIS_REGISTER_GS, &g_regs.gs_base},
 
             // XMM registers
-            { ZYDIS_REGISTER_XMM0, &g_regs.ymm[0].xmm},
-            { ZYDIS_REGISTER_XMM1, &g_regs.ymm[1].xmm },
-            { ZYDIS_REGISTER_XMM2, &g_regs.ymm[2].xmm },
-            { ZYDIS_REGISTER_XMM3, &g_regs.ymm[3].xmm },
-            { ZYDIS_REGISTER_XMM4, &g_regs.ymm[4].xmm },
-            { ZYDIS_REGISTER_XMM5, &g_regs.ymm[5].xmm },
-            { ZYDIS_REGISTER_XMM6, &g_regs.ymm[6].xmm },
-            { ZYDIS_REGISTER_XMM7, &g_regs.ymm[7].xmm },
-            { ZYDIS_REGISTER_XMM8, &g_regs.ymm[8].xmm },
-            { ZYDIS_REGISTER_XMM9, &g_regs.ymm[9].xmm },
-            { ZYDIS_REGISTER_XMM10, &g_regs.ymm[10].xmm },
-            { ZYDIS_REGISTER_XMM11, &g_regs.ymm[11].xmm },
-            { ZYDIS_REGISTER_XMM12, &g_regs.ymm[12].xmm },
-            { ZYDIS_REGISTER_XMM13, &g_regs.ymm[13].xmm },
-            { ZYDIS_REGISTER_XMM14, &g_regs.ymm[14].xmm },
-            { ZYDIS_REGISTER_XMM15, &g_regs.ymm[15].xmm },
+            {ZYDIS_REGISTER_XMM0, &g_regs.ymm[0].xmm},
+            {ZYDIS_REGISTER_XMM1, &g_regs.ymm[1].xmm},
+            {ZYDIS_REGISTER_XMM2, &g_regs.ymm[2].xmm},
+            {ZYDIS_REGISTER_XMM3, &g_regs.ymm[3].xmm},
+            {ZYDIS_REGISTER_XMM4, &g_regs.ymm[4].xmm},
+            {ZYDIS_REGISTER_XMM5, &g_regs.ymm[5].xmm},
+            {ZYDIS_REGISTER_XMM6, &g_regs.ymm[6].xmm},
+            {ZYDIS_REGISTER_XMM7, &g_regs.ymm[7].xmm},
+            {ZYDIS_REGISTER_XMM8, &g_regs.ymm[8].xmm},
+            {ZYDIS_REGISTER_XMM9, &g_regs.ymm[9].xmm},
+            {ZYDIS_REGISTER_XMM10, &g_regs.ymm[10].xmm},
+            {ZYDIS_REGISTER_XMM11, &g_regs.ymm[11].xmm},
+            {ZYDIS_REGISTER_XMM12, &g_regs.ymm[12].xmm},
+            {ZYDIS_REGISTER_XMM13, &g_regs.ymm[13].xmm},
+            {ZYDIS_REGISTER_XMM14, &g_regs.ymm[14].xmm},
+            {ZYDIS_REGISTER_XMM15, &g_regs.ymm[15].xmm},
 
-            //YMM REG
-            { ZYDIS_REGISTER_YMM0,  &g_regs.ymm[0] },
-            { ZYDIS_REGISTER_YMM1,  &g_regs.ymm[1] },
-            { ZYDIS_REGISTER_YMM2,  &g_regs.ymm[2] },
-            { ZYDIS_REGISTER_YMM3,  &g_regs.ymm[3] },
-            { ZYDIS_REGISTER_YMM4,  &g_regs.ymm[4] },
-            { ZYDIS_REGISTER_YMM5,  &g_regs.ymm[5] },
-            { ZYDIS_REGISTER_YMM6,  &g_regs.ymm[6] },
-            { ZYDIS_REGISTER_YMM7,  &g_regs.ymm[7] },
-            { ZYDIS_REGISTER_YMM8,  &g_regs.ymm[8] },
-            { ZYDIS_REGISTER_YMM9,  &g_regs.ymm[9] },
-            { ZYDIS_REGISTER_YMM10, &g_regs.ymm[10] },
-            { ZYDIS_REGISTER_YMM11, &g_regs.ymm[11] },
-            { ZYDIS_REGISTER_YMM12, &g_regs.ymm[12] },
-            { ZYDIS_REGISTER_YMM13, &g_regs.ymm[13] },
-            { ZYDIS_REGISTER_YMM14, &g_regs.ymm[14] },
-            { ZYDIS_REGISTER_YMM15, &g_regs.ymm[15] },
+            // YMM REG
+            {ZYDIS_REGISTER_YMM0, &g_regs.ymm[0]},
+            {ZYDIS_REGISTER_YMM1, &g_regs.ymm[1]},
+            {ZYDIS_REGISTER_YMM2, &g_regs.ymm[2]},
+            {ZYDIS_REGISTER_YMM3, &g_regs.ymm[3]},
+            {ZYDIS_REGISTER_YMM4, &g_regs.ymm[4]},
+            {ZYDIS_REGISTER_YMM5, &g_regs.ymm[5]},
+            {ZYDIS_REGISTER_YMM6, &g_regs.ymm[6]},
+            {ZYDIS_REGISTER_YMM7, &g_regs.ymm[7]},
+            {ZYDIS_REGISTER_YMM8, &g_regs.ymm[8]},
+            {ZYDIS_REGISTER_YMM9, &g_regs.ymm[9]},
+            {ZYDIS_REGISTER_YMM10, &g_regs.ymm[10]},
+            {ZYDIS_REGISTER_YMM11, &g_regs.ymm[11]},
+            {ZYDIS_REGISTER_YMM12, &g_regs.ymm[12]},
+            {ZYDIS_REGISTER_YMM13, &g_regs.ymm[13]},
+            {ZYDIS_REGISTER_YMM14, &g_regs.ymm[14]},
+            {ZYDIS_REGISTER_YMM15, &g_regs.ymm[15]},
         };
-
     }
 
-    bool ApplyRegistersToContext()
-    {
+    bool ApplyRegistersToContext() {
 #if DB_ENABLED
         g_regs.rflags.flags.TF = 0;
 #endif
@@ -2697,8 +1279,7 @@ public:
         ctx.MxCsr;
         DWORD ctxSize = 0;
         if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) &&
-            GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-        {
+            GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
             LOG(L"[-] InitializeContext query size failed");
         }
 
@@ -2709,30 +1290,24 @@ public:
         }
 
         PCONTEXT pCtx = NULL;
-        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
-        {
+        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize)) {
             LOG(L"[-] InitializeContext failed");
             free(buf);
             return false;
         }
 
-        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_AVX))
-        {
+        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_AVX)) {
             LOG(L"[-] SetXStateFeaturesMask failed");
             free(buf);
             return false;
         }
 
-
-        if (!GetThreadContext(hThread, pCtx))
-        {
+        if (!GetThreadContext(hThread, pCtx)) {
             DWORD err = GetLastError();
             LOG(L"[-] GetThreadContext failed. Error: " << err);
 
             if (err == ERROR_INVALID_HANDLE) {
-
                 LOG(L"[!] Thread handle invalid, removing CPU from list.");
-
             }
 
             free(buf);
@@ -2761,7 +1336,8 @@ public:
         LOG(L"[+] General registers applied");
 
         DWORD featureLength = 0;
-        PM128A pXmm = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
+        PM128A pXmm =
+            (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
         if (!pXmm || featureLength < 16 * sizeof(M128A)) {
             LOG(L"[-] LocateXStateFeature for XMM failed");
             free(buf);
@@ -2782,15 +1358,13 @@ public:
 
         LOG(L"[+] YMM registers applied");
 
-
         if (!SetThreadContext(hThread, pCtx)) {
             DWORD err = GetLastError();
-            LOG(L"[-] Failed to set thread context FOR thread : 0x" << std::hex << hThread
-                << L"  Error: " << std::dec << err);
+            LOG(L"[-] Failed to set thread context FOR thread : 0x"
+                << std::hex << hThread << L"  Error: " << std::dec << err);
 
             if (err == ERROR_INVALID_HANDLE) {
                 LOG(L"[!] Thread handle invalid, removing CPU from list.");
-
             }
 
             free(buf);
@@ -2802,16 +1376,13 @@ public:
         return true;
     }
 
-    XMM_SAVE_AREA32 UpdateFltSaveFromContext()
-    {
+    XMM_SAVE_AREA32 UpdateFltSaveFromContext() {
         CONTEXT ctx = {};
         ctx.ContextFlags = CONTEXT_FLOATING_POINT | CONTEXT_XSTATE;
 
-
         DWORD ctxSize = 0;
         if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) &&
-            GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-        {
+            GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
             LOG(L"[-] InitializeContext query size failed");
         }
 
@@ -2821,20 +1392,17 @@ public:
         }
 
         PCONTEXT pCtx = nullptr;
-        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
-        {
+        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize)) {
             LOG(L"[-] InitializeContext failed");
             free(buf);
         }
 
-        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_LEGACY_SSE))
-        {
+        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_LEGACY_SSE)) {
             LOG(L"[-] SetXStateFeaturesMask failed");
             free(buf);
         }
 
-        if (!GetThreadContext(hThread, pCtx))
-        {
+        if (!GetThreadContext(hThread, pCtx)) {
             LOG(L"[-] GetThreadContext failed");
             free(buf);
         }
@@ -2842,15 +1410,13 @@ public:
         free(buf);
         return pCtx->FltSave;
     }
-    bool RestoreFltSaveToContext(HANDLE hThread, const XMM_SAVE_AREA32& fltSave)
-    {
+    bool RestoreFltSaveToContext(HANDLE hThread, const XMM_SAVE_AREA32& fltSave) {
         CONTEXT ctx = {};
         ctx.ContextFlags = CONTEXT_FLOATING_POINT | CONTEXT_XSTATE;
 
         DWORD ctxSize = 0;
         if (!pfnInitializeContext(NULL, ctx.ContextFlags, NULL, &ctxSize) &&
-            GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-        {
+            GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
             LOG(L"[-] InitializeContext query size failed");
             return false;
         }
@@ -2862,15 +1428,13 @@ public:
         }
 
         PCONTEXT pCtx = nullptr;
-        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize))
-        {
+        if (!pfnInitializeContext(buf, ctx.ContextFlags, &pCtx, &ctxSize)) {
             LOG(L"[-] InitializeContext failed");
             free(buf);
             return false;
         }
 
-        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_LEGACY_SSE))
-        {
+        if (!pfnSetXStateFeaturesMask(pCtx, XSTATE_MASK_LEGACY_SSE)) {
             LOG(L"[-] SetXStateFeaturesMask failed");
             free(buf);
             return false;
@@ -2878,8 +1442,7 @@ public:
 
         pCtx->FltSave = fltSave;
 
-        if (!SetThreadContext(hThread, pCtx))
-        {
+        if (!SetThreadContext(hThread, pCtx)) {
             LOG(L"[-] SetThreadContext failed");
             free(buf);
             return false;
@@ -2890,15 +1453,16 @@ public:
         return true;
     }
 
-
 private:
     // ------------------- Register State -------------------
     RegState g_regs;
     std::string instrText;
     bool has_lock;
     uint64_t address;
-    std::unordered_map<ZydisMnemonic, void (CPU::*)(const ZydisDisassembledInstruction*)> dispatch_table;
-    std::unordered_map<ZydisRegister, void* > reg_lookup;
+    std::unordered_map<ZydisMnemonic,
+        void (CPU::*)(const ZydisDisassembledInstruction*)>
+        dispatch_table;
+    std::unordered_map<ZydisRegister, void*> reg_lookup;
 #if AUTO_PATCH_HW
     int patchDistance = 0;
     bool is_patch_cpuid = 0;
@@ -2910,7 +1474,8 @@ private:
         uint64_t high;
     };
 
-    std::pair<uint64_t, uint64_t> div_128_by_64(uint64_t high, uint64_t low, uint64_t divisor) {
+    std::pair<uint64_t, uint64_t> div_128_by_64(uint64_t high, uint64_t low,
+        uint64_t divisor) {
         if (high == 0) {
             return { low / divisor, low % divisor };
         }
@@ -2919,7 +1484,8 @@ private:
         uint64_t remainder = 0;
 
         for (int i = 127; i >= 0; --i) {
-            remainder = (remainder << 1) | ((i >= 64) ? ((high >> (i - 64)) & 1) : ((low >> i) & 1));
+            remainder = (remainder << 1) |
+                ((i >= 64) ? ((high >> (i - 64)) & 1) : ((low >> i) & 1));
             if (remainder >= divisor) {
                 remainder -= divisor;
                 if (i >= 64)
@@ -2933,23 +1499,26 @@ private:
     }
     constexpr uint64_t get_mask_for_width(int width) {
         switch (width) {
-        case 8:  return 0xFFull;
-        case 16: return 0xFFFFull;
-        case 32: return 0xFFFFFFFFull;
-        case 64: return 0xFFFFFFFFFFFFFFFFull;
+        case 8:
+            return 0xFFull;
+        case 16:
+            return 0xFFFFull;
+        case 32:
+            return 0xFFFFFFFFull;
+        case 64:
+            return 0xFFFFFFFFFFFFFFFFull;
         default:
             assert(false && "Invalid operand width for get_mask_for_width");
             return 0;
         }
     }
-    std::pair<int64_t, int64_t> div_128_by_64_signed(uint64_t high, uint64_t low, int64_t divisor) {
-
+    std::pair<int64_t, int64_t> div_128_by_64_signed(uint64_t high, uint64_t low,
+        int64_t divisor) {
         bool dividend_negative = (high & (1ULL << 63)) != 0;
         bool divisor_negative = divisor < 0;
 
         uint128_t dividend_abs;
         if (dividend_negative) {
-
             uint64_t low_neg = ~low + 1;
             uint64_t high_neg = ~high + (low_neg == 0 ? 1 : 0);
             dividend_abs.low = low_neg;
@@ -2960,19 +1529,22 @@ private:
             dividend_abs.high = high;
         }
 
-        uint64_t divisor_abs = divisor_negative ? (uint64_t)(-divisor) : (uint64_t)divisor;
+        uint64_t divisor_abs =
+            divisor_negative ? (uint64_t)(-divisor) : (uint64_t)divisor;
 
-        auto [quotient_u, remainder_u] = div_128_by_64(dividend_abs.high, dividend_abs.low, divisor_abs);
+        auto [quotient_u, remainder_u] =
+            div_128_by_64(dividend_abs.high, dividend_abs.low, divisor_abs);
 
         bool quotient_negative = dividend_negative ^ divisor_negative;
         bool remainder_negative = dividend_negative;
 
-        int64_t quotient = quotient_negative ? -(int64_t)quotient_u : (int64_t)quotient_u;
-        int64_t remainder = remainder_negative ? -(int64_t)remainder_u : (int64_t)remainder_u;
+        int64_t quotient =
+            quotient_negative ? -(int64_t)quotient_u : (int64_t)quotient_u;
+        int64_t remainder =
+            remainder_negative ? -(int64_t)remainder_u : (int64_t)remainder_u;
 
         return { quotient, remainder };
     }
-
 
     uint128_t mul_64x64_to_128(uint64_t a, uint64_t b) {
         uint128_t result;
@@ -2984,7 +1556,8 @@ private:
         r.low = (uint64_t)_mul128(a, b, (long long*)&r.high);
         return r;
     }
-    static inline uint128_t mul_signed_to_2w(int64_t x, int64_t y, unsigned width) {
+    static inline uint128_t mul_signed_to_2w(int64_t x, int64_t y,
+        unsigned width) {
         uint128_t r{};
         switch (width) {
         case 8: {
@@ -3012,71 +1585,88 @@ private:
     }
 
     struct PcmpistriResult {
-        int idx;                   // index found (or elem_count if not found)
+        int idx;                       // index found (or elem_count if not found)
         std::vector<uint8_t> mask;     // mask after polarity applied (IntRes2)
         std::vector<uint8_t> mask_raw; // mask before polarity (IntRes1)
     };
 
     // extract elements from __m128i (sign-extended to int64_t)
-    static void extract_elements(const __m128i& v, int element_bytes, bool signed_ops, std::vector<int64_t>& out) {
+    static void extract_elements(const __m128i& v, int element_bytes,
+        bool signed_ops, std::vector<int64_t>& out) {
         out.clear();
         const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
         if (element_bytes == 1) {
             for (int i = 0; i < 16; i++) {
-                if (signed_ops) out.push_back((int8_t)p[i]);
-                else out.push_back((uint8_t)p[i]);
+                if (signed_ops)
+                    out.push_back((int8_t)p[i]);
+                else
+                    out.push_back((uint8_t)p[i]);
             }
         }
         else {
             for (int i = 0; i < 8; i++) {
                 uint16_t val = uint16_t(p[2 * i]) | (uint16_t(p[2 * i + 1]) << 8);
-                if (signed_ops) out.push_back((int16_t)val);
-                else out.push_back((uint16_t)val);
+                if (signed_ops)
+                    out.push_back((int16_t)val);
+                else
+                    out.push_back((uint16_t)val);
             }
         }
     }
 
     // find implicit length (index of first zero element)
-    static int implicit_length(const std::vector<int64_t>& elems, int elem_count) {
+    static int implicit_length(const std::vector<int64_t>& elems,
+        int elem_count) {
         for (size_t i = 0; i < elems.size(); ++i) {
             if (elems[i] == 0) {
-                if (i == 0) return elem_count;
+                if (i == 0)
+                    return elem_count;
                 return (int)i;
             }
         }
         return (int)elems.size();
     }
     // check if a falls into any (low,high) range pairs in b
-    static bool check_ranges(int64_t a, const std::vector<int64_t>& b, bool signed_ops) {
+    static bool check_ranges(int64_t a, const std::vector<int64_t>& b,
+        bool signed_ops) {
         size_t n = b.size();
         for (size_t i = 0; i + 1 < n; i += 2) {
             int64_t lo = b[i];
             int64_t hi = b[i + 1];
             if (!signed_ops) {
                 uint64_t ua = (uint64_t)a, ulo = (uint64_t)lo, uhi = (uint64_t)hi;
-                if (ulo <= ua && ua <= uhi) return true;
+                if (ulo <= ua && ua <= uhi)
+                    return true;
             }
             else {
-                if (lo <= a && a <= hi) return true;
+                if (lo <= a && a <= hi)
+                    return true;
             }
         }
         return false;
     }
 
     // ordered search: set mask if B is subsequence in A at some position
-    static int do_ordered_search_and_set_mask(const std::vector<int64_t>& A, int lenA,
-        const std::vector<int64_t>& B, int lenB,
-        std::vector<uint8_t>& mask,
-        bool signed_ops) {
-        if (lenB == 0 || lenB > lenA) return 0;
+    static int
+        do_ordered_search_and_set_mask(const std::vector<int64_t>& A, int lenA,
+            const std::vector<int64_t>& B, int lenB,
+            std::vector<uint8_t>& mask, bool signed_ops) {
+        if (lenB == 0 || lenB > lenA)
+            return 0;
         for (int start = 0; start <= lenA - lenB; ++start) {
             bool ok = true;
             for (int j = 0; j < lenB; ++j) {
                 if (signed_ops) {
-                    if (A[start + j] != B[j]) { ok = false; break; }
+                    if (A[start + j] != B[j]) {
+                        ok = false;
+                        break;
+                    }
                 }
                 else {
-                    if ((uint64_t)A[start + j] != (uint64_t)B[j]) { ok = false; break; }
+                    if ((uint64_t)A[start + j] != (uint64_t)B[j]) {
+                        ok = false;
+                        break;
+                    }
                 }
             }
             if (ok) {
@@ -3088,12 +1678,14 @@ private:
     }
 
     // main PCMPISTRI logic
-    static PcmpistriResult emulate_pcmpistri_logic(const __m128i& va, const __m128i& vb, uint8_t imm8) {
+    static PcmpistriResult
+        emulate_pcmpistri_logic(const __m128i& va, const __m128i& vb, uint8_t imm8) {
         PcmpistriResult out;
         int mode = imm8;
         int unit = mode & 0x3; // element size & signedness
         bool signed_ops = (unit == _SIDD_SBYTE_OPS || unit == _SIDD_SWORD_OPS);
-        int elem_bytes = (unit == _SIDD_UBYTE_OPS || unit == _SIDD_SBYTE_OPS) ? 1 : 2;
+        int elem_bytes =
+            (unit == _SIDD_UBYTE_OPS || unit == _SIDD_SBYTE_OPS) ? 1 : 2;
         int elem_count = (elem_bytes == 1) ? 16 : 8;
 
         int cmp_mode = mode & 0x0C;
@@ -3116,10 +1708,16 @@ private:
                 bool any = false;
                 for (int j = 0; j < lenB; ++j) {
                     if (!signed_ops) {
-                        if ((uint64_t)A[i] == (uint64_t)B[j]) { any = true; break; }
+                        if ((uint64_t)A[i] == (uint64_t)B[j]) {
+                            any = true;
+                            break;
+                        }
                     }
                     else {
-                        if (A[i] == B[j]) { any = true; break; }
+                        if (A[i] == B[j]) {
+                            any = true;
+                            break;
+                        }
                     }
                 }
                 mask_raw[i] = any ? 1 : 0;
@@ -3133,8 +1731,10 @@ private:
         else if (cmp_mode == _SIDD_CMP_EQUAL_EACH) {
             int upto = min(lenA, lenB);
             for (int i = 0; i < upto; ++i) {
-                if (!signed_ops) mask_raw[i] = ((uint64_t)A[i] == (uint64_t)B[i]) ? 1 : 0;
-                else mask_raw[i] = (A[i] == B[i]) ? 1 : 0;
+                if (!signed_ops)
+                    mask_raw[i] = ((uint64_t)A[i] == (uint64_t)B[i]) ? 1 : 0;
+                else
+                    mask_raw[i] = (A[i] == B[i]) ? 1 : 0;
             }
         }
         else if (cmp_mode == _SIDD_CMP_EQUAL_ORDERED) {
@@ -3142,26 +1742,37 @@ private:
         }
 
         // Apply polarity
-        if (polarity == _SIDD_NEGATIVE_POLARITY || polarity == _SIDD_MASKED_NEGATIVE_POLARITY) {
-            for (int i = 0; i < elem_count; ++i) mask[i] = mask_raw[i] ? 0 : 1;
+        if (polarity == _SIDD_NEGATIVE_POLARITY ||
+            polarity == _SIDD_MASKED_NEGATIVE_POLARITY) {
+            for (int i = 0; i < elem_count; ++i)
+                mask[i] = mask_raw[i] ? 0 : 1;
         }
         else {
-            for (int i = 0; i < elem_count; ++i) mask[i] = mask_raw[i];
+            for (int i = 0; i < elem_count; ++i)
+                mask[i] = mask_raw[i];
         }
-        if (polarity == _SIDD_MASKED_POSITIVE_POLARITY || polarity == _SIDD_MASKED_NEGATIVE_POLARITY) {
-            for (int i = lenA; i < elem_count; ++i) mask[i] = 0;
+        if (polarity == _SIDD_MASKED_POSITIVE_POLARITY ||
+            polarity == _SIDD_MASKED_NEGATIVE_POLARITY) {
+            for (int i = lenA; i < elem_count; ++i)
+                mask[i] = 0;
         }
 
         // Find index (LSB or MSB)
         int found_index = -1;
         if (!most_significant) {
             for (int i = 0; i < elem_count; ++i) {
-                if (mask[i]) { found_index = i; break; }
+                if (mask[i]) {
+                    found_index = i;
+                    break;
+                }
             }
         }
         else {
             for (int i = elem_count - 1; i >= 0; --i) {
-                if (mask[i]) { found_index = i; break; }
+                if (mask[i]) {
+                    found_index = i;
+                    break;
+                }
             }
         }
 
@@ -3237,8 +1848,9 @@ private:
         return _mm512_load_si512((__m512i*)res);
     }
 
-    template<int LANE_BYTES>
-    static void vpalignr_lane(uint8_t* dst, const uint8_t* src1, const uint8_t* src2, uint8_t imm) {
+    template <int LANE_BYTES>
+    static void vpalignr_lane(uint8_t* dst, const uint8_t* src1,
+        const uint8_t* src2, uint8_t imm) {
         uint8_t buf[LANE_BYTES * 2];
         memcpy(buf, src2, LANE_BYTES);
         memcpy(buf + LANE_BYTES, src1, LANE_BYTES);
@@ -3259,11 +1871,14 @@ private:
         int op = mode & 0x3;
         return (op == _SIDD_UBYTE_OPS || op == _SIDD_SBYTE_OPS) ? 1 : 2;
     }
-    static inline bool cmp_elements(int64_t a, int64_t b, int mode_is_signed, int cmp_kind) {
-        // cmp_kind: 0=EQUAL_ANY/EQUAL (used in pairwise), 1=RANGES (handled externally),
-        // 2=EQUAL_EACH (same as 0) ; signature kept simple
-        if (mode_is_signed) return (a == b);
-        else return ((uint64_t)a == (uint64_t)b);
+    static inline bool cmp_elements(int64_t a, int64_t b, int mode_is_signed,
+        int cmp_kind) {
+        // cmp_kind: 0=EQUAL_ANY/EQUAL (used in pairwise), 1=RANGES (handled
+        // externally), 2=EQUAL_EACH (same as 0) ; signature kept simple
+        if (mode_is_signed)
+            return (a == b);
+        else
+            return ((uint64_t)a == (uint64_t)b);
     }
 
     inline __m128 blend_ps_runtime(__m128 a, __m128 b, int mask) {
@@ -3280,7 +1895,6 @@ private:
         return _mm_load_ps(fr);
     }
 
-
     inline __m256 blend_ps_runtime(__m256 a, __m256 b, int mask) {
         alignas(32) float fa[8], fb[8], fr[8];
         _mm256_store_ps(fa, a);
@@ -3294,7 +1908,6 @@ private:
         }
         return _mm256_load_ps(fr);
     }
-
 
     inline __m128 emulate_permute_ps(__m128 a, uint8_t imm) {
         alignas(16) float src[4];
@@ -3326,7 +1939,6 @@ private:
     // ------------------- Internal State -------------------
     ZydisDecodedInstruction instr;
 
-
     // ------------------- Memory Access Helpers -------------------
     bool ReadMemory(uint64_t address, void* buffer, SIZE_T size) {
 #if Save_Rva
@@ -3335,12 +1947,14 @@ private:
 
         // KUSER_SHARED_DATA
         if (address >= kuser_base && address < kuser_base + kuser_size) {
-              addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::KUSER_SHARED_DATA, filename);
+            addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),
+                instr.length, RVAType::KUSER_SHARED_DATA, filename);
         }
         if (address >= ntdll_rang.first && address < ntdll_rang.second) {
-              addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::NTDLL, filename);
+            addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),
+                instr.length, RVAType::NTDLL, filename);
         }
-#endif 
+#endif
 #if analyze_ENABLED
         const uint64_t kuser_base = 0x00000007FFE0000;
         const uint64_t kuser_size = 0x1000;
@@ -3350,31 +1964,30 @@ private:
             uint64_t offset = address - kuser_base;
             std::string description = get_kuser_field_name(offset);
 
-            LOG_analyze(YELLOW,
-                "[KUSER_SHARED_DATA] Reading (" << description.c_str() << ") at 0x"
-                << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]"
-            );
+            LOG_analyze(YELLOW, "[KUSER_SHARED_DATA] Reading ("
+                << description.c_str() << ") at 0x" << std::hex
+                << address << " [RIP: 0x" << std::hex
+                << g_regs.rip << "]");
         }
         if (address != g_regs.rip) {
             auto FunctionName = GetExportedFunctionNameByAddress(address);
 #if FUll_user_MODE
             std::wstring dllName = GetSystemModuleNameFromAddress(address);
             if (!dllName.empty() && FunctionName.empty()) {
-                LOG_analyze(BRIGHT_CYAN,
-                    "[READ SYSTEM DLL] Reading From (" << dllName.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+                LOG_analyze(BRIGHT_CYAN, "[READ SYSTEM DLL] Reading From ("
+                    << dllName.c_str() << ") at 0x" << std::hex
+                    << address << " [RIP: 0x" << std::hex
+                    << g_regs.rip << "]");
             }
 #endif
             if (!FunctionName.empty()) {
-                LOG_analyze(
-                    BRIGHT_BLACK,
-                    "[Function Lookup] Resolved '" << FunctionName.c_str()
-                    << "' at 0x" << std::hex << address
-                    << " [RIP: 0x" << std::hex << g_regs.rip
-                    << "] - function address read, not executed"
-                );
+                LOG_analyze(BRIGHT_BLACK,
+                    "[Function Lookup] Resolved '"
+                    << FunctionName.c_str() << "' at 0x" << std::hex
+                    << address << " [RIP: 0x" << std::hex << g_regs.rip
+                    << "] - function address read, not executed");
             }
         }
-
 
         // TEB
         if (address >= g_regs.gs_base && address < g_regs.gs_base + 0x1000) {
@@ -3382,25 +1995,28 @@ private:
 
             Teb64FieldMapper teb_mapper;
             std::string field_name = teb_mapper.get_member_name(offset);
-            LOG_analyze(MAGENTA,
-                "[TEB] Reading (" << field_name.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+            LOG_analyze(MAGENTA, "[TEB] Reading (" << field_name.c_str() << ") at 0x"
+                << std::hex << address
+                << " [RIP: 0x" << std::hex
+                << g_regs.rip << "]");
         }
-
 
         // PEB
         if (g_regs.peb_address) {
-            if (address >= g_regs.peb_address && address < g_regs.peb_address + 0x1000) {
+            if (address >= g_regs.peb_address &&
+                address < g_regs.peb_address + 0x1000) {
                 uint64_t offset = address - g_regs.peb_address;
                 PebFieldMapper peb_mapper;
                 std::string field_name = peb_mapper.get_member_name(offset);
 
-
-
-                LOG_analyze(CYAN,
-                    "[PEB] Reading (" << field_name.c_str() << ") at 0x" << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+                LOG_analyze(CYAN, "[PEB] Reading (" << field_name.c_str() << ") at 0x"
+                    << std::hex << address
+                    << " [RIP: 0x" << std::hex
+                    << g_regs.rip << "]");
             }
         }
-        // PEB LDR
+
+        // PEB->Ldr
         if (g_regs.peb_ldr) {
             const uint64_t ldr_size = 0x80;
             if (address >= g_regs.peb_ldr && address < g_regs.peb_ldr + ldr_size) {
@@ -3408,18 +2024,19 @@ private:
                 PebLdrFieldMapper ldr_mapper;
                 std::string field_name = ldr_mapper.get_member_name(offset);
 
-                LOG_analyze(GREEN,
-                    "[LDR] Reading (" << field_name.c_str() << ") at 0x"
-                    << std::hex << address << " [RIP: 0x" << std::hex << g_regs.rip << "]");
+                LOG_analyze(GREEN, "[LDR] Reading (" << field_name.c_str() << ") at 0x"
+                    << std::hex << address
+                    << " [RIP: 0x" << std::hex
+                    << g_regs.rip << "]");
             }
         }
 
         // read FROM executable
         if (IsInEmulationRange(address)) {
             LOG_analyze(BRIGHT_BLACK,
-                "[+] READ FROM executable memory detected | Target: 0x" << std::hex << address <<
-                " | RIP: 0x" << std::hex << g_regs.rip
-            );
+                "[+] READ FROM executable memory detected | Target: 0x"
+                << std::hex << address << " | RIP: 0x" << std::hex
+                << g_regs.rip);
         }
 
         // NTDLL Image Data Directory
@@ -3427,12 +2044,15 @@ private:
         if (address >= ntdllBase && address < ntdllBase + 0x1000) {
             std::string description = "Unknown (NTDLL)";
 
-            for (auto it = ntdll_directory_offsets.begin(); it != ntdll_directory_offsets.end(); ++it) {
+            for (auto it = ntdll_directory_offsets.begin();
+                it != ntdll_directory_offsets.end(); ++it) {
                 uint64_t vaStart = ntdllBase + it->first;
                 std::string name = it->second;
 
                 auto next = std::next(it);
-                uint64_t nextOffset = (next != ntdll_directory_offsets.end()) ? next->first : (it->first + 0x40);
+                uint64_t nextOffset = (next != ntdll_directory_offsets.end())
+                    ? next->first
+                    : (it->first + 0x40);
                 uint64_t vaEnd = ntdllBase + nextOffset;
 
                 if (address >= vaStart && address < vaEnd) {
@@ -3450,23 +2070,23 @@ private:
                 }
             }
 
-            LOG_analyze(BRIGHT_BLUE,
-                "[NTDLL] Reading (" << description.c_str() << ") at 0x" << std::hex << address <<
-                " [RIP: 0x" << std::hex << g_regs.rip << "]");
+            LOG_analyze(BRIGHT_BLUE, "[NTDLL] Reading ("
+                << description.c_str() << ") at 0x"
+                << std::hex << address << " [RIP: 0x"
+                << std::hex << g_regs.rip << "]");
         }
-
-
-
 
 #endif
 #if DB_ENABLED
-        //const uint64_t kuser_base = 0x00000007FFE0000;
-        //if (address == (kuser_base + 0x14) || address == (kuser_base + 0x8))//time
-        //    is_reading_time = 1;
+        // const uint64_t kuser_base = 0x00000007FFE0000;
+        // if (address == (kuser_base + 0x14) || address == (kuser_base +
+        // 0x8))//time
+        //     is_reading_time = 1;
 #endif
 
         SIZE_T bytesRead;
-        bool result = ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, size, &bytesRead) &&
+        bool result = ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, size,
+            &bytesRead) &&
             bytesRead == size;
 
         if (!result) {
@@ -3483,25 +2103,29 @@ private:
 
                 if (mbi.State != MEM_COMMIT) {
                     // Allocate/commit memory if it's not committed
-                    if (!VirtualAllocEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, MEM_COMMIT, PAGE_READWRITE)) {
+                    if (!VirtualAllocEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize,
+                        MEM_COMMIT, PAGE_READWRITE)) {
                         printf("VirtualAllocEx failed with error: %lu\n", GetLastError());
                         return false;
                     }
                 }
 
                 DWORD oldProtect;
-                if (!VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, PAGE_READWRITE, &oldProtect)) {
+                if (!VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize,
+                    PAGE_READWRITE, &oldProtect)) {
                     printf("VirtualProtectEx failed with error: %lu\n", GetLastError());
                     return false;
                 }
 
                 // Try reading again
-                result = ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, size, &bytesRead) &&
+                result = ReadProcessMemory(pi.hProcess, (LPCVOID)address, buffer, size,
+                    &bytesRead) &&
                     bytesRead == size;
 
                 // Restore original protection
                 DWORD tmp;
-                VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, oldProtect, &tmp);
+                VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize,
+                    oldProtect, &tmp);
             }
         }
 
@@ -3517,14 +2141,12 @@ private:
         return result;
     }
     bool WriteMemory(uint64_t address, const void* buffer, SIZE_T size) {
-
-
 #if analyze_ENABLED
         if (IsInEmulationRange(address)) {
             LOG_analyze(BRIGHT_GREEN,
-                "[+] Write to executable memory detected | Target: 0x" << std::hex << address <<
-                " | RIP: 0x" << std::hex << g_regs.rip
-            );
+                "[+] Write to executable memory detected | Target: 0x"
+                << std::hex << address << " | RIP: 0x" << std::hex
+                << g_regs.rip);
         }
 #endif
 
@@ -3541,7 +2163,8 @@ private:
         return true;
 #endif
         SIZE_T bytesWritten;
-        bool result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size, &bytesWritten) &&
+        bool result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size,
+            &bytesWritten) &&
             bytesWritten == size;
 
         if (!result) {
@@ -3552,7 +2175,8 @@ private:
                 // --- Step 1: Check current memory content ---
                 std::vector<BYTE> current(size);
                 SIZE_T bytesRead;
-                if (ReadProcessMemory(pi.hProcess, (LPCVOID)address, current.data(), size, &bytesRead) &&
+                if (ReadProcessMemory(pi.hProcess, (LPCVOID)address, current.data(),
+                    size, &bytesRead) &&
                     bytesRead == size) {
                     if (memcmp(current.data(), buffer, size) == 0) {
                         printf("[+] Memory already contains desired value.\n");
@@ -3569,7 +2193,8 @@ private:
 
                 if (mbi.State != MEM_COMMIT) {
                     // Allocate/commit memory if it's not committed
-                    if (!VirtualAllocEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, MEM_COMMIT, PAGE_READWRITE)) {
+                    if (!VirtualAllocEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize,
+                        MEM_COMMIT, PAGE_READWRITE)) {
                         printf("VirtualAllocEx failed with error: %lu\n", GetLastError());
                         return false;
                     }
@@ -3577,18 +2202,21 @@ private:
 
                 // --- Step 3: Change protection ---
                 DWORD oldProtect;
-                if (!VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, PAGE_READWRITE, &oldProtect)) {
+                if (!VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize,
+                    PAGE_READWRITE, &oldProtect)) {
                     printf("VirtualProtectEx failed with error: %lu\n", GetLastError());
                     return false;
                 }
 
                 // --- Step 4: Try writing again ---
-                result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size, &bytesWritten) &&
+                result = WriteProcessMemory(pi.hProcess, (LPVOID)address, buffer, size,
+                    &bytesWritten) &&
                     bytesWritten == size;
 
                 // --- Step 5: Restore protection ---
                 DWORD tmp;
-                VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize, oldProtect, &tmp);
+                VirtualProtectEx(pi.hProcess, mbi.BaseAddress, mbi.RegionSize,
+                    oldProtect, &tmp);
             }
         }
 
@@ -3603,11 +2231,13 @@ private:
                     printf("\n");
                 }
                 else {
-                    LOG("WriteMemory LOG failed to read back from 0x" << std::hex << address);
+                    LOG("WriteMemory LOG failed to read back from 0x" << std::hex
+                        << address);
                 }
             }
             else {
-                LOG("WriteMemory LOG skipped: size too big ( " << std::hex << size << " bytes)");
+                LOG("WriteMemory LOG skipped: size too big ( " << std::hex << size
+                    << " bytes)");
             }
         }
 #endif
@@ -3615,25 +2245,28 @@ private:
         return result;
     }
 
-    template<typename T>
+    template <typename T>
     bool AccessMemory(bool write, uint64_t address, T* inout) {
         return write ? WriteMemory(address, inout, sizeof(T))
             : ReadMemory(address, inout, sizeof(T));
     }
 
-    template<typename T>
-    bool AccessEffectiveMemory(const ZydisDecodedOperand& op, T* inout, bool write) {
-#if AUTO_PATCH_HW 
+    template <typename T>
+    bool AccessEffectiveMemory(const ZydisDecodedOperand& op, T* inout,
+        bool write) {
+#if AUTO_PATCH_HW
 
         bool is_address_RIP_relative = 0;
         bool is_DS = 0;
 #endif
-        if (op.type != ZYDIS_OPERAND_TYPE_MEMORY) return false;
+        if (op.type != ZYDIS_OPERAND_TYPE_MEMORY)
+            return false;
 
         uint64_t address = 0;
 
         // Handle absolute addressing (no base, no index)
-        if (op.mem.base == ZYDIS_REGISTER_NONE && op.mem.index == ZYDIS_REGISTER_NONE) {
+        if (op.mem.base == ZYDIS_REGISTER_NONE &&
+            op.mem.index == ZYDIS_REGISTER_NONE) {
             address = op.mem.disp.has_displacement ? op.mem.disp.value : 0;
             LOG(L"[+] Absolute memory addressing");
 
@@ -3642,7 +2275,7 @@ private:
             // Handle RIP-relative addressing
             if (op.mem.base == ZYDIS_REGISTER_RIP) {
                 address = g_regs.rip + instr.length;
-#if AUTO_PATCH_HW 
+#if AUTO_PATCH_HW
 
                 is_address_RIP_relative = 1;
 
@@ -3685,17 +2318,16 @@ private:
         LOG(L"[+] AccessEffectiveMemory Final Address : " << std::hex << address);
 
         // Access memory
-        bool success = write ? WriteMemory(address, inout, sizeof(T)) : ReadMemory(address, inout, sizeof(T));
+        bool success = write ? WriteMemory(address, inout, sizeof(T))
+            : ReadMemory(address, inout, sizeof(T));
 #if AUTO_PATCH_HW
-        if (is_address_RIP_relative && !write && IsInPatchRange(g_regs.rip) && success && !IsInPatchSectionRange(address) && IsInEmulationRange(address)) {
-
+        if (is_address_RIP_relative && !write && IsInPatchRange(g_regs.rip) &&
+            success && !IsInPatchSectionRange(address) &&
+            IsInEmulationRange(address)) {
             if (!PatchFileSingle(patchSectionAddress,
-                reinterpret_cast<const char*>(inout),
-                sizeof(T))) {
+                reinterpret_cast<const char*>(inout), sizeof(T))) {
                 std::wcerr << L"Failed to write patch data to patched file.\n";
-
             }
-
 
             size_t disp_offset = instr.raw.disp.offset;
             size_t disp_size = instr.raw.disp.size / 8;
@@ -3703,45 +2335,44 @@ private:
             uint64_t instr_start = g_regs.rip;
             uint64_t instr_end = instr_start + instr.length;
 
-
-            std::int64_t new_disp = static_cast<std::int64_t>(patchSectionAddress)
-                - static_cast<std::int64_t>(instr_end);
+            std::int64_t new_disp = static_cast<std::int64_t>(patchSectionAddress) -
+                static_cast<std::int64_t>(instr_end);
 
             std::int64_t min_disp = -(1LL << (disp_size * 8 - 1));
             std::int64_t max_disp = ((1LL << (disp_size * 8 - 1)) - 1);
             if (new_disp < min_disp || new_disp > max_disp) {
-                std::wcerr << L"New RIP-relative displacement doesn't fit in " << disp_size << L" bytes.\n";
+                std::wcerr << L"New RIP-relative displacement doesn't fit in "
+                    << disp_size << L" bytes.\n";
 
             }
             else {
-
                 std::vector<uint8_t> disp_bytes(disp_size);
                 for (size_t i = 0; i < disp_size; ++i) {
-                    disp_bytes[i] = static_cast<uint8_t>((static_cast<uint64_t>(new_disp) >> (8 * i)) & 0xFFu);
+                    disp_bytes[i] = static_cast<uint8_t>(
+                        (static_cast<uint64_t>(new_disp) >> (8 * i)) & 0xFFu);
                 }
 
                 uint64_t disp_mem_address = instr_start + disp_offset;
 
-                if (!PatchFileSingle(
-                    disp_mem_address,
+                if (!PatchFileSingle(disp_mem_address,
                     reinterpret_cast<const char*>(disp_bytes.data()),
                     disp_size)) {
                     std::wcerr << L"Failed to write new displacement to patched file.\n";
                 }
                 else {
-
                     patchSectionAddress += sizeof(T);
-                    std::cout << "integrity check patched! at 0x" << std::hex << g_regs.rip << std::endl;
+                    std::cout << "integrity check patched! at 0x" << std::hex
+                        << g_regs.rip << std::endl;
                 }
             }
         }
 #endif
 
-
         if (!success) {
             std::cerr << std::hex << std::setfill('0');
-            std::cerr << "[!] Memory " << (write ? "write" : "read") << " failed at address 0x"
-                << address << " (RIP: 0x" << g_regs.rip << ")\n";
+            std::cerr << "[!] Memory " << (write ? "write" : "read")
+                << " failed at address 0x" << address << " (RIP: 0x"
+                << g_regs.rip << ")\n";
             DumpRegisters();
             exit(0);
         }
@@ -3749,23 +2380,26 @@ private:
         return success;
     }
 
-    template<typename T>
+    template <typename T>
     bool ReadEffectiveMemory(const ZydisDecodedOperand& op, T* out) {
         return AccessEffectiveMemory(op, out, false);
     }
 
-    template<typename T>
+    template <typename T>
     bool WriteEffectiveMemory(const ZydisDecodedOperand& op, T value) {
         return AccessEffectiveMemory(op, &value, true);
     }
 
-    bool GetEffectiveAddress(const ZydisDecodedOperand& op, uint64_t& out_address, const ZydisDisassembledInstruction* instr) {
-        if (op.type != ZYDIS_OPERAND_TYPE_MEMORY) return false;
+    bool GetEffectiveAddress(const ZydisDecodedOperand& op, uint64_t& out_address,
+        const ZydisDisassembledInstruction* instr) {
+        if (op.type != ZYDIS_OPERAND_TYPE_MEMORY)
+            return false;
 
         uint64_t address = 0;
 
         // Absolute addressing
-        if (op.mem.base == ZYDIS_REGISTER_NONE && op.mem.index == ZYDIS_REGISTER_NONE) {
+        if (op.mem.base == ZYDIS_REGISTER_NONE &&
+            op.mem.index == ZYDIS_REGISTER_NONE) {
             address = op.mem.disp.has_displacement ? op.mem.disp.value : 0;
         }
         else {
@@ -3789,16 +2423,22 @@ private:
 
         // Handle segment (FS, GS)
         switch (op.mem.segment) {
-        case ZYDIS_REGISTER_FS: address += g_regs.fs_base; break;
-        case ZYDIS_REGISTER_GS: address += g_regs.gs_base; break;
-        default: break;
+        case ZYDIS_REGISTER_FS:
+            address += g_regs.fs_base;
+            break;
+        case ZYDIS_REGISTER_GS:
+            address += g_regs.gs_base;
+            break;
+        default:
+            break;
         }
 
         out_address = address;
         return true;
     }
 
-    bool is_aligned_address(const ZydisDecodedOperand& op, size_t alignment, const ZydisDisassembledInstruction* instr) {
+    bool is_aligned_address(const ZydisDecodedOperand& op, size_t alignment,
+        const ZydisDisassembledInstruction* instr) {
         if (op.type != ZYDIS_OPERAND_TYPE_MEMORY)
             return true;
 
@@ -3809,11 +2449,13 @@ private:
         return (address % alignment) == 0;
     }
 
-    uint64_t ComputeEffectiveAddress(const ZydisDecodedOperand& mem_op, const ZydisDecodedInstruction& instr) {
+    uint64_t ComputeEffectiveAddress(const ZydisDecodedOperand& mem_op,
+        const ZydisDecodedInstruction& instr) {
         uint64_t address = 0;
 
         // Handle absolute addressing
-        if (mem_op.mem.base == ZYDIS_REGISTER_NONE && mem_op.mem.index == ZYDIS_REGISTER_NONE) {
+        if (mem_op.mem.base == ZYDIS_REGISTER_NONE &&
+            mem_op.mem.index == ZYDIS_REGISTER_NONE) {
             address = mem_op.mem.disp.has_displacement ? mem_op.mem.disp.value : 0;
         }
         else {
@@ -3827,7 +2469,8 @@ private:
 
             // Index
             if (mem_op.mem.index != ZYDIS_REGISTER_NONE) {
-                address += get_register_value<uint64_t>(mem_op.mem.index) * mem_op.mem.scale;
+                address +=
+                    get_register_value<uint64_t>(mem_op.mem.index) * mem_op.mem.scale;
             }
 
             // Displacement
@@ -3838,9 +2481,14 @@ private:
 
         // Segment overrides
         switch (mem_op.mem.segment) {
-        case ZYDIS_REGISTER_FS: address += g_regs.fs_base; break;
-        case ZYDIS_REGISTER_GS: address += g_regs.gs_base; break;
-        default: break;
+        case ZYDIS_REGISTER_FS:
+            address += g_regs.fs_base;
+            break;
+        case ZYDIS_REGISTER_GS:
+            address += g_regs.gs_base;
+            break;
+        default:
+            break;
         }
 
         return address;
@@ -3848,12 +2496,7 @@ private:
 
     // ------------------- Register Access Helpers -------------------
 
-
-
-
-
-    template<typename T>
-    T get_register_value(ZydisRegister reg) {
+    template <typename T> T get_register_value(ZydisRegister reg) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end()) {
             return *reinterpret_cast<T*>(it->second);
@@ -3863,36 +2506,33 @@ private:
         }
     }
 
-    template<>
-    __m128 get_register_value<__m128>(ZydisRegister reg) {
+    template <> __m128 get_register_value<__m128>(ZydisRegister reg) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end()) {
             return *reinterpret_cast<__m128*>(it->second);
         }
         return _mm_setzero_ps();
     }
-    template<>
-    __m128i get_register_value<__m128i>(ZydisRegister reg) {
+    template <> __m128i get_register_value<__m128i>(ZydisRegister reg) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end())
             return *reinterpret_cast<__m128i*>(it->second);
         else
             return _mm_setzero_si128();
     }
-    template<>
-    __m256i get_register_value<__m256i>(ZydisRegister reg) {
+    template <> __m256i get_register_value<__m256i>(ZydisRegister reg) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end()) {
             YMM* ymm = reinterpret_cast<YMM*>(it->second);
             __m128i lo = _mm_loadu_si128(reinterpret_cast<const __m128i*>(ymm->xmm));
-            __m128i hi = _mm_loadu_si128(reinterpret_cast<const __m128i*>(ymm->ymmh));
+            __m128i hi =
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(ymm->ymmh));
             return _mm256_set_m128i(hi, lo);
         }
         return _mm256_setzero_si256();
     }
 
-    template<>
-    uint8_t* get_register_value<uint8_t*>(ZydisRegister reg) {
+    template <> uint8_t* get_register_value<uint8_t*>(ZydisRegister reg) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end())
             return reinterpret_cast<uint8_t*>(it->second);
@@ -3900,8 +2540,7 @@ private:
             return nullptr;
     }
 
-    template<>
-    YMM get_register_value<YMM>(ZydisRegister reg) {
+    template <> YMM get_register_value<YMM>(ZydisRegister reg) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end()) {
             return *reinterpret_cast<YMM*>(it->second);
@@ -3909,12 +2548,12 @@ private:
         return {};
     }
 
-    template<typename T>
-    void set_register_value(ZydisRegister reg, T value) {
+    template <typename T> void set_register_value(ZydisRegister reg, T value) {
         auto it = reg_lookup.find(reg);
-        if (it != reg_lookup.end()) *reinterpret_cast<T*>(it->second) = value;
+        if (it != reg_lookup.end())
+            *reinterpret_cast<T*>(it->second) = value;
     }
-    template<>
+    template <>
     void set_register_value<__m128i>(ZydisRegister reg, __m128i value) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end()) {
@@ -3922,24 +2561,21 @@ private:
         }
     }
 
-    template<>
-    void set_register_value<YMM>(ZydisRegister reg, YMM value) {
+    template <> void set_register_value<YMM>(ZydisRegister reg, YMM value) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end()) {
             *reinterpret_cast<YMM*>(it->second) = value;
         }
     }
 
-
-    template<>
-    void set_register_value<__m128>(ZydisRegister reg, __m128 value) {
+    template <> void set_register_value<__m128>(ZydisRegister reg, __m128 value) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end()) {
             *reinterpret_cast<__m128*>(it->second) = value;
         }
     }
 
-    template<>
+    template <>
     void set_register_value<__m256i>(ZydisRegister reg, __m256i value) {
         auto it = reg_lookup.find(reg);
         if (it != reg_lookup.end()) {
@@ -3951,7 +2587,6 @@ private:
         }
     }
 
-
     // ------------------- Flag Helpers -------------------
 
     bool parity(uint8_t value) {
@@ -3960,7 +2595,8 @@ private:
         return (0x6996 >> value) & 1;
     }
 
-    void update_flags_or(uint64_t result, uint64_t val_dst, uint64_t val_src, int size_bits) {
+    void update_flags_or(uint64_t result, uint64_t val_dst, uint64_t val_src,
+        int size_bits) {
         uint64_t mask = (size_bits == 64) ? ~0ULL : ((1ULL << size_bits) - 1);
         result &= mask;
         val_dst &= mask;
@@ -3972,14 +2608,14 @@ private:
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result));
 
         g_regs.rflags.flags.AF = 0;
-
-
-
     }
 
-    void update_flags_sub(uint64_t result, uint64_t val_dst, uint64_t val_src, int size_bits) {
+    void update_flags_sub(uint64_t result, uint64_t val_dst, uint64_t val_src,
+        int size_bits) {
         uint64_t mask = (size_bits == 64) ? ~0ULL : ((1ULL << size_bits) - 1);
-        result &= mask; val_dst &= mask; val_src &= mask;
+        result &= mask;
+        val_dst &= mask;
+        val_src &= mask;
 
         g_regs.rflags.flags.CF = (val_src > val_dst);
         g_regs.rflags.flags.ZF = (result == 0);
@@ -3990,23 +2626,31 @@ private:
         g_regs.rflags.flags.AF = ((val_dst ^ val_src ^ result) >> 4) & 1;
 
         // Overflow Flag
-        g_regs.rflags.flags.OF = (((val_dst ^ val_src) & (val_dst ^ result)) >> (size_bits - 1)) & 1;
+        g_regs.rflags.flags.OF =
+            (((val_dst ^ val_src) & (val_dst ^ result)) >> (size_bits - 1)) & 1;
     }
 
-    void update_flags_add(uint64_t result, uint64_t val_dst, uint64_t val_src, int size_bits) {
+    void update_flags_add(uint64_t result, uint64_t val_dst, uint64_t val_src,
+        int size_bits) {
         uint64_t mask = (size_bits == 64) ? ~0ULL : ((1ULL << size_bits) - 1);
-        result &= mask; val_dst &= mask; val_src &= mask;
+        result &= mask;
+        val_dst &= mask;
+        val_src &= mask;
         g_regs.rflags.flags.CF = (result < val_dst);
-        g_regs.rflags.flags.OF = (~(val_dst ^ val_src) & (val_dst ^ result)) >> (size_bits - 1);
+        g_regs.rflags.flags.OF =
+            (~(val_dst ^ val_src) & (val_dst ^ result)) >> (size_bits - 1);
         g_regs.rflags.flags.ZF = (result == 0);
         g_regs.rflags.flags.SF = (result >> (size_bits - 1)) & 1;
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result));
         g_regs.rflags.flags.AF = ((val_dst ^ val_src ^ result) >> 4) & 1;
     }
 
-    void update_flags_and(uint64_t result, uint64_t val_dst, uint64_t val_src, int size_bits) {
+    void update_flags_and(uint64_t result, uint64_t val_dst, uint64_t val_src,
+        int size_bits) {
         uint64_t mask = (size_bits == 64) ? ~0ULL : ((1ULL << size_bits) - 1);
-        result &= mask; val_dst &= mask; val_src &= mask;
+        result &= mask;
+        val_dst &= mask;
+        val_src &= mask;
 
         // Zero Flag (ZF)
         g_regs.rflags.flags.ZF = (result == 0);
@@ -4018,7 +2662,8 @@ private:
         // Count the number of 1s in the least significant byte
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result));
 
-        // Auxiliary Carry Flag (AF) - not relevant for AND but you can set it to 0 if needed
+        // Auxiliary Carry Flag (AF) - not relevant for AND but you can set it to 0
+        // if needed
         g_regs.rflags.flags.AF = 0;
 
         // Carry Flag (CF) - for AND operation, CF is always 0
@@ -4030,7 +2675,8 @@ private:
 
     void update_flags_neg(uint64_t result, uint64_t val, int size_bits) {
         uint64_t mask = (size_bits == 64) ? ~0ULL : ((1ULL << size_bits) - 1);
-        result &= mask; val &= mask;
+        result &= mask;
+        val &= mask;
 
         g_regs.rflags.flags.CF = (val != 0);
         g_regs.rflags.flags.ZF = (result == 0);
@@ -4068,7 +2714,6 @@ private:
 
         uint32_t bytes = (width == 16) ? 2 : 8;
 
-
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE && op.imm.is_signed)
             value = sign_extend(value, width);
         else
@@ -4077,7 +2722,6 @@ private:
         g_regs.rsp.q -= bytes;
         WriteMemory(g_regs.rsp.q, &value, bytes);
         LOG(L"[+] PUSH 0x" << std::hex << value << L" (" << width << "-bit)");
-
     }
     void emulate_fxsave(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -4093,7 +2737,6 @@ private:
 
         ApplyRegistersToContext();
         auto FltSave = UpdateFltSaveFromContext();
-
 
         if (!write_operand_value(dst, sizeof(FltSave), FltSave)) {
             LOG(L"[!] Failed to write operand for SETLE");
@@ -4116,12 +2759,10 @@ private:
 
         XMM_SAVE_AREA32 fltSave{};
 
-
         if (!read_operand_value(src, sizeof(fltSave), fltSave)) {
             LOG(L"[!] Failed to read memory operand for FXRSTOR");
             return;
         }
-
 
         if (!RestoreFltSaveToContext(hThread, fltSave)) {
             LOG(L"[!] Failed to restore FltSave to thread context");
@@ -4156,7 +2797,6 @@ private:
         LOG(L"[+] SETLE => " << std::hex << static_cast<int>(value));
     }
     void emulate_vpor(const ZydisDisassembledInstruction* instr) {
-
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
@@ -4194,14 +2834,10 @@ private:
             __m256i result = _mm256_or_si256(v1, v2);
 #else
 
-            __m128i lo = _mm_or_si128(
-                _mm256_castsi256_si128(v1),
-                _mm256_castsi256_si128(v2)
-            );
-            __m128i hi = _mm_or_si128(
-                _mm256_extracti128_si256(v1, 1),
-                _mm256_extracti128_si256(v2, 1)
-            );
+            __m128i lo =
+                _mm_or_si128(_mm256_castsi256_si128(v1), _mm256_castsi256_si128(v2));
+            __m128i hi = _mm_or_si128(_mm256_extracti128_si256(v1, 1),
+                _mm256_extracti128_si256(v2, 1));
             __m256i result = _mm256_set_m128i(hi, lo);
 #endif
 
@@ -4226,11 +2862,8 @@ private:
 
         LOG(L"[+] PUSHFQ (64-bit) 0x" << std::hex << image);
     }
-    void emulate_pushf(const ZydisDisassembledInstruction* instr)
-    {
-
+    void emulate_pushf(const ZydisDisassembledInstruction* instr) {
         g_regs.rsp.w -= 2;
-
 
         RFlags temp = g_regs.rflags;
         temp.flags.always1 = 1;
@@ -4242,9 +2875,7 @@ private:
 
         LOG(L"[+] PUSHF (16-bit) 0x" << std::hex << flags16);
     }
-    void emulate_pushfd(const ZydisDisassembledInstruction* instr)
-    {
-
+    void emulate_pushfd(const ZydisDisassembledInstruction* instr) {
         g_regs.rsp.d -= 4;
 
         RFlags temp = g_regs.rflags;
@@ -4261,15 +2892,17 @@ private:
         for (int i = 0; i < 16; i++) {
             memset(g_regs.ymm[i].ymmh, 0, 16);
         }
-        LOG(L"[+] vzeroupper executed: upper 128 bits of all ymm registers zeroed.");
+        LOG(L"[+] vzeroupper executed: upper 128 bits of all ymm registers "
+            L"zeroed.");
     }
     void emulate_addss(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // xmm register (destination)
-        const auto& src = instr->operands[1];  // xmm register or memory
+        const auto& dst = instr->operands[0]; // xmm register (destination)
+        const auto& src = instr->operands[1]; // xmm register or memory
 
         __m128 dst_val, src_val;
 
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for ADDSS");
             return;
         }
@@ -4279,21 +2912,23 @@ private:
         float b = src_val.m128_f32[0];
         float result_scalar = a + b;
 
-        // Store result in the lowest 32 bits of destination, keep upper bits untouched
+        // Store result in the lowest 32 bits of destination, keep upper bits
+        // untouched
         dst_val.m128_f32[0] = result_scalar;
 
         write_operand_value(dst, 128, dst_val);
 
-        LOG(L"[+] ADDSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << result_scalar);
+        LOG(L"[+] ADDSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::dec << result_scalar);
     }
     void emulate_subss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
         __m128 dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for SUBSS");
             return;
         }
@@ -4306,16 +2941,17 @@ private:
 
         write_operand_value(dst, 128, dst_val);
 
-        LOG(L"[+] SUBSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << result_scalar);
+        LOG(L"[+] SUBSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::dec << result_scalar);
     }
     void emulate_addsd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
         __m128d dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for ADDSD");
             return;
         }
@@ -4328,16 +2964,17 @@ private:
 
         write_operand_value(dst, 128, dst_val);
 
-        LOG(L"[+] ADDSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << result_scalar);
+        LOG(L"[+] ADDSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::dec << result_scalar);
     }
     void emulate_subsd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
         __m128d dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for SUBSD");
             return;
         }
@@ -4350,9 +2987,9 @@ private:
 
         write_operand_value(dst, 128, dst_val);
 
-        LOG(L"[+] SUBSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << result_scalar);
+        LOG(L"[+] SUBSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::dec << result_scalar);
     }
     void emulate_sqrtpd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -4370,8 +3007,9 @@ private:
 
         write_operand_value(dst, 128, result);
 
-        LOG(L"[+] SQRTPD => sqrt([" << src_val.m128d_f64[0] << ", " << src_val.m128d_f64[1]
-            << L"]) = [" << result.m128d_f64[0] << ", " << result.m128d_f64[1] << "]");
+        LOG(L"[+] SQRTPD => sqrt(["
+            << src_val.m128d_f64[0] << ", " << src_val.m128d_f64[1] << L"]) = ["
+            << result.m128d_f64[0] << ", " << result.m128d_f64[1] << "]");
     }
     void emulate_mul(const ZydisDisassembledInstruction* instr) {
         const auto& operands = instr->operands;
@@ -4396,10 +3034,18 @@ private:
 
         uint64_t val2 = 0;
         switch (width) {
-        case 8:  val2 = g_regs.rax.l; break;
-        case 16: val2 = g_regs.rax.w; break;
-        case 32: val2 = g_regs.rax.d; break;
-        case 64: val2 = g_regs.rax.q; break;
+        case 8:
+            val2 = g_regs.rax.l;
+            break;
+        case 16:
+            val2 = g_regs.rax.w;
+            break;
+        case 32:
+            val2 = g_regs.rax.d;
+            break;
+        case 64:
+            val2 = g_regs.rax.q;
+            break;
         default:
             LOG(L"[!] Unsupported operand width for MUL");
             return;
@@ -4409,7 +3055,6 @@ private:
         val1 &= mask;
         val2 &= mask;
 
-
         uint64_t result_low = 0;
         uint64_t result_high = 0;
 
@@ -4417,7 +3062,8 @@ private:
         case 8: {
             g_regs.rax.q = 0;
             g_regs.rdx.q = 0;
-            uint16_t result = static_cast<uint16_t>(static_cast<uint8_t>(val1)) * static_cast<uint8_t>(val2);
+            uint16_t result = static_cast<uint16_t>(static_cast<uint8_t>(val1)) *
+                static_cast<uint8_t>(val2);
             g_regs.rax.l = static_cast<uint8_t>(result & 0xFF);
             g_regs.rax.h = static_cast<uint8_t>((result >> 8) & 0xFF);
             result_low = result;
@@ -4428,7 +3074,8 @@ private:
             uint16_t multiplicand = static_cast<uint16_t>(g_regs.rax.w);
             uint16_t src_val = static_cast<uint16_t>(val1);
 
-            uint32_t result = static_cast<uint32_t>(multiplicand) * static_cast<uint32_t>(src_val);
+            uint32_t result =
+                static_cast<uint32_t>(multiplicand) * static_cast<uint32_t>(src_val);
 
             g_regs.rax.w = static_cast<uint16_t>(result & 0xFFFF);
             g_regs.rdx.w = static_cast<uint16_t>((result >> 16) & 0xFFFF);
@@ -4441,7 +3088,8 @@ private:
         case 32: {
             g_regs.rax.q = 0;
             g_regs.rdx.q = 0;
-            uint64_t result = static_cast<uint64_t>(static_cast<uint32_t>(val1)) * static_cast<uint32_t>(val2);
+            uint64_t result = static_cast<uint64_t>(static_cast<uint32_t>(val1)) *
+                static_cast<uint32_t>(val2);
             g_regs.rax.d = static_cast<uint32_t>(result & 0xFFFFFFFF);
             g_regs.rdx.d = static_cast<uint32_t>((result >> 32) & 0xFFFFFFFF);
             result_low = result;
@@ -4458,8 +3106,8 @@ private:
         }
         }
 
-        LOG(L"[+] MUL (" << width << L"bit) => RDX:RAX = 0x"
-            << std::hex << result_high << L":" << result_low);
+        LOG(L"[+] MUL (" << width << L"bit) => RDX:RAX = 0x" << std::hex
+            << result_high << L":" << result_low);
 
         bool upper_nonzero = result_high != 0;
         g_regs.rflags.flags.CF = upper_nonzero;
@@ -4488,7 +3136,8 @@ private:
         const auto& src = instr->operands[1];
 
         __m128 dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for MULSS");
             return;
         }
@@ -4504,39 +3153,36 @@ private:
 
         write_operand_value(dst, 128, dst_val);
 
-        LOG(L"[+] MULSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << result_scalar);
+        LOG(L"[+] MULSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::dec << result_scalar);
     }
     void emulate_mulsd(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // XMM register
-        const auto& src = instr->operands[1];  // XMM register or memory
+        const auto& dst = instr->operands[0]; // XMM register
+        const auto& src = instr->operands[1]; // XMM register or memory
 
         __m128d dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for MULSD");
             return;
         }
-
 
         double a = dst_val.m128d_f64[0];
         double b = src_val.m128d_f64[0];
 
         double result_scalar = a * b;
 
-
         dst_val.m128d_f64[0] = result_scalar;
 
         write_operand_value(dst, 128, dst_val);
 
-        LOG(L"[+] MULSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << result_scalar);
+        LOG(L"[+] MULSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::dec << result_scalar);
     }
     void emulate_scasd(const ZydisDisassembledInstruction* instr) {
-
         uint32_t eax_val = static_cast<uint32_t>(g_regs.rax.d);
-
 
         uint64_t addr = g_regs.rdi.q;
 
@@ -4546,28 +3192,29 @@ private:
             return;
         }
 
-        uint64_t result = static_cast<uint64_t>(eax_val) - static_cast<uint64_t>(mem_val);
+        uint64_t result =
+            static_cast<uint64_t>(eax_val) - static_cast<uint64_t>(mem_val);
 
         update_flags_sub(result, eax_val, mem_val, 32);
-
-
 
         int delta = (g_regs.rflags.flags.DF) ? -4 : 4;
         g_regs.rdi.q += delta;
 
-        LOG(L"[+] SCASD executed: compared 0x" << std::hex << eax_val
-            << L" with mem[0x" << addr << L"] = 0x" << mem_val
-            << L", new RDI = 0x" << g_regs.rdi.q);
+        LOG(L"[+] SCASD executed: compared 0x"
+            << std::hex << eax_val << L" with mem[0x" << addr << L"] = 0x"
+            << mem_val << L", new RDI = 0x" << g_regs.rdi.q);
     }
     void emulate_rcpss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 #if Save_Rva
-          addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr->info.length, RVAType::RCPSS, filename);
+        addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),
+            instr->info.length, RVAType::RCPSS, filename);
 #endif
 #if analyze_ENABLED
 
-        LOG_analyze(CYAN, L"[+] RCPSS at [RIP: 0x" << std::hex << g_regs.rip << "] ");
+        LOG_analyze(CYAN,
+            L"[+] RCPSS at [RIP: 0x" << std::hex << g_regs.rip << "] ");
 
 #endif
 
@@ -4578,9 +3225,7 @@ private:
             return;
         }
 
-
         __m128 result = _mm_rcp_ss(src_val);
-
 
         dst_val.m128_f32[0] = result.m128_f32[0];
 
@@ -4589,15 +3234,15 @@ private:
             return;
         }
 
-        LOG(L"[+] RCPS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << dst_val.m128_f32[0]);
+        LOG(L"[+] RCPS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::dec << dst_val.m128_f32[0]);
     }
     void emulate_sfence(const ZydisDisassembledInstruction* instr) {
         // In real CPU: serialize store operations before continuing execution.
         // In emulation: no-op, but we log it.
 
-      //  _mm_sfence(); // Optional: use SSE intrinsic as a software fence
+        //  _mm_sfence(); // Optional: use SSE intrinsic as a software fence
 
         LOG(L"[+] SFENCE executed - store operations serialized (emulated)");
     }
@@ -4606,10 +3251,12 @@ private:
         const auto& src = instr->operands[1];
 
         __m128 dst_val;
-        if (!read_operand_value<__m128>(dst, 128, dst_val)) return;
+        if (!read_operand_value<__m128>(dst, 128, dst_val))
+            return;
 
         float src_scalar;
-        if (!read_operand_value<float>(src, 32, src_scalar)) return;
+        if (!read_operand_value<float>(src, 32, src_scalar))
+            return;
 
         float sqrt_result = std::sqrt(src_scalar);
 
@@ -4628,26 +3275,41 @@ private:
         is_Zero_FLAG_SKIP = 1;
 #endif
         int64_t val1 = 0, val2 = 0, imm = 0;
-        uint128_t full_res = { 0,0 };
+        uint128_t full_res = { 0, 0 };
         uint64_t truncated = 0;
         bool of = false, cf = false;
 
         auto read_acc = [&]() -> int64_t {
             switch (width) {
-            case 8:  return (int8_t)g_regs.rax.l;
-            case 16: return (int16_t)g_regs.rax.w;
-            case 32: return (int32_t)g_regs.rax.d;
-            case 64: return (int64_t)g_regs.rax.q;
+            case 8:
+                return (int8_t)g_regs.rax.l;
+            case 16:
+                return (int16_t)g_regs.rax.w;
+            case 32:
+                return (int32_t)g_regs.rax.d;
+            case 64:
+                return (int64_t)g_regs.rax.q;
             }
             return 0;
             };
 
         auto write_rdx_rax = [&](const uint128_t& r) {
             switch (width) {
-            case 8:  g_regs.rax.w = (uint16_t)(r.low & 0xFFFF); break;
-            case 16: g_regs.rax.w = (uint16_t)(r.low & 0xFFFF); g_regs.rdx.w = (uint16_t)(r.low >> 16); break;
-            case 32: g_regs.rax.d = (uint32_t)(r.low & 0xFFFFFFFF); g_regs.rdx.d = (uint32_t)(r.low >> 32); break;
-            case 64: g_regs.rax.q = r.low; g_regs.rdx.q = r.high; break;
+            case 8:
+                g_regs.rax.w = (uint16_t)(r.low & 0xFFFF);
+                break;
+            case 16:
+                g_regs.rax.w = (uint16_t)(r.low & 0xFFFF);
+                g_regs.rdx.w = (uint16_t)(r.low >> 16);
+                break;
+            case 32:
+                g_regs.rax.d = (uint32_t)(r.low & 0xFFFFFFFF);
+                g_regs.rdx.d = (uint32_t)(r.low >> 32);
+                break;
+            case 64:
+                g_regs.rax.q = r.low;
+                g_regs.rdx.q = r.high;
+                break;
             }
             };
 
@@ -4657,17 +3319,22 @@ private:
             full_res = mul_signed_to_2w(val1, val2, width);
             write_rdx_rax(full_res);
             switch (width) {
-            case 8:  of = cf = ((int16_t)(int8_t)g_regs.rax.l != (int16_t)g_regs.rax.w); break;
-            case 16: of = cf = ((int32_t)(int16_t)g_regs.rax.w != (int32_t)((g_regs.rdx.w << 16) | g_regs.rax.w)); break;
-            case 32: of = cf = ((int64_t)(int32_t)g_regs.rax.d != (int64_t)(((uint64_t)g_regs.rdx.d << 32) | g_regs.rax.d)); break;
-            case 64:
-            {
+            case 8:
+                of = cf = ((int16_t)(int8_t)g_regs.rax.l != (int16_t)g_regs.rax.w);
+                break;
+            case 16:
+                of = cf = ((int32_t)(int16_t)g_regs.rax.w !=
+                    (int32_t)((g_regs.rdx.w << 16) | g_regs.rax.w));
+                break;
+            case 32:
+                of = cf = ((int64_t)(int32_t)g_regs.rax.d !=
+                    (int64_t)(((uint64_t)g_regs.rdx.d << 32) | g_regs.rax.d));
+                break;
+            case 64: {
                 int64_t low = (int64_t)full_res.low;
                 int64_t high = (int64_t)full_res.high;
                 of = cf = !((high == 0 && low >= 0) || (high == -1 && low < 0));
-            }
-            break;
-
+            } break;
             }
             g_regs.rflags.flags.CF = cf;
             g_regs.rflags.flags.OF = of;
@@ -4684,24 +3351,38 @@ private:
                 full_res = mul_signed_to_2w(val1, imm, width);
             }
             switch (width) {
-            case 8:  truncated = (uint8_t)(int16_t)full_res.low; break;
-            case 16: truncated = (uint16_t)(int32_t)full_res.low; break;
-            case 32: truncated = (uint32_t)(int64_t)full_res.low; break;
-            case 64: truncated = full_res.low; break;
-            }
-            if (op_count == 2) write_operand_value(ops[0], width, truncated);
-            else write_operand_value(ops[0], width, truncated);
-            switch (width) {
-            case 8:  cf = of = ((int16_t)(int8_t)truncated != (int16_t)full_res.low); break;
-            case 16: cf = of = ((int32_t)(int16_t)truncated != (int32_t)full_res.low); break;
-            case 32: cf = of = ((int64_t)(int32_t)truncated != (int64_t)full_res.low); break;
+            case 8:
+                truncated = (uint8_t)(int16_t)full_res.low;
+                break;
+            case 16:
+                truncated = (uint16_t)(int32_t)full_res.low;
+                break;
+            case 32:
+                truncated = (uint32_t)(int64_t)full_res.low;
+                break;
             case 64:
-            {
+                truncated = full_res.low;
+                break;
+            }
+            if (op_count == 2)
+                write_operand_value(ops[0], width, truncated);
+            else
+                write_operand_value(ops[0], width, truncated);
+            switch (width) {
+            case 8:
+                cf = of = ((int16_t)(int8_t)truncated != (int16_t)full_res.low);
+                break;
+            case 16:
+                cf = of = ((int32_t)(int16_t)truncated != (int32_t)full_res.low);
+                break;
+            case 32:
+                cf = of = ((int64_t)(int32_t)truncated != (int64_t)full_res.low);
+                break;
+            case 64: {
                 int64_t low = (int64_t)full_res.low;
                 int64_t high = (int64_t)full_res.high;
                 of = cf = !((high == 0 && low >= 0) || (high == -1 && low < 0));
-            }
-            break;
+            } break;
             }
             g_regs.rflags.flags.CF = cf;
             g_regs.rflags.flags.OF = of;
@@ -4746,7 +3427,8 @@ private:
             return;
         }
 
-        LOG(L"[+] CMOVP executed: moved 0x" << std::hex << value << L" to "
+        LOG(L"[+] CMOVP executed: moved 0x"
+            << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
     void emulate_vpcmpeqw(const ZydisDisassembledInstruction* instr) {
@@ -4755,8 +3437,6 @@ private:
         const auto& src2 = instr->operands[2];
         auto width = dst.size;
 
-
-
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported width in vpcmpeqw: " << (int)width);
             return;
@@ -4764,7 +3444,8 @@ private:
 
         if (width == 128) {
             __m128i v1, v2;
-            if (!read_operand_value<__m128i>(src1, width, v1) || !read_operand_value<__m128i>(src2, width, v2)) {
+            if (!read_operand_value<__m128i>(src1, width, v1) ||
+                !read_operand_value<__m128i>(src2, width, v2)) {
                 LOG(L"[!] Failed to read source operands in vpcmpeqw (128-bit)");
                 return;
             }
@@ -4778,7 +3459,8 @@ private:
         }
         else if (width == 256) {
             __m256i v1, v2;
-            if (!read_operand_value<__m256i>(src1, width, v1) || !read_operand_value<__m256i>(src2, width, v2)) {
+            if (!read_operand_value<__m256i>(src1, width, v1) ||
+                !read_operand_value<__m256i>(src2, width, v2)) {
                 LOG(L"[!] Failed to read source operands in vpcmpeqw (256-bit)");
                 return;
             }
@@ -4866,7 +3548,8 @@ private:
 
         if (width == 128) {
             __m128i vdst, vsrc;
-            if (!read_operand_value<__m128i>(dst, width, vdst) || !read_operand_value<__m128i>(src, width, vsrc)) {
+            if (!read_operand_value<__m128i>(dst, width, vdst) ||
+                !read_operand_value<__m128i>(src, width, vsrc)) {
                 LOG(L"[!] Failed to read operands for POR (128-bit)");
                 return;
             }
@@ -4880,7 +3563,8 @@ private:
         }
         else if (width == 256) {
             __m256i vdst, vsrc;
-            if (!read_operand_value<__m256i>(dst, width, vdst) || !read_operand_value<__m256i>(src, width, vsrc)) {
+            if (!read_operand_value<__m256i>(dst, width, vdst) ||
+                !read_operand_value<__m256i>(src, width, vsrc)) {
                 LOG(L"[!] Failed to read operands for POR (256-bit)");
                 return;
             }
@@ -4889,8 +3573,10 @@ private:
             __m256i result = _mm256_or_si256(vdst, vsrc);
 #else
             // fallback if AVX2 not available: operate on halves
-            __m128i lo = _mm_or_si128(_mm256_castsi256_si128(vdst), _mm256_castsi256_si128(vsrc));
-            __m128i hi = _mm_or_si128(_mm256_extracti128_si256(vdst, 1), _mm256_extracti128_si256(vsrc, 1));
+            __m128i lo = _mm_or_si128(_mm256_castsi256_si128(vdst),
+                _mm256_castsi256_si128(vsrc));
+            __m128i hi = _mm_or_si128(_mm256_extracti128_si256(vdst, 1),
+                _mm256_extracti128_si256(vsrc, 1));
             __m256i result = _mm256_set_m128i(hi, lo);
 #endif
 
@@ -4952,13 +3638,12 @@ private:
     void emulate_pshufb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
-        const auto& src2 = instr->operands[2].size > 2
-            ? instr->operands[2]
-            : src1;
+        const auto& src2 = instr->operands[2].size > 2 ? instr->operands[2] : src1;
 
         auto width = dst.size;
         if (width != 128) {
-            LOG(L"[!] Unsupported width in pshufb (only 128-bit legacy supported): " << (int)width);
+            LOG(L"[!] Unsupported width in pshufb (only 128-bit legacy supported): "
+                << (int)width);
             return;
         }
 
@@ -4972,7 +3657,6 @@ private:
             LOG(L"[!] Failed to read shuffle mask operand");
             return;
         }
-
 
         __m128i result = _mm_shuffle_epi8(a, mask);
         write_operand_value<__m128i>(dst, width, result);
@@ -5016,14 +3700,10 @@ private:
 #if defined(__AVX2__)
             __m256i result = _mm256_add_epi64(v1, v2);
 #else
-            __m128i lo = _mm_add_epi64(
-                _mm256_castsi256_si128(v1),
-                _mm256_castsi256_si128(v2)
-            );
-            __m128i hi = _mm_add_epi64(
-                _mm256_extracti128_si256(v1, 1),
-                _mm256_extracti128_si256(v2, 1)
-            );
+            __m128i lo =
+                _mm_add_epi64(_mm256_castsi256_si128(v1), _mm256_castsi256_si128(v2));
+            __m128i hi = _mm_add_epi64(_mm256_extracti128_si256(v1, 1),
+                _mm256_extracti128_si256(v2, 1));
             __m256i result = _mm256_set_m128i(hi, lo);
 #endif
 
@@ -5036,7 +3716,6 @@ private:
         LOG(L"[+] VPADDQ executed");
     }
     void emulate_vpsubq(const ZydisDisassembledInstruction* instr) {
-
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
@@ -5055,7 +3734,6 @@ private:
                 return;
             }
 
-
             __m128i result = _mm_sub_epi64(v1, v2);
 
             if (!write_operand_value<__m128i>(dst, width, result)) {
@@ -5071,19 +3749,14 @@ private:
                 return;
             }
 
-
 #if defined(__AVX2__)
             __m256i result = _mm256_sub_epi64(v1, v2);
 #else
 
-            __m128i lo = _mm_sub_epi64(
-                _mm256_castsi256_si128(v1),
-                _mm256_castsi256_si128(v2)
-            );
-            __m128i hi = _mm_sub_epi64(
-                _mm256_extracti128_si256(v1, 1),
-                _mm256_extracti128_si256(v2, 1)
-            );
+            __m128i lo =
+                _mm_sub_epi64(_mm256_castsi256_si128(v1), _mm256_castsi256_si128(v2));
+            __m128i hi = _mm_sub_epi64(_mm256_extracti128_si256(v1, 1),
+                _mm256_extracti128_si256(v2, 1));
             __m256i result = _mm256_set_m128i(hi, lo);
 #endif
 
@@ -5104,13 +3777,15 @@ private:
             LOG(L"[!] XADD: Source must be register");
             return;
         }
-        if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER && dst.type != ZYDIS_OPERAND_TYPE_MEMORY) {
+        if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER &&
+            dst.type != ZYDIS_OPERAND_TYPE_MEMORY) {
             LOG(L"[!] XADD: Destination must be register or memory");
             return;
         }
 
         uint64_t dst_val = 0, src_val = 0;
-        if (!read_operand_value(dst, width, dst_val) || !read_operand_value(src, width, src_val)) {
+        if (!read_operand_value(dst, width, dst_val) ||
+            !read_operand_value(src, width, src_val)) {
             LOG(L"[!] XADD: Failed to read operands");
             return;
         }
@@ -5159,12 +3834,10 @@ private:
 
         uint8_t shuffle_imm = static_cast<uint8_t>(imm.imm.value.u & 0xFF);
 
-
         alignas(16) uint32_t dwords[4];
         _mm_store_si128((__m128i*)dwords, src_val);
 
         uint32_t shuffled[4];
-
 
         for (int i = 0; i < 4; ++i) {
             uint8_t idx = (shuffle_imm >> (i * 2)) & 0x3;
@@ -5194,19 +3867,22 @@ private:
 
         if (width == 128) {
             __m128i a;
-            if (!read_operand_value<__m128i>(src, width, a)) return;
+            if (!read_operand_value<__m128i>(src, width, a))
+                return;
             __m128i r = emulate_vpshufd_128(a, imm8);
             write_operand_value<__m128i>(dst, width, r);
         }
         else if (width == 256) {
             __m256i a;
-            if (!read_operand_value<__m256i>(src, width, a)) return;
+            if (!read_operand_value<__m256i>(src, width, a))
+                return;
             __m256i r = emulate_vpshufd_256(a, imm8);
             write_operand_value<__m256i>(dst, width, r);
         }
         else if (width == 512) {
             __m512i a;
-            if (!read_operand_value<__m512i>(src, width, a)) return;
+            if (!read_operand_value<__m512i>(src, width, a))
+                return;
             __m512i r = emulate_vpshufd_512(a, imm8);
             write_operand_value<__m512i>(dst, width, r);
         }
@@ -5233,7 +3909,6 @@ private:
                 return;
             }
 
-
             __m128i result = _mm_mul_epu32(v1, v2);
 
             if (!write_operand_value(dst, width, result)) {
@@ -5248,7 +3923,6 @@ private:
                 LOG(L"[!] Failed to read source operand(s) in vpmuludq");
                 return;
             }
-
 
             __m256i result = _mm256_mul_epu32(v1, v2);
 
@@ -5285,8 +3959,8 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-
-        if (g_regs.rflags.flags.ZF == 0 && g_regs.rflags.flags.SF == g_regs.rflags.flags.OF) {
+        if (g_regs.rflags.flags.ZF == 0 &&
+            g_regs.rflags.flags.SF == g_regs.rflags.flags.OF) {
             uint64_t value = 0;
             if (!read_operand_value(src, instr->info.operand_width, value)) {
                 LOG(L"[!] Failed to read source operand for CMOVNLE");
@@ -5298,12 +3972,13 @@ private:
                 return;
             }
 
-            LOG(L"[+] CMOVNLE executed: moved 0x" << std::hex << value << L" to "
+            LOG(L"[+] CMOVNLE executed: moved 0x"
+                << std::hex << value << L" to "
                 << ZydisRegisterGetString(dst.reg.value));
         }
         else {
-            LOG(L"[+] CMOVNLE skipped: condition not met (ZF=" << g_regs.rflags.flags.ZF
-                << ", SF=" << g_regs.rflags.flags.SF
+            LOG(L"[+] CMOVNLE skipped: condition not met (ZF="
+                << g_regs.rflags.flags.ZF << ", SF=" << g_regs.rflags.flags.SF
                 << ", OF=" << g_regs.rflags.flags.OF << ")");
         }
     }
@@ -5312,7 +3987,6 @@ private:
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
         auto width = dst.size;
-
 
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported width in vpxor: " << (int)width);
@@ -5342,8 +4016,6 @@ private:
                 return;
             }
 
-
-
             __m256i result = _mm256_xor_si256(v1, v2);
 
             if (!write_operand_value(dst, width, result)) {
@@ -5359,7 +4031,6 @@ private:
         const auto& src = instr->operands[1];
         auto width = dst.size;
 
-
         if (width != 128 && width != 256) {
             LOG(L"[!] Unsupported operand width in PCMPEQB: " << (int)width);
             return;
@@ -5367,7 +4038,8 @@ private:
 
         if (width == 128) {
             __m128i v_dst, v_src;
-            if (!read_operand_value<__m128i>(dst, width, v_dst) || !read_operand_value<__m128i>(src, width, v_src)) {
+            if (!read_operand_value<__m128i>(dst, width, v_dst) ||
+                !read_operand_value<__m128i>(src, width, v_src)) {
                 LOG(L"[!] Failed to read source operands in PCMPEQB (128-bit)");
                 return;
             }
@@ -5381,7 +4053,8 @@ private:
         }
         else if (width == 256) {
             __m256i v_dst, v_src;
-            if (!read_operand_value<__m256i>(dst, width, v_dst) || !read_operand_value<__m256i>(src, width, v_src)) {
+            if (!read_operand_value<__m256i>(dst, width, v_dst) ||
+                !read_operand_value<__m256i>(src, width, v_src)) {
                 LOG(L"[!] Failed to read source operands in PCMPEQB (256-bit)");
                 return;
             }
@@ -5389,8 +4062,10 @@ private:
 #if defined(__AVX2__)
             __m256i result = _mm256_cmpeq_epi8(v_dst, v_src);
 #else
-            __m128i lo = _mm_cmpeq_epi8(_mm256_castsi256_si128(v_dst), _mm256_castsi256_si128(v_src));
-            __m128i hi = _mm_cmpeq_epi8(_mm256_extracti128_si256(v_dst, 1), _mm256_extracti128_si256(v_src, 1));
+            __m128i lo = _mm_cmpeq_epi8(_mm256_castsi256_si128(v_dst),
+                _mm256_castsi256_si128(v_src));
+            __m128i hi = _mm_cmpeq_epi8(_mm256_extracti128_si256(v_dst, 1),
+                _mm256_extracti128_si256(v_src, 1));
             __m256i result = _mm256_set_m128i(hi, lo);
 #endif
 
@@ -5438,8 +4113,10 @@ private:
 #if defined(__AVX2__)
             __m256i result = _mm256_cmpeq_epi16(v_dst, v_src);
 #else
-            __m128i lo = _mm_cmpeq_epi16(_mm256_castsi256_si128(v_dst), _mm256_castsi256_si128(v_src));
-            __m128i hi = _mm_cmpeq_epi16(_mm256_extracti128_si256(v_dst, 1), _mm256_extracti128_si256(v_src, 1));
+            __m128i lo = _mm_cmpeq_epi16(_mm256_castsi256_si128(v_dst),
+                _mm256_castsi256_si128(v_src));
+            __m128i hi = _mm_cmpeq_epi16(_mm256_extracti128_si256(v_dst, 1),
+                _mm256_extracti128_si256(v_src, 1));
             __m256i result = _mm256_set_m128i(hi, lo);
 #endif
 
@@ -5561,15 +4238,12 @@ private:
 
         uint8_t shuffle_imm = static_cast<uint8_t>(imm.imm.value.u & 0xFF);
 
-
         alignas(16) uint16_t words[8];
         _mm_store_si128((__m128i*)words, src_val);
 
         uint16_t shuffled_words[8];
 
-
         for (int i = 0; i < 4; ++i) {
-
             uint8_t idx = (shuffle_imm >> (i * 2)) & 0x3;
             shuffled_words[i] = words[idx];
         }
@@ -5811,7 +4485,8 @@ private:
             LOG(L"[+] VPERMQ (512-bit) executed, imm=" << std::hex << (int)imm);
         }
         else {
-            LOG(L"[!] Unsupported width in VPERMQ: " << (int)width << " (only 256/512 allowed)");
+            LOG(L"[!] Unsupported width in VPERMQ: " << (int)width
+                << " (only 256/512 allowed)");
         }
     }
     void emulate_xorps(const ZydisDisassembledInstruction* instr) {
@@ -5852,8 +4527,8 @@ private:
         LOG(L"[+] SETS => " << std::hex << static_cast<int>(value));
     }
     void emulate_cvtdq2ps(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // xmm register
-        const auto& src = instr->operands[1];  // xmm register or mem
+        const auto& dst = instr->operands[0]; // xmm register
+        const auto& src = instr->operands[1]; // xmm register or mem
 
         __m128i src_val_i32;
         __m128 dst_val_f32;
@@ -5870,12 +4545,10 @@ private:
 
         write_operand_value(dst, 128, dst_val_f32);
 
-        LOG(L"[+] CVTDQ2PS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", src => ["
-            << dst_val_f32.m128_f32[0] << ", "
-            << dst_val_f32.m128_f32[1] << ", "
-            << dst_val_f32.m128_f32[2] << ", "
-            << dst_val_f32.m128_f32[3] << "]");
+        LOG(L"[+] CVTDQ2PS xmm"
+            << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", src => ["
+            << dst_val_f32.m128_f32[0] << ", " << dst_val_f32.m128_f32[1] << ", "
+            << dst_val_f32.m128_f32[2] << ", " << dst_val_f32.m128_f32[3] << "]");
     }
     void emulate_xor(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -5883,7 +4556,6 @@ private:
         const uint32_t width = instr->info.operand_width;
 
         uint64_t lhs = 0, rhs = 0;
-
 
         if (!read_operand_value(dst, width, lhs)) {
             LOG(L"[!] Failed to read destination operand in XOR");
@@ -5897,12 +4569,10 @@ private:
 
         uint64_t result = zero_extend(lhs ^ rhs, width);
 
-
         if (!write_operand_value(dst, width, result)) {
             LOG(L"[!] Failed to write result in XOR");
             return;
         }
-
 
         g_regs.rflags.flags.CF = 0;
         g_regs.rflags.flags.OF = 0;
@@ -5912,13 +4582,11 @@ private:
         g_regs.rflags.flags.SF = (result >> (width - 1)) & 1;
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result & 0xFF));
 
-
         LOG(L"[+] XOR => 0x" << std::hex << result);
-        LOG(L"[+] Flags => ZF=" << g_regs.rflags.flags.ZF
-            << ", SF=" << g_regs.rflags.flags.SF
-            << ", CF=" << g_regs.rflags.flags.CF
-            << ", OF=" << g_regs.rflags.flags.OF
-            << ", PF=" << g_regs.rflags.flags.PF
+        LOG(L"[+] Flags => ZF="
+            << g_regs.rflags.flags.ZF << ", SF=" << g_regs.rflags.flags.SF
+            << ", CF=" << g_regs.rflags.flags.CF << ", OF="
+            << g_regs.rflags.flags.OF << ", PF=" << g_regs.rflags.flags.PF
             << ", AF=" << g_regs.rflags.flags.AF);
     }
     void emulate_cmovnl(const ZydisDisassembledInstruction* instr) {
@@ -5926,7 +4594,8 @@ private:
         const auto& src = instr->operands[1];
         uint32_t width = instr->info.operand_width;
 
-        LOG(L"[CMOVNL] SF=" << g_regs.rflags.flags.SF << " OF=" << g_regs.rflags.flags.OF);
+        LOG(L"[CMOVNL] SF=" << g_regs.rflags.flags.SF
+            << " OF=" << g_regs.rflags.flags.OF);
 
         if (g_regs.rflags.flags.SF == g_regs.rflags.flags.OF) {
             uint64_t value = 0;
@@ -5963,7 +4632,8 @@ private:
         const auto& src = instr->operands[1];
 
         __m128 dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for COMISS");
             return;
         }
@@ -5987,19 +4657,20 @@ private:
             g_regs.rflags.flags.CF = 1;
         }
 
-        LOG(L"[+] COMISS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => a=" << a << L", b=" << b
-            << L", ZF=" << g_regs.rflags.flags.ZF
-            << L", CF=" << g_regs.rflags.flags.CF
-            << L", PF=" << g_regs.rflags.flags.PF);
+        LOG(L"[+] COMISS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => a="
+            << a << L", b=" << b << L", ZF="
+            << g_regs.rflags.flags.ZF << L", CF="
+            << g_regs.rflags.flags.CF << L", PF="
+            << g_regs.rflags.flags.PF);
     }
     void emulate_comisd(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0]; 
-        const auto& src = instr->operands[1];  
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
 
         __m128d dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for COMISD");
             return;
         }
@@ -6009,59 +4680,58 @@ private:
 
         bool unordered = std::isnan(a) || std::isnan(b);
 
-
         g_regs.rflags.flags.ZF = 0;
         g_regs.rflags.flags.CF = 0;
         g_regs.rflags.flags.PF = 0;
 
         if (unordered) {
-            g_regs.rflags.flags.PF = 1; 
+            g_regs.rflags.flags.PF = 1;
         }
         else if (a == b) {
             g_regs.rflags.flags.ZF = 1;
         }
         else if (a < b) {
-            g_regs.rflags.flags.CF = 1; 
+            g_regs.rflags.flags.CF = 1;
         }
 
-        LOG(L"[+] COMISD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", "
+        LOG(L"[+] COMISD xmm"
+            << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", "
             << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
                 ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
                 : L"[mem]")
-            << L" => a=" << a << L", b=" << b
-            << L", ZF=" << g_regs.rflags.flags.ZF
-            << L", CF=" << g_regs.rflags.flags.CF
-            << L", PF=" << g_regs.rflags.flags.PF);
+            << L" => a=" << a << L", b=" << b << L", ZF=" << g_regs.rflags.flags.ZF
+            << L", CF=" << g_regs.rflags.flags.CF << L", PF="
+            << g_regs.rflags.flags.PF);
     }
 
     void emulate_cdqe(const ZydisDisassembledInstruction* instr) {
-
         g_regs.rax.q = static_cast<int64_t>(static_cast<int32_t>(g_regs.rax.d));
 
-        LOG(L"[+] CDQE => Sign-extended EAX (0x" << std::hex << g_regs.rax.d << L") to RAX = 0x" << g_regs.rax.q);
+        LOG(L"[+] CDQE => Sign-extended EAX (0x"
+            << std::hex << g_regs.rax.d << L") to RAX = 0x" << g_regs.rax.q);
     }
     void emulate_cdq(const ZydisDisassembledInstruction* instr) {
         int32_t eax = static_cast<int32_t>(g_regs.rax.d);
         g_regs.rdx.q = (eax < 0) ? 0x00000000FFFFFFFF : 0x0000000000000000;
 
-        LOG(L"[+] CDQ => EAX = 0x" << std::hex << g_regs.rax.d
-            << L", EDX = 0x" << g_regs.rdx.q);
+        LOG(L"[+] CDQ => EAX = 0x" << std::hex << g_regs.rax.d << L", EDX = 0x"
+            << g_regs.rdx.q);
     }
     void emulate_cqo(const ZydisDisassembledInstruction* instr) {
         int64_t rax = static_cast<int64_t>(g_regs.rax.q);
         g_regs.rdx.q = (rax < 0) ? 0xFFFFFFFFFFFFFFFF : 0x0000000000000000;
 
-        LOG(L"[+] CQO => RAX = 0x" << std::hex << g_regs.rax.q
-            << L", RDX = 0x" << g_regs.rdx.q);
+        LOG(L"[+] CQO => RAX = 0x" << std::hex << g_regs.rax.q << L", RDX = 0x"
+            << g_regs.rdx.q);
     }
     void emulate_stosq(const ZydisDisassembledInstruction* instr) {
-
         WriteMemory(g_regs.rdi.q, &g_regs.rax.q, sizeof(uint64_t));
 
-        g_regs.rdi.q = g_regs.rflags.flags.DF ? (g_regs.rdi.q - 8) : (g_regs.rdi.q + 8);
+        g_regs.rdi.q =
+            g_regs.rflags.flags.DF ? (g_regs.rdi.q - 8) : (g_regs.rdi.q + 8);
 
-        LOG(L"[+] STOSQ => Wrote 0x" << std::hex << g_regs.rax.q << L" to [RDI], new RDI = 0x" << g_regs.rdi.q);
+        LOG(L"[+] STOSQ => Wrote 0x" << std::hex << g_regs.rax.q
+            << L" to [RDI], new RDI = 0x" << g_regs.rdi.q);
     }
     void emulate_cvttss2si(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -6076,31 +4746,33 @@ private:
         float fval = src_val.m128_f32[0];
 
         uint64_t result = 0;
-        int width = dst.size;  // 32 or 64 bits
+        int width = dst.size; // 32 or 64 bits
 
         if (std::isnan(fval) ||
-            fval > (width == 64 ? static_cast<float>(INT64_MAX) : static_cast<float>(INT32_MAX)) ||
-            fval < (width == 64 ? static_cast<float>(INT64_MIN) : static_cast<float>(INT32_MIN))) {
+            fval > (width == 64 ? static_cast<float>(INT64_MAX)
+                : static_cast<float>(INT32_MAX)) ||
+            fval < (width == 64 ? static_cast<float>(INT64_MIN)
+                : static_cast<float>(INT32_MIN))) {
             // Invalid conversion -> set to INT_MIN
             result = (width == 64) ? 0x8000000000000000ULL : 0x80000000UL;
         }
         else {
             if (width == 64) {
-                result = static_cast<int64_t>(fval);  // Truncate
+                result = static_cast<int64_t>(fval); // Truncate
             }
             else {
-                result = static_cast<int32_t>(fval);  // Truncate
+                result = static_cast<int32_t>(fval); // Truncate
             }
         }
 
         write_operand_value(dst, width, result);
 
-        LOG(L"[+] CVTTSS2SI " << (width == 64 ? L"(qword)" : L"(dword)")
-            << " => " << std::dec << fval << " -> " << result);
+        LOG(L"[+] CVTTSS2SI " << (width == 64 ? L"(qword)" : L"(dword)") << " => "
+            << std::dec << fval << " -> " << result);
     }
     void emulate_cvtsi2sd(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // XMM register
-        const auto& src = instr->operands[1];  // GPR (r/m32 or r/m64)
+        const auto& dst = instr->operands[0]; // XMM register
+        const auto& src = instr->operands[1]; // GPR (r/m32 or r/m64)
 
         uint64_t src_val = 0;
         if (!read_operand_value(src, src.size, src_val)) {
@@ -6111,7 +4783,8 @@ private:
         double result = 0.0;
 
         if (src.size == 32) {
-            result = static_cast<double>(static_cast<int32_t>(src_val));  // sign-extend then convert
+            result = static_cast<double>(
+                static_cast<int32_t>(src_val)); // sign-extend then convert
         }
         else if (src.size == 64) {
             result = static_cast<double>(static_cast<int64_t>(src_val));
@@ -6122,12 +4795,14 @@ private:
         }
 
         __m128d dst_val = {};
-        dst_val.m128d_f64[0] = result;  // Only the low double is written; upper remains unchanged or zero
+        dst_val.m128d_f64[0] = result; // Only the low double is written; upper
+        // remains unchanged or zero
 
         write_operand_value(dst, 128, dst_val);
 
-        LOG(L"[+] CVTSI2SD => Int(" << (src.size == 32 ? static_cast<int32_t>(src_val)
-            : static_cast<int64_t>(src_val))
+        LOG(L"[+] CVTSI2SD => Int("
+            << (src.size == 32 ? static_cast<int32_t>(src_val)
+                : static_cast<int64_t>(src_val))
             << L") -> Double = " << result);
     }
     void emulate_scasb(const ZydisDisassembledInstruction* instr) {
@@ -6148,12 +4823,12 @@ private:
         g_regs.rflags.flags.AF = ((al ^ mem_value ^ result) & 0x10) != 0;
         g_regs.rflags.flags.OF = ((al ^ mem_value) & (al ^ result) & 0x80) != 0;
 
+        g_regs.rdi.q =
+            g_regs.rflags.flags.DF ? (g_regs.rdi.q - 1) : (g_regs.rdi.q + 1);
 
-        g_regs.rdi.q = g_regs.rflags.flags.DF ? (g_regs.rdi.q - 1) : (g_regs.rdi.q + 1);
-
-        LOG(L"[+] SCASB => AL = 0x" << std::hex << static_cast<uint32_t>(al)
-            << ", mem = 0x" << static_cast<uint32_t>(mem_value)
-            << ", new RDI = 0x" << g_regs.rdi.q
+        LOG(L"[+] SCASB => AL = 0x"
+            << std::hex << static_cast<uint32_t>(al) << ", mem = 0x"
+            << static_cast<uint32_t>(mem_value) << ", new RDI = 0x" << g_regs.rdi.q
             << ", ZF = " << g_regs.rflags.flags.ZF);
     }
     void emulate_lzcnt(const ZydisDisassembledInstruction* instr) {
@@ -6170,7 +4845,8 @@ private:
 
         uint64_t result = 0;
         if (width <= 32) {
-            result = static_cast<uint64_t>(_lzcnt_u32(static_cast<uint32_t>(src_val)));
+            result =
+                static_cast<uint64_t>(_lzcnt_u32(static_cast<uint32_t>(src_val)));
         }
         else if (width <= 64) {
             result = _lzcnt_u64(src_val);
@@ -6193,10 +4869,9 @@ private:
         is_Parity_FLAG_SKIP = 1;
         is_Auxiliary_Carry_FLAG_SKIP = 1;
 #endif
-        LOG(L"[+] LZCNT executed: src=0x" << std::hex << src_val
-            << L", result=" << std::dec << result
-            << L", CF=" << g_regs.rflags.flags.CF
-            << L", ZF=" << g_regs.rflags.flags.ZF);
+        LOG(L"[+] LZCNT executed: src=0x"
+            << std::hex << src_val << L", result=" << std::dec << result << L", CF="
+            << g_regs.rflags.flags.CF << L", ZF=" << g_regs.rflags.flags.ZF);
     }
     void emulate_sbb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -6205,16 +4880,15 @@ private:
         uint32_t width = instr->info.operand_width;
 
         uint64_t dst_val = 0, src_val = 0;
-        if (!read_operand_value(dst, width, dst_val) || !read_operand_value(src, width, src_val)) {
+        if (!read_operand_value(dst, width, dst_val) ||
+            !read_operand_value(src, width, src_val)) {
             LOG(L"[!] Failed to read operands in SBB");
             return;
         }
 
         uint64_t borrow = g_regs.rflags.flags.CF ? 1 : 0;
 
-
         uint64_t result64 = dst_val - src_val - borrow;
-
 
         uint64_t mask = (width >= 64) ? ~0ULL : ((1ULL << width) - 1);
         uint64_t result = result64 & mask;
@@ -6233,11 +4907,9 @@ private:
         // Zero Flag (ZF)
         g_regs.rflags.flags.ZF = (result == 0);
 
-
         g_regs.rflags.flags.SF = (result >> (width - 1)) & 1;
 
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result & 0xFF));
-
 
         bool dst_sign = (dst_val >> (width - 1)) & 1;
         bool src_sign = (src_val >> (width - 1)) & 1;
@@ -6249,15 +4921,13 @@ private:
     void emulate_setbe(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
-
-        if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER && dst.type != ZYDIS_OPERAND_TYPE_MEMORY) {
+        if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER &&
+            dst.type != ZYDIS_OPERAND_TYPE_MEMORY) {
             LOG(L"[!] Unsupported operand type for SETBE");
             return;
         }
 
-
         uint8_t result = (g_regs.rflags.flags.CF || g_regs.rflags.flags.ZF) ? 1 : 0;
-
 
         if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             set_register_value<uint8_t>(dst.reg.value, result);
@@ -6313,7 +4983,6 @@ private:
             return;
         }
 
-
         uint64_t raw_value = 0;
         if (!read_operand_value(src, src_size, raw_value)) {
             LOG(L"[!] Failed to read MOVSX source operand");
@@ -6341,8 +5010,8 @@ private:
             return;
         }
 
-        LOG(L"[+] MOVSX: Sign-extended 0x" << std::hex << raw_value
-            << L" to 0x" << static_cast<uint64_t>(value)
+        LOG(L"[+] MOVSX: Sign-extended 0x"
+            << std::hex << raw_value << L" to 0x" << static_cast<uint64_t>(value)
             << L" (" << dst_width << L" bits) => "
             << ZydisRegisterGetString(dst.reg.value));
     }
@@ -6355,7 +5024,6 @@ private:
             LOG(L"[!] CMOVNS destination must be a register");
             return;
         }
-
 
         if (g_regs.rflags.flags.SF == 0) {
             uint64_t val = 0;
@@ -6388,8 +5056,9 @@ private:
             return;
         }
 
-        LOG(L"[+] MOVAPS xmm" << dst.reg.value - ZYDIS_REGISTER_XMM0
-            << ", " << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
+        LOG(L"[+] MOVAPS xmm"
+            << dst.reg.value - ZYDIS_REGISTER_XMM0 << ", "
+            << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
                 ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
                 : L"[mem]"));
     }
@@ -6399,7 +5068,6 @@ private:
         const uint32_t width = instr->info.operand_width;
 
         uint64_t lhs = 0, rhs = 0;
-
 
         if (!read_operand_value(dst, width, lhs)) {
             LOG(L"[!] Failed to read destination operand in AND");
@@ -6411,18 +5079,14 @@ private:
             return;
         }
 
-
         uint64_t result = zero_extend(lhs & rhs, width);
-
 
         if (!write_operand_value(dst, width, result)) {
             LOG(L"[!] Failed to write AND result");
             return;
         }
 
-
         update_flags_and(result, lhs, rhs, width);
-
 
         LOG(L"[+] AND => 0x" << std::hex << result);
     }
@@ -6443,15 +5107,12 @@ private:
             return;
         }
 
-
         uint64_t result = zero_extend(lhs | rhs, width);
-
 
         if (!write_operand_value(dst, width, result)) {
             LOG(L"[!] Failed to write OR result");
             return;
         }
-
 
         update_flags_or(result, lhs, rhs, width);
 
@@ -6509,7 +5170,8 @@ private:
 
         if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER ||
             src1.type != ZYDIS_OPERAND_TYPE_REGISTER ||
-            !(src2.type == ZYDIS_OPERAND_TYPE_REGISTER || src2.type == ZYDIS_OPERAND_TYPE_MEMORY)) {
+            !(src2.type == ZYDIS_OPERAND_TYPE_REGISTER ||
+                src2.type == ZYDIS_OPERAND_TYPE_MEMORY)) {
             LOG(L"[!] Unsupported operand types in vinsertf128");
             return;
         }
@@ -6522,7 +5184,6 @@ private:
             return;
         }
 
-
         if (imm == 0) {
             memcpy(base.xmm, &src_val, 16);
         }
@@ -6532,13 +5193,14 @@ private:
 
         set_register_value<YMM>(dst.reg.value, base);
 
-        std::wstring src2_str = (src2.type == ZYDIS_OPERAND_TYPE_REGISTER)
+        std::wstring src2_str =
+            (src2.type == ZYDIS_OPERAND_TYPE_REGISTER)
             ? (L"xmm" + std::to_wstring(src2.reg.value - ZYDIS_REGISTER_XMM0))
             : L"[mem]";
 
-        LOG(L"[+] VINSERTF128 ymm" << (dst.reg.value - ZYDIS_REGISTER_YMM0)
-            << L", ymm" << (src1.reg.value - ZYDIS_REGISTER_YMM0)
-            << L", " << src2_str
+        LOG(L"[+] VINSERTF128 ymm"
+            << (dst.reg.value - ZYDIS_REGISTER_YMM0) << L", ymm"
+            << (src1.reg.value - ZYDIS_REGISTER_YMM0) << L", " << src2_str
             << L", imm=" << std::dec << (int)imm);
     }
     void emulate_vmovdqa(const ZydisDisassembledInstruction* instr) {
@@ -6546,9 +5208,9 @@ private:
         const auto& src = instr->operands[1];
         const uint32_t width = max(dst.size, src.size);
 
-
         if (width != 0x80 && width != 0x100) {
-            LOG(L"[!] Unsupported operand width in VMOVDQA (only 128 or 256 bits)" << width);
+            LOG(L"[!] Unsupported operand width in VMOVDQA (only 128 or 256 bits)"
+                << width);
             return;
         }
 
@@ -6596,7 +5258,6 @@ private:
                 return;
             }
 
-
             __m128i result = _mm_cmpeq_epi64(v1, v2);
 
             if (!write_operand_value(dst, width, result)) {
@@ -6611,7 +5272,6 @@ private:
                 LOG(L"[!] Failed to read source operand(s) in vpcmpeqq");
                 return;
             }
-
 
             __m256i result = _mm256_cmpeq_epi64(v1, v2);
 
@@ -6635,7 +5295,9 @@ private:
             }
         }
 
-        uint64_t index = (mem.index != ZYDIS_REGISTER_NONE) ? get_register_value<uint64_t>(mem.index) : 0;
+        uint64_t index = (mem.index != ZYDIS_REGISTER_NONE)
+            ? get_register_value<uint64_t>(mem.index)
+            : 0;
         uint64_t value = base + index * mem.scale + mem.disp.value;
 
         uint8_t width = dst.size;
@@ -6681,11 +5343,13 @@ private:
         uint8_t width = instr->info.operand_width;
 #if Save_Rva
         if (has_lock)
-              addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase), instr->info.length, RVAType::CMPXCHG, filename);
+            addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),
+                instr->info.length, RVAType::CMPXCHG, filename);
 #endif
 #if analyze_ENABLED
         if (has_lock)
-            LOG_analyze(CYAN, L"[+] cmpxchg at [RIP: 0x" << std::hex << g_regs.rip << "] ");
+            LOG_analyze(CYAN,
+                L"[+] cmpxchg at [RIP: 0x" << std::hex << g_regs.rip << "] ");
 
 #endif
         uint64_t dstVal, srcVal;
@@ -6697,19 +5361,27 @@ private:
         if (src.type == ZYDIS_OPERAND_TYPE_IMMEDIATE)
             srcVal = zero_extend(srcVal, width);
 
-
         uint64_t accVal = 0;
         switch (width) {
-        case 8:  accVal = g_regs.rax.l; break;
-        case 16: accVal = g_regs.rax.w; break;
-        case 32: accVal = g_regs.rax.d; break;
-        case 64: accVal = g_regs.rax.q; break;
-        default: assert(false); return;
+        case 8:
+            accVal = g_regs.rax.l;
+            break;
+        case 16:
+            accVal = g_regs.rax.w;
+            break;
+        case 32:
+            accVal = g_regs.rax.d;
+            break;
+        case 64:
+            accVal = g_regs.rax.q;
+            break;
+        default:
+            assert(false);
+            return;
         }
 
         uint64_t mask = get_mask_for_width(width);
         uint64_t res = (accVal - dstVal) & mask;
-
 
         auto& f = g_regs.rflags.flags;
         f.ZF = (res == 0);
@@ -6725,10 +5397,18 @@ private:
         }
         else {
             switch (width) {
-            case 8:  g_regs.rax.l = dstVal; break;
-            case 16: g_regs.rax.w = dstVal; break;
-            case 32: g_regs.rax.d = dstVal; break;
-            case 64: g_regs.rax.q = dstVal; break;
+            case 8:
+                g_regs.rax.l = dstVal;
+                break;
+            case 16:
+                g_regs.rax.w = dstVal;
+                break;
+            case 32:
+                g_regs.rax.d = dstVal;
+                break;
+            case 64:
+                g_regs.rax.q = dstVal;
+                break;
             }
             LOG(L"[+] CMPXCHG: not equal, dst -> acc");
         }
@@ -6754,7 +5434,6 @@ private:
         LOG(L"[+] POP => 0x" << std::hex << value << " (" << width << "-bit)");
     }
     void emulate_popfq(const ZydisDisassembledInstruction* instr) {
-
         uint64_t value = 0;
         ReadMemory(g_regs.rsp.q, &value, 8);
         g_regs.rsp.q += 8;
@@ -6825,7 +5504,6 @@ private:
         uint64_t temp = lhs + rhs;
         uint64_t result = temp + cf;
 
-
         if (width < 64) {
             uint64_t mask = (1ULL << width) - 1;
             result &= mask;
@@ -6835,7 +5513,6 @@ private:
             LOG(L"[!] Failed to write ADC result");
             return;
         }
-
 
         g_regs.rflags.flags.CF = (temp < lhs) || (result < temp);
 
@@ -6906,7 +5583,8 @@ private:
             return;
         }
 
-        LOG(L"[+] BTS => CF = " << g_regs.rflags.flags.CF << L", Result: 0x" << std::hex << bit_base);
+        LOG(L"[+] BTS => CF = " << g_regs.rflags.flags.CF << L", Result: 0x"
+            << std::hex << bit_base);
     }
     void emulate_btc(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -6932,7 +5610,6 @@ private:
 
         g_regs.rflags.flags.CF = (bit_base >> shift) & 1;
 
-
         bit_base ^= (1ULL << shift);
 
         if (!write_operand_value(dst, width, bit_base)) {
@@ -6940,8 +5617,8 @@ private:
             return;
         }
 
-        LOG(L"[+] BTC => CF = " << g_regs.rflags.flags.CF
-            << L", Result: 0x" << std::hex << bit_base);
+        LOG(L"[+] BTC => CF = " << g_regs.rflags.flags.CF << L", Result: 0x"
+            << std::hex << bit_base);
     }
     void emulate_rsqrtps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -6989,7 +5666,6 @@ private:
 
         shift %= width;
 
-
         g_regs.rflags.flags.CF = (bit_base >> shift) & 1;
 
         LOG(L"[+] BT => CF = " << g_regs.rflags.flags.CF);
@@ -7015,7 +5691,6 @@ private:
 
         shift %= width;
 
-
         g_regs.rflags.flags.CF = (bit_base >> shift) & 1;
 
         bit_base &= ~(1ULL << shift);
@@ -7025,7 +5700,8 @@ private:
             return;
         }
 
-        LOG(L"[+] BTR => CF = " << g_regs.rflags.flags.CF << L", Result: 0x" << std::hex << bit_base);
+        LOG(L"[+] BTR => CF = " << g_regs.rflags.flags.CF << L", Result: 0x"
+            << std::hex << bit_base);
     }
     void emulate_bsf(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -7039,7 +5715,6 @@ private:
         }
 
         if (src_val == 0) {
-
             g_regs.rflags.flags.ZF = 1;
             LOG(L"[+] BSF => src=0, ZF=1");
             return;
@@ -7058,9 +5733,8 @@ private:
             return;
         }
 
-        LOG(L"[+] BSF => src=0x" << std::hex << src_val
-            << L", index=" << std::dec << index
-            << L", ZF=" << g_regs.rflags.flags.ZF);
+        LOG(L"[+] BSF => src=0x" << std::hex << src_val << L", index=" << std::dec
+            << index << L", ZF=" << g_regs.rflags.flags.ZF);
     }
     void emulate_div(const ZydisDisassembledInstruction* instr) {
         const auto& src = instr->operands[0];
@@ -7079,7 +5753,8 @@ private:
 
         switch (width) {
         case 8: {
-            uint16_t dividend = static_cast<uint16_t>(get_register_value<uint16_t>(ZYDIS_REGISTER_AX));
+            uint16_t dividend = static_cast<uint16_t>(
+                get_register_value<uint16_t>(ZYDIS_REGISTER_AX));
             uint8_t quotient = static_cast<uint8_t>(dividend / divisor);
             uint8_t remainder = static_cast<uint8_t>(dividend % divisor);
             g_regs.rax.l = quotient;
@@ -7087,7 +5762,8 @@ private:
             break;
         }
         case 16: {
-            uint32_t dividend = (static_cast<uint32_t>(g_regs.rdx.w) << 16) | g_regs.rax.w;
+            uint32_t dividend =
+                (static_cast<uint32_t>(g_regs.rdx.w) << 16) | g_regs.rax.w;
             uint16_t quotient = static_cast<uint16_t>(dividend / divisor);
             uint16_t remainder = static_cast<uint16_t>(dividend % divisor);
             g_regs.rax.w = quotient;
@@ -7095,7 +5771,8 @@ private:
             break;
         }
         case 32: {
-            uint64_t dividend = (static_cast<uint64_t>(g_regs.rdx.d) << 32) | g_regs.rax.d;
+            uint64_t dividend =
+                (static_cast<uint64_t>(g_regs.rdx.d) << 32) | g_regs.rax.d;
             uint32_t quotient = static_cast<uint32_t>(dividend / divisor);
             uint32_t remainder = static_cast<uint32_t>(dividend % divisor);
             g_regs.rax.d = quotient;
@@ -7143,7 +5820,8 @@ private:
             result = _byteswap_uint64(value);
             break;
         default:
-            LOG(L"[!] Unsupported operand width for BSWAP: " << instr->info.operand_width);
+            LOG(L"[!] Unsupported operand width for BSWAP: "
+                << instr->info.operand_width);
             return;
         }
 
@@ -7152,8 +5830,9 @@ private:
             return;
         }
 
-        LOG(L"[+] BSWAP executed: 0x" << std::hex << value << L" -> 0x" << result
-            << L" (" << ZydisRegisterGetString(op.reg.value) << L")");
+        LOG(L"[+] BSWAP executed: 0x"
+            << std::hex << value << L" -> 0x" << result << L" ("
+            << ZydisRegisterGetString(op.reg.value) << L")");
     }
     void emulate_rcr(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -7262,9 +5941,6 @@ private:
             return;
         }
 
-
-
-
         if (count == 1) {
             bool msb = (val >> (width - 1)) & 1;
             bool of = msb ^ g_regs.rflags.flags.CF;
@@ -7289,7 +5965,8 @@ private:
 
         if (width == 128) {
             __m128i val1, val2;
-            if (!read_operand_value(src1, width, val1) || !read_operand_value(src2, width, val2)) {
+            if (!read_operand_value(src1, width, val1) ||
+                !read_operand_value(src2, width, val2)) {
                 LOG(L"[!] Failed to read operands in VPAND (128-bit)");
                 return;
             }
@@ -7298,7 +5975,8 @@ private:
         }
         else if (width == 256) {
             __m256i val1, val2;
-            if (!read_operand_value(src1, width, val1) || !read_operand_value(src2, width, val2)) {
+            if (!read_operand_value(src1, width, val1) ||
+                !read_operand_value(src2, width, val2)) {
                 LOG(L"[!] Failed to read operands in VPAND (256-bit)");
                 return;
             }
@@ -7307,7 +5985,8 @@ private:
         }
         else if (width == 512) {
             __m512i val1, val2;
-            if (!read_operand_value(src1, width, val1) || !read_operand_value(src2, width, val2)) {
+            if (!read_operand_value(src1, width, val1) ||
+                !read_operand_value(src2, width, val2)) {
                 LOG(L"[!] Failed to read operands in VPAND (512-bit)");
                 return;
             }
@@ -7345,25 +6024,27 @@ private:
         LOG_analyze(GREEN, "[+] xgetbv at [RIP:" << std::hex << g_regs.rip << "]");
 #endif
 #if Save_Rva
-          addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::XGETBV, filename);
+        addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),
+            instr.length, RVAType::XGETBV, filename);
 
-#endif 
+#endif
         uint64_t XCR;
         XCR = xgetbv_asm(g_regs.rcx.d);
 
         g_regs.rax.q = XCR & 0xFFFFFFFF;
         g_regs.rdx.q = (XCR >> 32) & 0xFFFFFFFF;
 
-        LOG(L"[+] XGETBV => ECX=0x" << std::hex << g_regs.rcx.q
-            << L", RAX=0x" << g_regs.rax.q << L", RDX=0x" << g_regs.rdx.q);
+        LOG(L"[+] XGETBV => ECX=0x" << std::hex << g_regs.rcx.q << L", RAX=0x"
+            << g_regs.rax.q << L", RDX=0x" << g_regs.rdx.q);
     }
     void emulate_andps(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // xmm register
-        const auto& src = instr->operands[1];  // xmm register or mem
+        const auto& dst = instr->operands[0]; // xmm register
+        const auto& src = instr->operands[1]; // xmm register or mem
 
         __m128 dst_val, src_val;
 
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for ANDPS");
             return;
         }
@@ -7377,8 +6058,8 @@ private:
 
         write_operand_value(dst, 128, result);
 
-        LOG(L"[+] ANDPS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0));
+        LOG(L"[+] ANDPS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0));
     }
     void emulate_cmovnb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -7400,13 +6081,13 @@ private:
             return;
         }
 
-        LOG(L"[+] CMOVNB executed: moved 0x" << std::hex << value << L" to "
+        LOG(L"[+] CMOVNB executed: moved 0x"
+            << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
     void emulate_cmovnp(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
-
 
         if (g_regs.rflags.flags.PF) {
             LOG(L"[+] CMOVNP skipped (PF=1)");
@@ -7424,7 +6105,8 @@ private:
             return;
         }
 
-        LOG(L"[+] CMOVNP executed: moved 0x" << std::hex << value << L" to "
+        LOG(L"[+] CMOVNP executed: moved 0x"
+            << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
     void emulate_cmovno(const ZydisDisassembledInstruction* instr) {
@@ -7447,7 +6129,8 @@ private:
             return;
         }
 
-        LOG(L"[+] CMOVNO executed: moved 0x" << std::hex << value << L" to "
+        LOG(L"[+] CMOVNO executed: moved 0x"
+            << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
     void emulate_cmovle(const ZydisDisassembledInstruction* instr) {
@@ -7474,7 +6157,8 @@ private:
             return;
         }
 
-        LOG(L"[+] CMOVLE executed: moved 0x" << std::hex << value << L" to "
+        LOG(L"[+] CMOVLE executed: moved 0x"
+            << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
     void emulate_divss(const ZydisDisassembledInstruction* instr) {
@@ -7482,7 +6166,8 @@ private:
         const auto& src = instr->operands[1];
 
         __m128 dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for DIVSS");
             return;
         }
@@ -7491,34 +6176,37 @@ private:
 
         write_operand_value(dst, 128, result);
 
-        LOG(L"[+] DIVSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << result.m128_f32[0]);
+        LOG(L"[+] DIVSS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::dec << result.m128_f32[0]);
     }
     void emulate_divsd(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // XMM register
-        const auto& src = instr->operands[1];  // XMM register or memory
+        const auto& dst = instr->operands[0]; // XMM register
+        const auto& src = instr->operands[1]; // XMM register or memory
 
         __m128d dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for DIVSD");
             return;
         }
 
-        __m128d result = _mm_div_sd(dst_val, src_val);  // Only affects lower 64 bits (double)
+        __m128d result =
+            _mm_div_sd(dst_val, src_val); // Only affects lower 64 bits (double)
 
         write_operand_value(dst, 128, result);
 
-        LOG(L"[+] DIVSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::dec << result.m128d_f64[0]);
+        LOG(L"[+] DIVSD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::dec << result.m128d_f64[0]);
     }
     void emulate_divps(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // XMM register
-        const auto& src = instr->operands[1];  // XMM register or memory
+        const auto& dst = instr->operands[0]; // XMM register
+        const auto& src = instr->operands[1]; // XMM register or memory
 
         __m128 dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands for DIVPS");
             return;
         }
@@ -7528,12 +6216,10 @@ private:
 
         write_operand_value(dst, 128, result);
 
-        LOG(L"[+] DIVPS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => ["
-            << result.m128_f32[0] << L", "
-            << result.m128_f32[1] << L", "
-            << result.m128_f32[2] << L", "
+        LOG(L"[+] DIVPS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => ["
+            << result.m128_f32[0] << L", " << result.m128_f32[1]
+            << L", " << result.m128_f32[2] << L", "
             << result.m128_f32[3] << L"]");
     }
     void emulate_rdtsc(const ZydisDisassembledInstruction*) {
@@ -7549,8 +6235,8 @@ private:
         g_regs.rax.q = tsc & 0xFFFFFFFF;
         g_regs.rdx.q = (tsc >> 32) & 0xFFFFFFFF;
 
-        LOG(L"[+] RDTSC => RAX=0x" << std::hex << g_regs.rax.q
-            << L", RDX=0x" << g_regs.rdx.q);
+        LOG(L"[+] RDTSC => RAX=0x" << std::hex << g_regs.rax.q << L", RDX=0x"
+            << g_regs.rdx.q);
     }
     void emulate_cmovz(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -7572,7 +6258,8 @@ private:
             return;
         }
 
-        LOG(L"[+] CMOVZ executed: moved 0x" << std::hex << value << L" to "
+        LOG(L"[+] CMOVZ executed: moved 0x"
+            << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
     void emulate_dec(const ZydisDisassembledInstruction* instr) {
@@ -7594,18 +6281,14 @@ private:
             return;
         }
 
-
         g_regs.rflags.flags.ZF = (result == 0);
 
         g_regs.rflags.flags.SF = ((result >> (width - 1)) & 1) != 0;
 
-
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result & 0xFF));
-
 
         bool borrow_from_bit4 = ((val & 0xF) < (result & 0xF));
         g_regs.rflags.flags.AF = borrow_from_bit4;
-
 
         bool val_sign = (val >> (width - 1)) & 1;
         bool res_sign = (result >> (width - 1)) & 1;
@@ -7619,8 +6302,8 @@ private:
 
         uint64_t lhs = 0, rhs = 0;
 
-
-        if (!read_operand_value(op1, width, lhs) || !read_operand_value(op2, width, rhs)) {
+        if (!read_operand_value(op1, width, lhs) ||
+            !read_operand_value(op2, width, rhs)) {
             LOG(L"[!] Failed to read operands for CMP");
             return;
         }
@@ -7629,10 +6312,18 @@ private:
 
         bool sf = false;
         switch (width) {
-        case 8:  sf = (static_cast<int8_t>(result) < 0); break;
-        case 16: sf = (static_cast<int16_t>(result) < 0); break;
-        case 32: sf = (static_cast<int32_t>(result) < 0); break;
-        case 64: sf = (static_cast<int64_t>(result) < 0); break;
+        case 8:
+            sf = (static_cast<int8_t>(result) < 0);
+            break;
+        case 16:
+            sf = (static_cast<int16_t>(result) < 0);
+            break;
+        case 32:
+            sf = (static_cast<int32_t>(result) < 0);
+            break;
+        case 64:
+            sf = (static_cast<int64_t>(result) < 0);
+            break;
         }
 
         g_regs.rflags.flags.ZF = (result == 0);
@@ -7643,35 +6334,38 @@ private:
             int8_t slhs = static_cast<int8_t>(lhs & 0xFF);
             int8_t srhs = static_cast<int8_t>(rhs & 0xFF);
             int8_t sres = static_cast<int8_t>(result & 0xFF);
-            g_regs.rflags.flags.OF = ((slhs < 0) != (srhs < 0)) && ((slhs < 0) != (sres < 0));
+            g_regs.rflags.flags.OF =
+                ((slhs < 0) != (srhs < 0)) && ((slhs < 0) != (sres < 0));
             break;
         }
         case 16: {
             int16_t slhs = static_cast<int16_t>(lhs & 0xFFFF);
             int16_t srhs = static_cast<int16_t>(rhs & 0xFFFF);
             int16_t sres = static_cast<int16_t>(result & 0xFFFF);
-            g_regs.rflags.flags.OF = ((slhs < 0) != (srhs < 0)) && ((slhs < 0) != (sres < 0));
+            g_regs.rflags.flags.OF =
+                ((slhs < 0) != (srhs < 0)) && ((slhs < 0) != (sres < 0));
             break;
         }
         case 32: {
             int32_t slhs = static_cast<int32_t>(lhs & 0xFFFFFFFF);
             int32_t srhs = static_cast<int32_t>(rhs & 0xFFFFFFFF);
             int32_t sres = static_cast<int32_t>(result & 0xFFFFFFFF);
-            g_regs.rflags.flags.OF = ((slhs < 0) != (srhs < 0)) && ((slhs < 0) != (sres < 0));
+            g_regs.rflags.flags.OF =
+                ((slhs < 0) != (srhs < 0)) && ((slhs < 0) != (sres < 0));
             break;
         }
         case 64: {
             int64_t slhs = static_cast<int64_t>(lhs);
             int64_t srhs = static_cast<int64_t>(rhs);
             int64_t sres = static_cast<int64_t>(result);
-            g_regs.rflags.flags.OF = ((slhs < 0) != (srhs < 0)) && ((slhs < 0) != (sres < 0));
+            g_regs.rflags.flags.OF =
+                ((slhs < 0) != (srhs < 0)) && ((slhs < 0) != (sres < 0));
             break;
         }
         default:
             LOG(L"[!] Unsupported width for OF calculation");
             g_regs.rflags.flags.OF = false;
         }
-
 
         uint8_t lowByte = result & 0xFF;
         int bitCount = 0;
@@ -7685,11 +6379,10 @@ private:
         g_regs.rflags.flags.AF = (lhs_low_nibble < rhs_low_nibble);
 
         LOG(L"[+] CMP => 0x" << std::hex << lhs << L" ? 0x" << rhs);
-        LOG(L"[+] Flags => ZF=" << g_regs.rflags.flags.ZF
-            << ", SF=" << g_regs.rflags.flags.SF
-            << ", CF=" << g_regs.rflags.flags.CF
-            << ", OF=" << g_regs.rflags.flags.OF
-            << ", PF=" << g_regs.rflags.flags.PF
+        LOG(L"[+] Flags => ZF="
+            << g_regs.rflags.flags.ZF << ", SF=" << g_regs.rflags.flags.SF
+            << ", CF=" << g_regs.rflags.flags.CF << ", OF="
+            << g_regs.rflags.flags.OF << ", PF=" << g_regs.rflags.flags.PF
             << ", AF=" << g_regs.rflags.flags.AF);
     }
     void emulate_inc(const ZydisDisassembledInstruction* instr) {
@@ -7720,13 +6413,11 @@ private:
         uint8_t oldLowNibble = prev_value & 0xF;
         uint8_t newLowNibble = (oldLowNibble + 1) & 0xF;
         g_regs.rflags.flags.AF = (newLowNibble < oldLowNibble);
-        g_regs.rflags.flags.OF = (
-            ((prev_value ^ result) & (1ULL << (width - 1))) &&
-            !((prev_value ^ 1) & (1ULL << (width - 1)))
-            );
+        g_regs.rflags.flags.OF = (((prev_value ^ result) & (1ULL << (width - 1))) &&
+            !((prev_value ^ 1) & (1ULL << (width - 1))));
         // CF is unaffected by INC
-        // You can comment this line out, but it's safe to ensure it's not set accidentally:
-        // g_regs.rflags.flags.CF = g_regs.rflags.flags.CF;
+        // You can comment this line out, but it's safe to ensure it's not set
+        // accidentally: g_regs.rflags.flags.CF = g_regs.rflags.flags.CF;
 
         LOG(L"[+] INC executed: result = 0x" << std::hex << result);
     }
@@ -7744,7 +6435,8 @@ private:
 
         switch (width) {
         case 8: {
-            int16_t dividend = static_cast<int16_t>(get_register_value<uint16_t>(ZYDIS_REGISTER_AX));
+            int16_t dividend =
+                static_cast<int16_t>(get_register_value<uint16_t>(ZYDIS_REGISTER_AX));
             int8_t quotient = static_cast<int8_t>(dividend / divisor);
             int8_t remainder = static_cast<int8_t>(dividend % divisor);
 
@@ -7755,7 +6447,9 @@ private:
             break;
         }
         case 16: {
-            int32_t dividend = (static_cast<int32_t>(static_cast<int16_t>(g_regs.rdx.w)) << 16) | static_cast<uint16_t>(g_regs.rax.w);
+            int32_t dividend =
+                (static_cast<int32_t>(static_cast<int16_t>(g_regs.rdx.w)) << 16) |
+                static_cast<uint16_t>(g_regs.rax.w);
             int16_t quotient = static_cast<int16_t>(dividend / divisor);
             int16_t remainder = static_cast<int16_t>(dividend % divisor);
 
@@ -7766,7 +6460,9 @@ private:
             break;
         }
         case 32: {
-            int64_t dividend = (static_cast<int64_t>(static_cast<int32_t>(g_regs.rdx.d)) << 32) | g_regs.rax.d;
+            int64_t dividend =
+                (static_cast<int64_t>(static_cast<int32_t>(g_regs.rdx.d)) << 32) |
+                g_regs.rax.d;
             int32_t quotient = static_cast<int32_t>(dividend / divisor);
             int32_t remainder = static_cast<int32_t>(dividend % divisor);
 
@@ -7782,7 +6478,6 @@ private:
 
             auto [quotient, remainder] = div_128_by_64_signed(high, low, divisor);
 
-
             overflow = false;
 
             g_regs.rax.q = quotient;
@@ -7794,11 +6489,11 @@ private:
             return;
         }
 
-
         g_regs.rflags.flags.OF = overflow;
         g_regs.rflags.flags.CF = overflow;
 
-        LOG(L"[+] IDIV executed: divisor = " << divisor << ", overflow = " << overflow);
+        LOG(L"[+] IDIV executed: divisor = " << divisor
+            << ", overflow = " << overflow);
     }
     void emulate_jz(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
@@ -7830,11 +6525,9 @@ private:
         }
 
         if (!g_regs.rflags.flags.PF) {
-
             g_regs.rip = target;
         }
         else {
-
             g_regs.rip += instr->info.length;
         }
 
@@ -7851,11 +6544,9 @@ private:
         }
 
         if (g_regs.rflags.flags.PF) {
-
             g_regs.rip = target;
         }
         else {
-
             g_regs.rip += instr->info.length;
         }
 
@@ -7865,9 +6556,9 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-
         if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER ||
-            dst.reg.value < ZYDIS_REGISTER_RAX || dst.reg.value > ZYDIS_REGISTER_R15) {
+            dst.reg.value < ZYDIS_REGISTER_RAX ||
+            dst.reg.value > ZYDIS_REGISTER_R15) {
             LOG(L"[!] Invalid destination register for MOVSXD");
             return;
         }
@@ -7883,12 +6574,11 @@ private:
         write_operand_value(dst, 64, static_cast<uint64_t>(value));
     }
     void emulate_cvtsd2ss(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0]; 
-        const auto& src = instr->operands[1]; 
+        const auto& dst = instr->operands[0];
+        const auto& src = instr->operands[1];
 
-        __m128 dst_val;    
-        __m128d src_val;   
-
+        __m128 dst_val;
+        __m128d src_val;
 
         if (!read_operand_value(dst, 128, dst_val)) {
             LOG(L"[!] Failed to read destination XMM for CVTSD2SS");
@@ -7907,8 +6597,8 @@ private:
 
         write_operand_value(dst, 128, dst_val);
 
-        LOG(L"[+] CVTSD2SS xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", "
+        LOG(L"[+] CVTSD2SS xmm"
+            << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", "
             << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
                 ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
                 : L"[mem]")
@@ -7916,8 +6606,8 @@ private:
     }
 
     void emulate_cvtsi2ss(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // XMM register
-        const auto& src = instr->operands[1];  // Integer (reg/mem)
+        const auto& dst = instr->operands[0]; // XMM register
+        const auto& src = instr->operands[1]; // Integer (reg/mem)
 
         __m128 dst_val;
         uint64_t src_val = 0;
@@ -7948,12 +6638,12 @@ private:
 
         write_operand_value(dst, 128, dst_val);
 
-        LOG(L"[+] CVTSI2SS -> int: " << std::dec << src_val
-            << L", float: " << result);
+        LOG(L"[+] CVTSI2SS -> int: " << std::dec << src_val << L", float: "
+            << result);
     }
     void emulate_cvtss2sd(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // XMM register (dest)
-        const auto& src = instr->operands[1];  // XMM register or memory (src)
+        const auto& dst = instr->operands[0]; // XMM register (dest)
+        const auto& src = instr->operands[1]; // XMM register or memory (src)
 
         __m128 src_val_f32;
         __m128d dst_val_f64;
@@ -7978,13 +6668,13 @@ private:
 
         write_operand_value(dst, 128, dst_val_f64);
 
-        LOG(L"[+] CVTSS2SD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => " << std::fixed << converted);
+        LOG(L"[+] CVTSS2SD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => "
+            << std::fixed << converted);
     }
     void emulate_cvtps2pd(const ZydisDisassembledInstruction* instr) {
-        const auto& dst = instr->operands[0];  // XMM register (dest)
-        const auto& src = instr->operands[1];  // XMM register or memory (src)
+        const auto& dst = instr->operands[0]; // XMM register (dest)
+        const auto& src = instr->operands[1]; // XMM register or memory (src)
 
         __m128 src_val_f32;
         __m128d dst_val_f64;
@@ -8007,9 +6697,10 @@ private:
             return;
         }
 
-        LOG(L"[+] CVTPS2PD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
-            << L" => [" << dst_val_f64.m128d_f64[0] << L", " << dst_val_f64.m128d_f64[1] << L"]");
+        LOG(L"[+] CVTPS2PD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0) << L" => ["
+            << dst_val_f64.m128d_f64[0] << L", "
+            << dst_val_f64.m128d_f64[1] << L"]");
     }
     void emulate_jle(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
@@ -8017,8 +6708,8 @@ private:
         uint32_t width = instr->info.operand_width;
 
         if (read_operand_value(op, width, target)) {
-
-            if (g_regs.rflags.flags.ZF || (g_regs.rflags.flags.SF != g_regs.rflags.flags.OF)) {
+            if (g_regs.rflags.flags.ZF ||
+                (g_regs.rflags.flags.SF != g_regs.rflags.flags.OF)) {
                 g_regs.rip = static_cast<int64_t>(target);
             }
             else {
@@ -8026,7 +6717,8 @@ private:
             }
         }
         else {
-            std::wcout << L"[!] Unsupported or unreadable operand for JLE" << std::endl;
+            std::wcout << L"[!] Unsupported or unreadable operand for JLE"
+                << std::endl;
             g_regs.rip += instr->info.length;
         }
         LOG(L"[+] JLE to => 0x" << std::hex << g_regs.rip);
@@ -8055,7 +6747,6 @@ private:
         uint32_t mxcsr_val = 0;
         read_mxcsr_asm(&mxcsr_val);
 
-
         if (!write_operand_value(dst, 32, mxcsr_val)) {
             LOG(L"[!] Failed to write MXCSR in STMXCSR");
             return;
@@ -8064,7 +6755,7 @@ private:
         LOG(L"[+] STMXCSR executed: stored MXCSR = 0x" << std::hex << mxcsr_val);
     }
     void emulate_stosw(const ZydisDisassembledInstruction* instr) {
-        uint16_t value = g_regs.rax.w;  // AX
+        uint16_t value = g_regs.rax.w; // AX
         uint64_t dest = g_regs.rdi.q;
         int delta = g_regs.rflags.flags.DF ? -2 : 2;
 
@@ -8075,8 +6766,7 @@ private:
 
         g_regs.rdi.q += delta;
 
-        LOG(L"[+] STOSW: Wrote 0x" << std::hex << value
-            << L" to [RDI] = 0x" << dest
+        LOG(L"[+] STOSW: Wrote 0x" << std::hex << value << L" to [RDI] = 0x" << dest
             << L", new RDI = 0x" << g_regs.rdi.q);
     }
     void emulate_fnstcw(const ZydisDisassembledInstruction* instr) {
@@ -8089,25 +6779,27 @@ private:
             return;
         }
 
-        LOG(L"[+] FNSTCW executed: stored FPU Control Word = 0x" << std::hex << cw_val);
+        LOG(L"[+] FNSTCW executed: stored FPU Control Word = 0x" << std::hex
+            << cw_val);
     }
     void emulate_punpcklqdq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
         __m128i dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Unsupported operands for PUNPCKLQDQ");
             return;
         }
-
 
         __m128i result = _mm_unpacklo_epi64(dst_val, src_val);
 
         write_operand_value(dst, 128, result);
 
         LOG(L"[+] PUNPCKLQDQ xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0));
+            << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0));
     }
     void emulate_vpunpcklqdq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -8170,7 +6862,8 @@ private:
         const auto& src = instr->operands[1];
 
         __m128i dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Unsupported operands for PUNPCKLBW");
             return;
         }
@@ -8194,8 +6887,8 @@ private:
         __m128i result = _mm_load_si128((__m128i*)result_bytes);
         write_operand_value(dst, 128, result);
 
-        LOG(L"[+] PUNPCKLBW xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0));
+        LOG(L"[+] PUNPCKLBW xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0));
     }
     void emulate_movss(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -8236,10 +6929,10 @@ private:
             write_operand_value(dst, 32, mem_val);
         }
 
-        LOG(L"[+] MOVSS executed (low 32-bit replaced, upper bits preserved or zeroed)");
+        LOG(L"[+] MOVSS executed (low 32-bit replaced, upper bits preserved or "
+            L"zeroed)");
     }
     void emulate_vpunpckhqdq(const ZydisDisassembledInstruction* instr) {
-
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
@@ -8249,7 +6942,6 @@ private:
             LOG(L"[!] Unsupported width in vpunpckhqdq: " << (int)width);
             return;
         }
-
 
         if (width == 128) {
             __m128i a, b;
@@ -8300,7 +6992,6 @@ private:
         LOG(L"[+] VPUNPCKHQDQ executed (" << width << L"-bit)");
     }
     void emulate_vpackusdw(const ZydisDisassembledInstruction* instr) {
-
         const auto& dst = instr->operands[0];
         const auto& src1 = instr->operands[1];
         const auto& src2 = instr->operands[2];
@@ -8489,7 +7180,8 @@ private:
 
             alignas(32) uint8_t out[32];
             vpalignr_lane<16>(out, (uint8_t*)&a, (uint8_t*)&b, shift); // lane 0
-            vpalignr_lane<16>(out + 16, (uint8_t*)&a + 16, (uint8_t*)&b + 16, shift); // lane 1
+            vpalignr_lane<16>(out + 16, (uint8_t*)&a + 16, (uint8_t*)&b + 16,
+                shift); // lane 1
 
             __m256i result = _mm256_load_si256((__m256i*)out);
             write_operand_value(dst, 256, result);
@@ -8501,10 +7193,8 @@ private:
 
             alignas(64) uint8_t out[64];
             for (int lane = 0; lane < 4; ++lane) {
-                vpalignr_lane<16>(out + lane * 16,
-                    (uint8_t*)&a + lane * 16,
-                    (uint8_t*)&b + lane * 16,
-                    shift);
+                vpalignr_lane<16>(out + lane * 16, (uint8_t*)&a + lane * 16,
+                    (uint8_t*)&b + lane * 16, shift);
             }
 
             __m512i result = _mm512_load_si512((__m512i*)out);
@@ -8515,7 +7205,8 @@ private:
             return;
         }
 
-        LOG(L"[+] VPALIGNR executed (" << width << L"-bit, shift=" << (int)shift << L")");
+        LOG(L"[+] VPALIGNR executed (" << width << L"-bit, shift=" << (int)shift
+            << L")");
     }
     void emulate_vpgatherdd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -8551,7 +7242,9 @@ private:
             }
 
             int64_t disp = mem_op.mem.disp.value;
-            uint64_t addr = base_val + static_cast<uint64_t>(indices[i]) * mem_op.mem.scale + disp;
+            uint64_t addr = base_val +
+                static_cast<uint64_t>(indices[i]) * mem_op.mem.scale +
+                disp;
 
             if (!ReadMemory(addr, &result_arr[i], sizeof(uint32_t))) {
                 LOG(L"[!] Failed to read memory at lane " << i);
@@ -9044,7 +7737,8 @@ private:
         g_regs.rflags.flags.AF = 0;
         g_regs.rflags.flags.OF = 0;
 
-        LOG(L"[+] VPTEST (" << width << "-bit) ZF=" << zf << " CF=" << cf << " PF=0 SF=0 AF=0 OF=0");
+        LOG(L"[+] VPTEST (" << width << "-bit) ZF=" << zf << " CF=" << cf
+            << " PF=0 SF=0 AF=0 OF=0");
     }
     void emulate_vpmovsxwd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -9446,7 +8140,6 @@ private:
         _mm_store_si128((__m128i*)dst_qword, dst_val);
         _mm_store_si128((__m128i*)src_qword, src_val);
 
-
         result_qword[0] = dst_qword[1]; // High 64 bits of dst
         result_qword[1] = src_qword[1]; // High 64 bits of src
 
@@ -9456,8 +8149,8 @@ private:
             return;
         }
 
-        LOG(L"[+] UNPCKHPD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0)
-            << ", xmm" << (src.reg.value - ZYDIS_REGISTER_XMM0)
+        LOG(L"[+] UNPCKHPD xmm" << (dst.reg.value - ZYDIS_REGISTER_XMM0) << ", xmm"
+            << (src.reg.value - ZYDIS_REGISTER_XMM0)
             << L" => High parts combined");
     }
     void emulate_cmpxchg16b(const ZydisDisassembledInstruction* instr) {
@@ -9466,7 +8159,6 @@ private:
             LOG(L"[!] CMPXCHG16B requires memory operand");
             return;
         }
-
 
         __m128i mem_val;
         if (!read_operand_value(dst, 128, mem_val)) {
@@ -9477,10 +8169,8 @@ private:
         alignas(16) uint64_t mem_qword[2];
         _mm_store_si128((__m128i*)mem_qword, mem_val);
 
-
         uint64_t mem_low = mem_qword[0];
         uint64_t mem_high = mem_qword[1];
-
 
         uint64_t cmp_low = g_regs.rax.q;
         uint64_t cmp_high = g_regs.rdx.q;
@@ -9488,7 +8178,6 @@ private:
         bool equal = (mem_low == cmp_low) && (mem_high == cmp_high);
 
         if (equal) {
-
             mem_qword[0] = g_regs.rbx.q; // Low
             mem_qword[1] = g_regs.rcx.q; // High
 
@@ -9499,16 +8188,15 @@ private:
             }
         }
         else {
-
             g_regs.rax.q = mem_low;
             g_regs.rdx.q = mem_high;
         }
 
         g_regs.rflags.flags.ZF = equal;
 
-        LOG(L"[+] CMPXCHG16B => ZF=" << (equal ? "1" : "0")
-            << L", mem_low=0x" << std::hex << mem_low
-            << L", mem_high=0x" << std::hex << mem_high);
+        LOG(L"[+] CMPXCHG16B => ZF=" << (equal ? "1" : "0") << L", mem_low=0x"
+            << std::hex << mem_low << L", mem_high=0x"
+            << std::hex << mem_high);
     }
     void emulate_shrd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -9528,7 +8216,6 @@ private:
             LOG(L"[!] Failed to read source operand");
             return;
         }
-
 
         uint8_t count = 0;
         if (count_op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
@@ -9585,9 +8272,6 @@ private:
             g_regs.rflags.flags.OF = msb_after;
         }
 
-
-
-
         g_regs.rflags.flags.SF = msb_after;
         g_regs.rflags.flags.ZF = (result == 0);
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result & 0xFF));
@@ -9605,7 +8289,6 @@ private:
 
         uint8_t val = (g_regs.rflags.flags.CF == 0) ? 1 : 0;
 
-
         constexpr uint32_t width = 8;
 
         if (!write_operand_value(dst, width, val)) {
@@ -9613,17 +8296,19 @@ private:
             return;
         }
 
-
         if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-            LOG(L"[+] SETNB: Wrote " << (int)val << L" to register " << ZydisRegisterGetString(dst.reg.value));
+            LOG(L"[+] SETNB: Wrote " << (int)val << L" to register "
+                << ZydisRegisterGetString(dst.reg.value));
         }
         else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY) {
             uint64_t addr = 0;
             if (GetEffectiveAddress(dst, addr, instr)) {
-                LOG(L"[+] SETNB: Wrote " << (int)val << L" to memory address 0x" << std::hex << addr);
+                LOG(L"[+] SETNB: Wrote " << (int)val << L" to memory address 0x"
+                    << std::hex << addr);
             }
             else {
-                LOG(L"[+] SETNB: Wrote " << (int)val << L" to memory (address unknown)");
+                LOG(L"[+] SETNB: Wrote " << (int)val
+                    << L" to memory (address unknown)");
             }
         }
         else {
@@ -9687,15 +8372,12 @@ private:
 
         LOG(L"[+] JNZ to => 0x" << std::hex << g_regs.rip);
     }
-    void emulate_nop(const ZydisDisassembledInstruction*) {
-        LOG(L"[+] NOP");
-    }
+    void emulate_nop(const ZydisDisassembledInstruction*) { LOG(L"[+] NOP"); }
     void emulate_pause(const ZydisDisassembledInstruction*) {
         LOG_analyze(BLUE, "[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
         LOG("[+] pause : spinLock at: 0x" << std::hex << g_regs.rip);
         is_paused = 1;
-        if (bpType == BreakpointType::ExecGuard)
-        {
+        if (bpType == BreakpointType::ExecGuard) {
             AddExecutionEx((LPVOID)g_regs.rip, instr.length);
             ApplyRegistersToContext();
             SingleStep();
@@ -9709,13 +8391,14 @@ private:
 
         // movq xmm, reg/mem
         if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
-            dst.reg.value >= ZYDIS_REGISTER_XMM0 && dst.reg.value <= ZYDIS_REGISTER_XMM31)
-        {
+            dst.reg.value >= ZYDIS_REGISTER_XMM0 &&
+            dst.reg.value <= ZYDIS_REGISTER_XMM31) {
             uint64_t value = 0;
 
             if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-                if (src.reg.value >= ZYDIS_REGISTER_XMM0 && src.reg.value <= ZYDIS_REGISTER_XMM31) {
-                    // movq xmm, xmm 
+                if (src.reg.value >= ZYDIS_REGISTER_XMM0 &&
+                    src.reg.value <= ZYDIS_REGISTER_XMM31) {
+                    // movq xmm, xmm
                     auto& dst_xmm = g_regs.ymm[dst.reg.value - ZYDIS_REGISTER_XMM0];
                     auto& src_xmm = g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0];
                     memcpy(dst_xmm.xmm, src_xmm.xmm, sizeof(uint64_t));
@@ -9750,12 +8433,12 @@ private:
         }
         // movq gpr, xmm or mem
         else if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
-            dst.reg.value >= ZYDIS_REGISTER_RAX && dst.reg.value <= ZYDIS_REGISTER_R15)
-        {
+            dst.reg.value >= ZYDIS_REGISTER_RAX &&
+            dst.reg.value <= ZYDIS_REGISTER_R15) {
             uint64_t value = 0;
             if (src.type == ZYDIS_OPERAND_TYPE_REGISTER &&
-                src.reg.value >= ZYDIS_REGISTER_XMM0 && src.reg.value <= ZYDIS_REGISTER_XMM31)
-            {
+                src.reg.value >= ZYDIS_REGISTER_XMM0 &&
+                src.reg.value <= ZYDIS_REGISTER_XMM31) {
                 auto& src_xmm = g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0];
                 memcpy(&value, src_xmm.xmm, sizeof(uint64_t));
                 if (!write_operand_value(dst, width, value)) {
@@ -9779,9 +8462,11 @@ private:
             }
         }
         // movq [mem], xmm or gpr
-        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+            src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             uint64_t value = 0;
-            if (src.reg.value >= ZYDIS_REGISTER_XMM0 && src.reg.value <= ZYDIS_REGISTER_XMM31) {
+            if (src.reg.value >= ZYDIS_REGISTER_XMM0 &&
+                src.reg.value <= ZYDIS_REGISTER_XMM31) {
                 auto& src_xmm = g_regs.ymm[src.reg.value - ZYDIS_REGISTER_XMM0];
                 memcpy(&value, src_xmm.xmm, sizeof(uint64_t));
             }
@@ -9822,24 +8507,22 @@ private:
             return;
         }
 
-        LOG(L"[+] CMOVBE executed successfully: dst updated to 0x" << std::hex << value);
+        LOG(L"[+] CMOVBE executed successfully: dst updated to 0x" << std::hex
+            << value);
     }
     void emulate_movsq(const ZydisDisassembledInstruction* instr) {
         uint64_t value = 0;
         int64_t delta = (g_regs.rflags.flags.DF) ? -8 : 8;
-
 
         if (!ReadMemory(g_regs.rsi.q, &value, 64)) {
             LOG(L"[!] Failed to read memory at RSI in MOVSQ");
             return;
         }
 
-
         if (!WriteMemory(g_regs.rdi.q, &value, 64)) {
             LOG(L"[!] Failed to write memory at RDI in MOVSQ");
             return;
         }
-
 
         g_regs.rsi.q += delta;
         g_regs.rdi.q += delta;
@@ -9850,7 +8533,6 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
         const uint32_t width = instr->info.operand_width;
-
 
         if (!g_regs.rflags.flags.CF) {
             LOG(L"[~] CMOVB condition not met (CF=0), skipping move");
@@ -9901,7 +8583,8 @@ private:
     void emulate_setnle(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
-        bool condition = (g_regs.rflags.flags.ZF == 0) && (g_regs.rflags.flags.SF == g_regs.rflags.flags.OF);
+        bool condition = (g_regs.rflags.flags.ZF == 0) &&
+            (g_regs.rflags.flags.SF == g_regs.rflags.flags.OF);
         uint8_t value = condition ? 1 : 0;
 
         set_register_value<uint8_t>(dst.reg.value, value);
@@ -9923,8 +8606,9 @@ private:
             return;
         }
 
-        LOG(L"[+] MOVDQA xmm" << dst.reg.value - ZYDIS_REGISTER_XMM0
-            << ", " << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
+        LOG(L"[+] MOVDQA xmm"
+            << dst.reg.value - ZYDIS_REGISTER_XMM0 << ", "
+            << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
                 ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
                 : L"[mem]"));
     }
@@ -9940,7 +8624,10 @@ private:
         }
 
         // Zero-extend value to 128 bits
-        struct xmm_t { uint32_t lo; uint32_t hi[3]; } xmm_value = { value, {0,0,0} };
+        struct xmm_t {
+            uint32_t lo;
+            uint32_t hi[3];
+        } xmm_value = { value, {0, 0, 0} };
 
         if (!write_operand_value(dst, 128, xmm_value)) {
             LOG(L"[!] Failed to write destination operand in VMOVD");
@@ -9948,9 +8635,13 @@ private:
         }
 
         LOG(L"[+] VMOVD "
-            << (dst.type == ZYDIS_OPERAND_TYPE_REGISTER ? L"xmm" + std::to_wstring(dst.reg.value - ZYDIS_REGISTER_XMM0) : L"[mem]")
+            << (dst.type == ZYDIS_OPERAND_TYPE_REGISTER
+                ? L"xmm" + std::to_wstring(dst.reg.value - ZYDIS_REGISTER_XMM0)
+                : L"[mem]")
             << ", "
-            << (src.type == ZYDIS_OPERAND_TYPE_REGISTER ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0) : L"[mem]"));
+            << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
+                ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
+                : L"[mem]"));
     }
     void emulate_orps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -9958,11 +8649,11 @@ private:
 
         __m128 value1, value2;
 
-        if (!read_operand_value(dst, 128, value1) || !read_operand_value(src, 128, value2)) {
+        if (!read_operand_value(dst, 128, value1) ||
+            !read_operand_value(src, 128, value2)) {
             LOG(L"[!] Failed to read operand in ORPS");
             return;
         }
-
 
         __m128 result = _mm_or_ps(value1, value2);
 
@@ -9971,9 +8662,10 @@ private:
             return;
         }
 
-        LOG(L"[+] ORPS xmm" << dst.reg.value - ZYDIS_REGISTER_XMM0
-            << ", " << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
-                ? L"xmm" + std::to_wstring(src.reg.value - ZYDIS_REGISTER_XMM0)
+        LOG(L"[+] ORPS xmm" << dst.reg.value - ZYDIS_REGISTER_XMM0 << ", "
+            << (src.type == ZYDIS_OPERAND_TYPE_REGISTER
+                ? L"xmm" + std::to_wstring(src.reg.value -
+                    ZYDIS_REGISTER_XMM0)
                 : L"[mem]"));
     }
     void emulate_cmovs(const ZydisDisassembledInstruction* instr) {
@@ -10000,9 +8692,7 @@ private:
         }
     }
     void emulate_lfence(const ZydisDisassembledInstruction* instr) {
-
         LOG(L"[+] LFENCE executed");
-
     }
     void emulate_mov(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0], src = instr->operands[1];
@@ -10019,7 +8709,6 @@ private:
         if (!write_operand_value(dst, width, val)) {
             LOG(L"[!] Failed to write destination operand");
         }
-
     }
     void emulate_tzcnt(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -10060,9 +8749,9 @@ private:
         is_OVERFLOW_FLAG_SKIP = 1;
 #endif
 
-        LOG(L"[+] TZCNT => result=0x" << std::hex << result
-            << L" ZF=" << g_regs.rflags.flags.ZF
-            << L" CF=" << g_regs.rflags.flags.CF);
+        LOG(L"[+] TZCNT => result=0x" << std::hex << result << L" ZF="
+            << g_regs.rflags.flags.ZF << L" CF="
+            << g_regs.rflags.flags.CF);
     }
     void emulate_sub(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -10088,7 +8777,8 @@ private:
         int64_t rhs;
 
         if (src.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
-            rhs = static_cast<int64_t>(src.imm.value.s); // use signed immediate directly
+            rhs = static_cast<int64_t>(
+                src.imm.value.s); // use signed immediate directly
         }
         else {
             rhs = static_cast<int64_t>(rhs_raw);
@@ -10115,7 +8805,8 @@ private:
     void emulate_jnle(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
         if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
-            if ((g_regs.rflags.flags.ZF == 0) && (g_regs.rflags.flags.SF == g_regs.rflags.flags.OF)) {
+            if ((g_regs.rflags.flags.ZF == 0) &&
+                (g_regs.rflags.flags.SF == g_regs.rflags.flags.OF)) {
                 g_regs.rip = op.imm.value.s;
             }
             else {
@@ -10160,11 +8851,10 @@ private:
             return;
         }
 
-
         count &= 0x3F;
 
-        if (count == 0) return;
-
+        if (count == 0)
+            return;
 
         uint64_t mask = (width == 64) ? ~0ULL : ((1ULL << width) - 1);
         dst_val &= mask;
@@ -10176,7 +8866,6 @@ private:
             g_regs.rflags.flags.CF = (dst_val >> (width - count)) & 1;
         }
         else {
-
             result = 0;
             g_regs.rflags.flags.CF = (src_val >> (width - 1)) & 1;
         }
@@ -10232,9 +8921,9 @@ private:
             return;
         }
 
-        LOG(L"[+] PMOVZXDQ executed on "
-            << ZydisRegisterGetString(dst.reg.value)
-            << L" => [" << std::hex << lo << L"," << hi << L"]");
+        LOG(L"[+] PMOVZXDQ executed on " << ZydisRegisterGetString(dst.reg.value)
+            << L" => [" << std::hex << lo << L"," << hi
+            << L"]");
     }
     void emulate_psubq(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -10302,20 +8991,24 @@ private:
         const uint32_t src_bytes = src_bits / 8;
         const uint32_t dst_elems = src_bytes;
 
-
-        alignas(64) uint8_t  in_bytes[32] = { 0 };
+        alignas(64) uint8_t in_bytes[32] = { 0 };
         if (src_bits == 256) {
             __m256i v;
-            if (!read_operand_value(src, 256, v)) { LOG(L"[!] VPMOVZXBW read src (256) failed"); return; }
+            if (!read_operand_value(src, 256, v)) {
+                LOG(L"[!] VPMOVZXBW read src (256) failed");
+                return;
+            }
             _mm256_storeu_si256((__m256i*)in_bytes, v);
         }
         else {
             __m128i v;
 
-            if (!read_operand_value(src, src_bits >= 128 ? 128 : src_bits, v)) { LOG(L"[!] VPMOVZXBW read src (<=128) failed"); return; }
+            if (!read_operand_value(src, src_bits >= 128 ? 128 : src_bits, v)) {
+                LOG(L"[!] VPMOVZXBW read src (<=128) failed");
+                return;
+            }
             _mm_storeu_si128((__m128i*)in_bytes, v);
         }
-
 
         alignas(64) uint16_t out_words[32] = { 0 };
         for (uint32_t i = 0; i < dst_elems; ++i)
@@ -10323,18 +9016,27 @@ private:
 
         if (dst_bits == 128) {
             __m128i r = _mm_loadu_si128((__m128i*)out_words);
-            if (!write_operand_value(dst, 128, r)) { LOG(L"[!] VPMOVZXBW write dst (128) failed"); return; }
+            if (!write_operand_value(dst, 128, r)) {
+                LOG(L"[!] VPMOVZXBW write dst (128) failed");
+                return;
+            }
             LOG(L"[+] VPMOVZXBW xmm <- m64/xmm-low executed");
         }
         else if (dst_bits == 256) {
             __m256i r = _mm256_loadu_si256((__m256i*)out_words);
-            if (!write_operand_value(dst, 256, r)) { LOG(L"[!] VPMOVZXBW write dst (256) failed"); return; }
+            if (!write_operand_value(dst, 256, r)) {
+                LOG(L"[!] VPMOVZXBW write dst (256) failed");
+                return;
+            }
             LOG(L"[+] VPMOVZXBW ymm <- xmm/m128 executed");
         }
         else {
             __m512i r;
             std::memcpy(&r, out_words, 64);
-            if (!write_operand_value(dst, 512, r)) { LOG(L"[!] VPMOVZXBW write dst (512) failed"); return; }
+            if (!write_operand_value(dst, 512, r)) {
+                LOG(L"[!] VPMOVZXBW write dst (512) failed");
+                return;
+            }
             LOG(L"[+] VPMOVZXBW zmm <- ymm/m256 executed");
         }
     }
@@ -10356,36 +9058,49 @@ private:
         alignas(64) uint8_t raw[32] = { 0 };
         if (src_bits == 256) {
             __m256i v;
-            if (!read_operand_value(src, 256, v)) { LOG(L"[!] PMOVZXWD read src (256) failed"); return; }
+            if (!read_operand_value(src, 256, v)) {
+                LOG(L"[!] PMOVZXWD read src (256) failed");
+                return;
+            }
             _mm256_storeu_si256((__m256i*)raw, v);
         }
         else {
             __m128i v;
-            if (!read_operand_value(src, src_bits >= 128 ? 128 : src_bits, v)) { LOG(L"[!] PMOVZXWD read src (<=128) failed"); return; }
+            if (!read_operand_value(src, src_bits >= 128 ? 128 : src_bits, v)) {
+                LOG(L"[!] PMOVZXWD read src (<=128) failed");
+                return;
+            }
             _mm_storeu_si128((__m128i*)raw, v);
         }
-
 
         const uint16_t* in_words = reinterpret_cast<const uint16_t*>(raw);
         alignas(64) uint32_t out_dwords[16] = { 0 };
         for (uint32_t i = 0; i < dst_elems; ++i)
             out_dwords[i] = static_cast<uint32_t>(in_words[i]);
 
-
         if (dst_bits == 128) {
             __m128i r = _mm_loadu_si128((__m128i*)out_dwords);
-            if (!write_operand_value(dst, 128, r)) { LOG(L"[!] PMOVZXWD write dst (128) failed"); return; }
+            if (!write_operand_value(dst, 128, r)) {
+                LOG(L"[!] PMOVZXWD write dst (128) failed");
+                return;
+            }
             LOG(L"[+] PMOVZXWD xmm <- m64/xmm-low executed");
         }
         else if (dst_bits == 256) {
             __m256i r = _mm256_loadu_si256((__m256i*)out_dwords); // 8 dword
-            if (!write_operand_value(dst, 256, r)) { LOG(L"[!] PMOVZXWD write dst (256) failed"); return; }
+            if (!write_operand_value(dst, 256, r)) {
+                LOG(L"[!] PMOVZXWD write dst (256) failed");
+                return;
+            }
             LOG(L"[+] PMOVZXWD ymm <- xmm/m128 executed");
         }
         else { // 512
             __m512i r;
             std::memcpy(&r, out_dwords, 64);
-            if (!write_operand_value(dst, 512, r)) { LOG(L"[!] PMOVZXWD write dst (512) failed"); return; }
+            if (!write_operand_value(dst, 512, r)) {
+                LOG(L"[!] PMOVZXWD write dst (512) failed");
+                return;
+            }
             LOG(L"[+] PMOVZXWD zmm <- ymm/m256 executed");
         }
     }
@@ -10398,7 +9113,7 @@ private:
             return;
         }
 
-        uint8_t src_width = static_cast<uint8_t>(src.size);              // in bits
+        uint8_t src_width = static_cast<uint8_t>(src.size); // in bits
         uint8_t dst_width = static_cast<uint8_t>(instr->info.operand_width);
 
         if (src_width != 8 && src_width != 16 && src_width != 32) {
@@ -10418,8 +9133,9 @@ private:
             return;
         }
 
-        LOG(L"[+] MOVZX => zero-extended 0x" << std::hex << extended
-            << L" into " << ZydisRegisterGetString(dst.reg.value));
+        LOG(L"[+] MOVZX => zero-extended 0x"
+            << std::hex << extended << L" into "
+            << ZydisRegisterGetString(dst.reg.value));
     }
     void emulate_jb(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
@@ -10442,7 +9158,6 @@ private:
 
         // Push return address to stack
 
-
         // Determine call target
         const auto& op = instr->operands[0];
         uint64_t target_rip = 0;
@@ -10454,9 +9169,9 @@ private:
             target_rip = get_register_value<uint64_t>(op.reg.value);
         }
         else if (op.type == ZYDIS_OPERAND_TYPE_MEMORY) {
-
             if (!ReadEffectiveMemory(op, &target_rip)) {
-                std::wcout << L"[!] Failed to read memory (effective address) for CALL" << std::endl;
+                std::wcout << L"[!] Failed to read memory (effective address) for CALL"
+                    << std::endl;
                 return;
             }
         }
@@ -10522,7 +9237,6 @@ private:
             g_regs.rflags.flags.CF = 0;
         }
 
-
         if (shift == 1) {
             bool msb_before = (old_val >> (width - 1)) & 1;
             bool msb_after = (result >> (width - 1)) & 1;
@@ -10534,7 +9248,6 @@ private:
 #endif
         }
 
-
         g_regs.rflags.flags.ZF = (result == 0);
         g_regs.rflags.flags.SF = (result >> (width - 1)) & 1;
 
@@ -10544,7 +9257,6 @@ private:
 #if DB_ENABLED
         is_Auxiliary_Carry_FLAG_SKIP = 1;
 #endif
-
 
         if (!write_operand_value(dst, width, result)) {
             LOG(L"[!] Failed to write destination operand in SHL");
@@ -10585,7 +9297,6 @@ private:
         }
 
         uint64_t old_msb = (val >> (width - 1)) & 1;
-
 
         if (shift == 0) {
             LOG(L"[=] SHR shift == 0, flags unchanged (preserved)");
@@ -10635,8 +9346,8 @@ private:
         g_regs.rdi.q += delta;
 
         LOG(L"[+] STOSB: Wrote 0x" << std::hex << static_cast<int>(al_val)
-            << L" to [RDI] = 0x" << dest
-            << L", new RDI = 0x" << g_regs.rdi.q);
+            << L" to [RDI] = 0x" << dest << L", new RDI = 0x"
+            << g_regs.rdi.q);
     }
     void emulate_movsb(const ZydisDisassembledInstruction* instr) {
         uint64_t src = g_regs.rsi.q;
@@ -10657,10 +9368,9 @@ private:
         g_regs.rsi.q += delta;
         g_regs.rdi.q += delta;
 
-        LOG(L"[+] MOVSB: Copied byte 0x" << std::hex << static_cast<int>(byte_val)
-            << L" from [RSI] = 0x" << src
-            << L" to [RDI] = 0x" << dest
-            << L", new RSI = 0x" << g_regs.rsi.q
+        LOG(L"[+] MOVSB: Copied byte 0x"
+            << std::hex << static_cast<int>(byte_val) << L" from [RSI] = 0x" << src
+            << L" to [RDI] = 0x" << dest << L", new RSI = 0x" << g_regs.rsi.q
             << L", new RDI = 0x" << g_regs.rdi.q);
     }
     void emulate_jbe(const ZydisDisassembledInstruction* instr) {
@@ -10700,14 +9410,13 @@ private:
         const auto& src = instr->operands[1];
         uint32_t width = 64;
 
-
-        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+            src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
             uint64_t mem_val = 0;
             if (!read_operand_value(src, width, mem_val)) {
                 LOG(L"[!] Failed to read 64-bit value from memory in MOVSD");
                 return;
             }
-
 
             __m256 ymm_val;
             if (!read_operand_value<__m256>(dst, 256, ymm_val)) {
@@ -10719,7 +9428,6 @@ private:
             p[0] = mem_val;
             p[1] = 0;
 
-
             if (!write_operand_value<__m256>(dst, 256, ymm_val)) {
                 LOG(L"[!] Failed to write new value to YMM register");
                 return;
@@ -10728,8 +9436,8 @@ private:
             LOG(L"[+] MOVSD xmm, qword ptr [mem] executed");
         }
 
-
-        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+            src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             __m128 xmm_val;
             if (!read_operand_value<__m128>(src, 128, xmm_val)) {
                 LOG(L"[!] Failed to read XMM register value");
@@ -10747,8 +9455,8 @@ private:
             LOG(L"[+] MOVSD qword ptr [mem], xmm executed");
         }
 
-        else if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-
+        else if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+            src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             __m256 ymm_dst;
             if (!read_operand_value<__m256>(dst, 256, ymm_dst)) {
                 LOG(L"[!] Failed to read destination YMM register value");
@@ -10766,7 +9474,6 @@ private:
 
             p_dst[0] = p_src[0];
 
-
             if (!write_operand_value<__m256>(dst, 256, ymm_dst)) {
                 LOG(L"[!] Failed to write destination YMM register value");
                 return;
@@ -10783,7 +9490,8 @@ private:
         const auto& dst = instr->operands[0];
         const auto& imm = instr->operands[1];
 
-        if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER || imm.type != ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+        if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER ||
+            imm.type != ZYDIS_OPERAND_TYPE_IMMEDIATE) {
             LOG(L"[!] PSRLDQ expects dst=XMM register and imm8");
             return;
         }
@@ -10831,10 +9539,18 @@ private:
 
         int64_t val = 0;
         switch (width) {
-        case 8:  val = static_cast<int8_t>(raw_val); break;
-        case 16: val = static_cast<int16_t>(raw_val); break;
-        case 32: val = static_cast<int32_t>(raw_val); break;
-        case 64: val = static_cast<int64_t>(raw_val); break;
+        case 8:
+            val = static_cast<int8_t>(raw_val);
+            break;
+        case 16:
+            val = static_cast<int16_t>(raw_val);
+            break;
+        case 32:
+            val = static_cast<int32_t>(raw_val);
+            break;
+        case 64:
+            val = static_cast<int64_t>(raw_val);
+            break;
         default:
             LOG(L"[!] Unsupported operand width");
             return;
@@ -10845,7 +9561,8 @@ private:
             LOG(L"[!] Failed to read shift operand");
             return;
         }
-        uint8_t shift = static_cast<uint8_t>(tmp_shift) & 0x3F; // shift mask as per x86 rules
+        uint8_t shift =
+            static_cast<uint8_t>(tmp_shift) & 0x3F; // shift mask as per x86 rules
         if (shift == 0) {
             return;
         }
@@ -10876,11 +9593,9 @@ private:
         g_regs.rflags.flags.ZF = (result == 0);
         g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(result));
 
-        LOG(L"[+] SAR executed: result=0x" << std::hex << result
-            << L" CF=" << cf
-            << L" OF=0"
-            << L" SF=" << g_regs.rflags.flags.SF
-            << L" ZF=" << g_regs.rflags.flags.ZF
+        LOG(L"[+] SAR executed: result=0x"
+            << std::hex << result << L" CF=" << cf << L" OF=0" << L" SF="
+            << g_regs.rflags.flags.SF << L" ZF=" << g_regs.rflags.flags.ZF
             << L" PF=" << g_regs.rflags.flags.PF);
     }
     void emulate_lahf(const ZydisDisassembledInstruction* instr) {
@@ -10941,7 +9656,9 @@ private:
         is_cpuid = 1;
 #endif
 #if analyze_ENABLED
-        LOG_analyze(BRIGHT_MAGENTA, "CPUID leaf " << "0x" << std::hex << g_regs.rax.q << "  at : 0x" << std::hex << g_regs.rip);
+        LOG_analyze(BRIGHT_MAGENTA, "CPUID leaf " << "0x" << std::hex
+            << g_regs.rax.q << "  at : 0x"
+            << std::hex << g_regs.rip);
 #endif
 #if AUTO_PATCH_HW
         if (patchSectionAddress != 0 && IsInPatchRange(g_regs.rip)) {
@@ -10949,30 +9666,26 @@ private:
         }
 #endif
 #if Save_Rva
-          addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),instr.length, RVAType::CPUID, filename);
+        addRVA(entries, g_regs.rip - (moduleBase == 0 ? baseAddress : moduleBase),
+            instr.length, RVAType::CPUID, filename);
 
-#endif 
+#endif
         int cpu_info[4];
         int input_eax = static_cast<int>(g_regs.rax.q);
         int input_ecx = static_cast<int>(g_regs.rcx.q);
 
-
         __cpuidex(cpu_info, input_eax, input_ecx);
 
-
-        g_regs.rax.q = static_cast<uint32_t>(cpu_info[0]);  // EAX
-        g_regs.rbx.q = static_cast<uint32_t>(cpu_info[1]);  // EBX
-        g_regs.rcx.q = static_cast<uint32_t>(cpu_info[2]);  // ECX
-        g_regs.rdx.q = static_cast<uint32_t>(cpu_info[3]);  // EDX
-
+        g_regs.rax.q = static_cast<uint32_t>(cpu_info[0]); // EAX
+        g_regs.rbx.q = static_cast<uint32_t>(cpu_info[1]); // EBX
+        g_regs.rcx.q = static_cast<uint32_t>(cpu_info[2]); // ECX
+        g_regs.rdx.q = static_cast<uint32_t>(cpu_info[3]); // EDX
 
         LOG(L"[+] CPUID Host => "
-            L"EAX: 0x" << std::hex << cpu_info[0] <<
-            L", EBX: 0x" << std::hex << cpu_info[1] <<
-            L", ECX: 0x" << std::hex << cpu_info[2] <<
-            L", EDX: 0x" << std::hex << cpu_info[3]);
-
-
+            L"EAX: 0x"
+            << std::hex << cpu_info[0] << L", EBX: 0x" << std::hex << cpu_info[1]
+            << L", ECX: 0x" << std::hex << cpu_info[2] << L", EDX: 0x" << std::hex
+            << cpu_info[3]);
     }
     void emulate_js(const ZydisDisassembledInstruction* instr) {
         const auto& op = instr->operands[0];
@@ -11015,7 +9728,8 @@ private:
 
         if (width == 128) { // XMM / 128-bit
             __m128i mask_val, src_val;
-            if (!read_operand_value(mask, width, mask_val) || !read_operand_value(src, width, src_val)) {
+            if (!read_operand_value(mask, width, mask_val) ||
+                !read_operand_value(src, width, src_val)) {
                 LOG(L"[!] Failed to read operands in VPMASKMOVD (128-bit)");
                 return;
             }
@@ -11032,7 +9746,8 @@ private:
         }
         else if (width == 256) { // YMM / 256-bit
             __m256i mask_val, src_val;
-            if (!read_operand_value(mask, width, mask_val) || !read_operand_value(src, width, src_val)) {
+            if (!read_operand_value(mask, width, mask_val) ||
+                !read_operand_value(src, width, src_val)) {
                 LOG(L"[!] Failed to read operands in VPMASKMOVD (256-bit)");
                 return;
             }
@@ -11058,7 +9773,6 @@ private:
 
         uint64_t lhs = 0, rhs = 0;
 
-
         if (!read_operand_value(op1, width, lhs)) {
             LOG(L"[!] Failed to read first operand in TEST");
             return;
@@ -11071,28 +9785,27 @@ private:
 
         const uint64_t result = lhs & rhs;
 
-
         const uint64_t masked_result = zero_extend(result, width);
-
 
         g_regs.rflags.flags.ZF = (masked_result == 0);
         g_regs.rflags.flags.SF = (masked_result >> (width - 1)) & 1;
-        g_regs.rflags.flags.PF = !parity(static_cast<uint8_t>(masked_result & 0xFF));
+        g_regs.rflags.flags.PF =
+            !parity(static_cast<uint8_t>(masked_result & 0xFF));
         g_regs.rflags.flags.CF = 0;
         g_regs.rflags.flags.OF = 0;
         g_regs.rflags.flags.AF = 0;
 
-        LOG(L"[+] TEST => 0x" << std::hex << lhs << L" & 0x" << rhs << L" = 0x" << masked_result);
-        LOG(L"[+] Flags => ZF=" << g_regs.rflags.flags.ZF
-            << L", SF=" << g_regs.rflags.flags.SF
-            << L", PF=" << g_regs.rflags.flags.PF
-            << L", CF=" << g_regs.rflags.flags.CF
-            << L", OF=" << g_regs.rflags.flags.OF
+        LOG(L"[+] TEST => 0x" << std::hex << lhs << L" & 0x" << rhs << L" = 0x"
+            << masked_result);
+        LOG(L"[+] Flags => ZF="
+            << g_regs.rflags.flags.ZF << L", SF=" << g_regs.rflags.flags.SF
+            << L", PF=" << g_regs.rflags.flags.PF << L", CF="
+            << g_regs.rflags.flags.CF << L", OF=" << g_regs.rflags.flags.OF
             << L", AF=" << g_regs.rflags.flags.AF);
     }
     void emulate_not(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
-        uint8_t width = instr->info.operand_width; // 8,16,32,64 
+        uint8_t width = instr->info.operand_width; // 8,16,32,64
 
         uint64_t value = 0;
         if (!read_operand_value(dst, width, value)) {
@@ -11108,8 +9821,6 @@ private:
             return;
         }
 
-
-
         LOG(L"[+] NOT => 0x" << std::hex << result);
     }
     void emulate_neg(const ZydisDisassembledInstruction* instr) {
@@ -11122,7 +9833,6 @@ private:
             return;
         }
 
-
         uint64_t result = static_cast<uint64_t>(-static_cast<int64_t>(value));
         result = zero_extend(result, width);
         if (!write_operand_value(dst, width, result)) {
@@ -11132,14 +9842,16 @@ private:
 
         update_flags_neg(result, value, width);
 
-        LOG(L"[+] NEG executed => 0x" << std::hex << result << L" (width: " << (int)width << L")");
+        LOG(L"[+] NEG executed => 0x" << std::hex << result << L" (width: "
+            << (int)width << L")");
     }
     void emulate_movd(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
         const uint32_t width = 32;
 
-        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+            src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
             // movd xmm, [mem]
             uint32_t mem_val = 0;
             if (!read_operand_value(src, width, mem_val)) {
@@ -11147,8 +9859,8 @@ private:
                 return;
             }
 
-            __m128 xmm_val = _mm_setzero_ps();       // Clear entire xmm
-            memcpy(&xmm_val, &mem_val, 4);           // Copy into low 4 bytes
+            __m128 xmm_val = _mm_setzero_ps(); // Clear entire xmm
+            memcpy(&xmm_val, &mem_val, 4);     // Copy into low 4 bytes
 
             if (!write_operand_value<__m128>(dst, 128, xmm_val)) {
                 LOG(L"[!] Failed to write to XMM register");
@@ -11157,7 +9869,8 @@ private:
 
             LOG(L"[+] MOVD xmm, [mem] executed");
         }
-        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+            src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             // movd [mem], xmm
             __m128 xmm_val;
             if (!read_operand_value<__m128>(src, 128, xmm_val)) {
@@ -11166,7 +9879,7 @@ private:
             }
 
             uint32_t val32 = 0;
-            memcpy(&val32, &xmm_val, 4);  // Lower 32 bits
+            memcpy(&val32, &xmm_val, 4); // Lower 32 bits
 
             if (!write_operand_value(dst, width, val32)) {
                 LOG(L"[!] Failed to write to memory in MOVD");
@@ -11175,7 +9888,8 @@ private:
 
             LOG(L"[+] MOVD [mem], xmm executed");
         }
-        else if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+        else if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+            src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             auto dst_class = ZydisRegisterGetClass(dst.reg.value);
             auto src_class = ZydisRegisterGetClass(src.reg.value);
 
@@ -11235,10 +9949,10 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
+        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+            src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             __m128 xmm_dst_val;
             __m128 xmm_src_val;
-
 
             if (!read_operand_value<__m128>(dst, 128, xmm_dst_val)) {
                 LOG(L"[!] Failed to read destination XMM register in MOVLHPS");
@@ -11249,7 +9963,6 @@ private:
                 LOG(L"[!] Failed to read source XMM register in MOVLHPS");
                 return;
             }
-
 
             float dst_vals[4];
             float src_vals[4];
@@ -11291,19 +10004,22 @@ private:
         const auto& op1 = instr->operands[0], op2 = instr->operands[1];
         uint8_t width = instr->info.operand_width;
 
-        if (op1.type == ZYDIS_OPERAND_TYPE_MEMORY && op2.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+        if (op1.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+            op2.type == ZYDIS_OPERAND_TYPE_MEMORY) {
             LOG(L"[!] XCHG between two memory operands is invalid");
             return;
         }
 
         uint64_t val1 = 0, val2 = 0;
 
-        if (!read_operand_value(op1, width, val1) || !read_operand_value(op2, width, val2)) {
+        if (!read_operand_value(op1, width, val1) ||
+            !read_operand_value(op2, width, val2)) {
             LOG(L"[!] Failed to read operands for XCHG");
             return;
         }
 
-        if (!write_operand_value(op1, width, val2) || !write_operand_value(op2, width, val1)) {
+        if (!write_operand_value(op1, width, val2) ||
+            !write_operand_value(op2, width, val1)) {
             LOG(L"[!] Failed to write operands for XCHG");
             return;
         }
@@ -11347,7 +10063,8 @@ private:
             return;
         }
 
-        LOG(L"[+] CVTTSD2SI executed: " << std::fixed << src_double << " -> " << result_int);
+        LOG(L"[+] CVTTSD2SI executed: " << std::fixed << src_double << " -> "
+            << result_int);
     }
     void emulate_rol(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -11378,7 +10095,8 @@ private:
         const uint8_t bit_width = static_cast<uint8_t>(width); // 8, 16, 32, 64
 
         // === Perform the rotate ===
-        uint64_t result = ((val << shift) | (val >> (bit_width - shift))) & ((bit_width == 64) ? ~0ULL : ((1ULL << bit_width) - 1));
+        uint64_t result = ((val << shift) | (val >> (bit_width - shift))) &
+            ((bit_width == 64) ? ~0ULL : ((1ULL << bit_width) - 1));
 
         // === Write result back ===
         if (!write_operand_value(dst, width, result)) {
@@ -11411,7 +10129,8 @@ private:
 
         if (width == 128) {
             __m128i v_dst, v_src;
-            if (!read_operand_value<__m128i>(dst, width, v_dst) || !read_operand_value<__m128i>(src, width, v_src)) {
+            if (!read_operand_value<__m128i>(dst, width, v_dst) ||
+                !read_operand_value<__m128i>(src, width, v_src)) {
                 LOG(L"[!] Failed to read operands in PADDQ (128-bit)");
                 return;
             }
@@ -11425,7 +10144,8 @@ private:
         }
         else if (width == 256) {
             __m256i v_dst, v_src;
-            if (!read_operand_value<__m256i>(dst, width, v_dst) || !read_operand_value<__m256i>(src, width, v_src)) {
+            if (!read_operand_value<__m256i>(dst, width, v_dst) ||
+                !read_operand_value<__m256i>(src, width, v_src)) {
                 LOG(L"[!] Failed to read operands in PADDQ (256-bit)");
                 return;
             }
@@ -11434,8 +10154,10 @@ private:
             __m256i result = _mm256_add_epi64(v_dst, v_src);
 #else
 
-            __m128i lo = _mm_add_epi64(_mm256_castsi256_si128(v_dst), _mm256_castsi256_si128(v_src));
-            __m128i hi = _mm_add_epi64(_mm256_extracti128_si256(v_dst, 1), _mm256_extracti128_si256(v_src, 1));
+            __m128i lo = _mm_add_epi64(_mm256_castsi256_si128(v_dst),
+                _mm256_castsi256_si128(v_src));
+            __m128i hi = _mm_add_epi64(_mm256_extracti128_si256(v_dst, 1),
+                _mm256_extracti128_si256(v_src, 1));
             __m256i result = _mm256_set_m128i(hi, lo);
 #endif
 
@@ -11492,8 +10214,9 @@ private:
                 return;
             }
 
-
-            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            ZydisRegister dstYMM =
+                (ZydisRegister)(ZYDIS_REGISTER_YMM0 +
+                    (dst.reg.value - ZYDIS_REGISTER_XMM0));
             set_register_value(dstYMM, YMM{});
 
             if (!write_operand_value(dst, 128, val)) {
@@ -11520,10 +10243,8 @@ private:
             int mask = _mm256_movemask_epi8(val);
 
             if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-
                 set_register_value<uint64_t>(dst.reg.value, 0);
             }
-
 
             if (!write_operand_value<uint32_t>(dst, 32, (uint32_t)mask)) {
                 LOG(L"[!] Failed to write destination operand in VPMOVMSKB (YMM)");
@@ -11553,7 +10274,8 @@ private:
             LOG(L"[+] VPMOVMSKB (XMM) executed, mask=0x" << std::hex << mask);
         }
         else {
-            LOG(L"[!] Unsupported register size in VPMOVMSKB: " << src_size_bits << " bits");
+            LOG(L"[!] Unsupported register size in VPMOVMSKB: " << src_size_bits
+                << " bits");
         }
     }
     void emulate_movhpd(const ZydisDisassembledInstruction* instr) {
@@ -11562,8 +10284,8 @@ private:
 
         __m128 xmm_val;
 
-        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER && src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
-
+        if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
+            src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
             if (!read_operand_value(dst, 128, xmm_val)) {
                 LOG(L"[!] Failed to read destination XMM register in MOVHPD");
                 return;
@@ -11575,7 +10297,6 @@ private:
                 return;
             }
 
-
             uint64_t* xmm_qwords = reinterpret_cast<uint64_t*>(&xmm_val);
             xmm_qwords[1] = mem_val;
 
@@ -11586,9 +10307,8 @@ private:
 
             LOG(L"[+] MOVHPD xmm, m64 executed");
         }
-        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-
-
+        else if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+            src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             if (!read_operand_value(src, 128, xmm_val)) {
                 LOG(L"[!] Failed to read source XMM register in MOVHPD");
                 return;
@@ -11638,13 +10358,12 @@ private:
         g_regs.rflags.flags.SF = 0;
         g_regs.rflags.flags.AF = 0;
 
-        LOG(L"[+] UCOMISS executed: dst=" << val_dst << L", src=" << val_src
-            << L", ZF=" << g_regs.rflags.flags.ZF
-            << L", PF=" << g_regs.rflags.flags.PF
-            << L", CF=" << g_regs.rflags.flags.CF
-            << L", OF=" << g_regs.rflags.flags.OF
-            << L", SF=" << g_regs.rflags.flags.SF
-            << L", AF=" << g_regs.rflags.flags.AF);
+        LOG(L"[+] UCOMISS executed: dst="
+            << val_dst << L", src=" << val_src << L", ZF=" << g_regs.rflags.flags.ZF
+            << L", PF=" << g_regs.rflags.flags.PF << L", CF="
+            << g_regs.rflags.flags.CF << L", OF=" << g_regs.rflags.flags.OF
+            << L", SF=" << g_regs.rflags.flags.SF << L", AF="
+            << g_regs.rflags.flags.AF);
     }
     void emulate_pmovmskb(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -11685,7 +10404,8 @@ private:
             LOG(L"[+] PMOVMSKB (XMM) executed, mask=0x" << std::hex << mask);
         }
         else {
-            LOG(L"[!] Unsupported source size in PMOVMSKB: " << src_size_bits << " bits");
+            LOG(L"[!] Unsupported source size in PMOVMSKB: " << src_size_bits
+                << " bits");
         }
     }
     void emulate_vmovdqu(const ZydisDisassembledInstruction* instr) {
@@ -11694,7 +10414,6 @@ private:
         constexpr uint32_t width = 256;
 
         __m256i value;
-
 
         if (!read_operand_value(src, width, value)) {
             LOG(L"[!] Failed to read source operand in vmovdqu");
@@ -11732,7 +10451,6 @@ private:
     void emulate_setnbe(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
 
-
         uint64_t value = 0;
         if (!g_regs.rflags.flags.CF && !g_regs.rflags.flags.ZF) {
             value = 1;
@@ -11765,10 +10483,9 @@ private:
             return;
         }
         uint8_t shift = static_cast<uint8_t>(tmp_shift);
-        shift %= width;  // rotation count wraps around
+        shift %= width; // rotation count wraps around
 
         if (shift == 0) {
-
             return;
         }
 
@@ -11792,7 +10509,6 @@ private:
             is_OVERFLOW_FLAG_SKIP = 1;
 #endif
         }
-
 
         LOG("CF : " << g_regs.rflags.flags.CF);
         LOG("OF : " << g_regs.rflags.flags.OF);
@@ -11818,7 +10534,6 @@ private:
         const auto& dst = instr->operands[0];
         const auto& src = instr->operands[1];
 
-
         if (g_regs.rflags.flags.SF == g_regs.rflags.flags.OF) {
             LOG(L"[+] CMOVL skipped (SF == OF)");
             return;
@@ -11835,7 +10550,8 @@ private:
             return;
         }
 
-        LOG(L"[+] CMOVL executed: moved 0x" << std::hex << value << L" to "
+        LOG(L"[+] CMOVL executed: moved 0x"
+            << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
     void emulate_cmovo(const ZydisDisassembledInstruction* instr) {
@@ -11858,7 +10574,8 @@ private:
             return;
         }
 
-        LOG(L"[+] CMOVO executed: moved 0x" << std::hex << value << L" to "
+        LOG(L"[+] CMOVO executed: moved 0x"
+            << std::hex << value << L" to "
             << ZydisRegisterGetString(dst.reg.value));
     }
     void emulate_cbw(const ZydisDisassembledInstruction* instr) {
@@ -11877,7 +10594,8 @@ private:
         }
         g_regs.rax.l = value;
         g_regs.rsi.q += g_regs.rflags.flags.DF ? -1 : 1;
-        LOG(L"[+] LODSB executed: AL = 0x" << std::hex << (uint32_t)value << L", RSI = 0x" << g_regs.rsi.q);
+        LOG(L"[+] LODSB executed: AL = 0x" << std::hex << (uint32_t)value
+            << L", RSI = 0x" << g_regs.rsi.q);
     }
     void emulate_lodsw(const ZydisDisassembledInstruction* instr) {
         uint16_t value = 0;
@@ -11887,7 +10605,8 @@ private:
         }
         g_regs.rax.w = value;
         g_regs.rsi.q += g_regs.rflags.flags.DF ? -2 : 2;
-        LOG(L"[+] LODSW executed: AX = 0x" << std::hex << value << L", RSI = 0x" << g_regs.rsi.q);
+        LOG(L"[+] LODSW executed: AX = 0x" << std::hex << value << L", RSI = 0x"
+            << g_regs.rsi.q);
     }
     void emulate_lodsd(const ZydisDisassembledInstruction* instr) {
         uint32_t value = 0;
@@ -11897,7 +10616,8 @@ private:
         }
         g_regs.rax.d = value;
         g_regs.rsi.q += g_regs.rflags.flags.DF ? -4 : 4;
-        LOG(L"[+] LODSD executed: EAX = 0x" << std::hex << value << L", RSI = 0x" << g_regs.rsi.q);
+        LOG(L"[+] LODSD executed: EAX = 0x" << std::hex << value << L", RSI = 0x"
+            << g_regs.rsi.q);
     }
     void emulate_lodsq(const ZydisDisassembledInstruction* instr) {
         uint64_t value = 0;
@@ -11907,7 +10627,8 @@ private:
         }
         g_regs.rax.q = value;
         g_regs.rsi.q += g_regs.rflags.flags.DF ? -8 : 8;
-        LOG(L"[+] LODSQ executed: RAX = 0x" << std::hex << g_regs.rax.q << L", RSI = 0x" << g_regs.rsi.q);
+        LOG(L"[+] LODSQ executed: RAX = 0x" << std::hex << g_regs.rax.q
+            << L", RSI = 0x" << g_regs.rsi.q);
     }
     void emulate_vmovaps(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -11918,7 +10639,8 @@ private:
         if (width == 256) {
             __m256 val;
 
-            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(src, 32, instr)) {
+            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(src, 32, instr)) {
                 LOG(L"[!] Misaligned memory access in VMOVAPS (YMM)");
                 return;
             }
@@ -11928,7 +10650,8 @@ private:
                 return;
             }
 
-            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(dst, 32, instr)) {
+            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(dst, 32, instr)) {
                 LOG(L"[!] Misaligned memory write in VMOVAPS (YMM)");
                 return;
             }
@@ -11943,7 +10666,8 @@ private:
         else {
             __m128 val;
 
-            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(src, 16, instr)) {
+            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(src, 16, instr)) {
                 LOG(L"[!] Misaligned memory access in VMOVAPS (XMM)");
                 return;
             }
@@ -11953,12 +10677,15 @@ private:
                 return;
             }
 
-            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(dst, 16, instr)) {
+            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(dst, 16, instr)) {
                 LOG(L"[!] Misaligned memory write in VMOVAPS (XMM)");
                 return;
             }
 
-            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            ZydisRegister dstYMM =
+                (ZydisRegister)(ZYDIS_REGISTER_YMM0 +
+                    (dst.reg.value - ZYDIS_REGISTER_XMM0));
             set_register_value(dstYMM, YMM{});
 
             if (!write_operand_value(dst, 128, val)) {
@@ -11980,7 +10707,6 @@ private:
         }
 
         if (src_val == 0) {
-
             g_regs.rflags.flags.ZF = 1;
 
             LOG(L"[+] BSR: Source is zero, ZF=1, destination unchanged");
@@ -11996,16 +10722,14 @@ private:
         }
 
         if (index == -1) {
-
             LOG(L"[!] BSR: Unexpected error");
             return;
         }
 
-
         uint32_t width = instr->info.operand_width;
 
-
-        if (width == 64) width = 32;
+        if (width == 64)
+            width = 32;
 
         write_operand_value(dst, width, static_cast<uint64_t>(index));
 
@@ -12018,7 +10742,6 @@ private:
         uint8_t value = !g_regs.rflags.flags.SF;
 
         write_operand_value(dst, 1, static_cast<uint8_t>(value));
-
 
         LOG(L"[+] SETNS => " << std::hex << static_cast<int>(value));
     }
@@ -12036,7 +10759,8 @@ private:
         const auto& imm = instr->operands[2]; // immediate rounding mode
 
         __m128 dst_val, src_val;
-        if (!read_operand_value(dst, 128, dst_val) || !read_operand_value(src, 128, src_val)) {
+        if (!read_operand_value(dst, 128, dst_val) ||
+            !read_operand_value(src, 128, src_val)) {
             LOG(L"[!] Failed to read operands in ROUNDSS");
             return;
         }
@@ -12046,16 +10770,20 @@ private:
         __m128 result;
         switch (rounding_mode & 0x3) {
         case 0: // round to nearest
-            result = _mm_round_ss(dst_val, src_val, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+            result = _mm_round_ss(dst_val, src_val,
+                _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
             break;
         case 1: // round down
-            result = _mm_round_ss(dst_val, src_val, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
+            result = _mm_round_ss(dst_val, src_val,
+                _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
             break;
         case 2: // round up
-            result = _mm_round_ss(dst_val, src_val, _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC);
+            result = _mm_round_ss(dst_val, src_val,
+                _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC);
             break;
         case 3: // truncate
-            result = _mm_round_ss(dst_val, src_val, _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC);
+            result = _mm_round_ss(dst_val, src_val,
+                _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC);
             break;
         default:
             LOG(L"[!] Invalid rounding mode in ROUNDSS");
@@ -12084,14 +10812,13 @@ private:
         g_regs.rbp.q = new_rbp;
         g_regs.rsp.q += 8; // advance stack pointer
 
-        LOG(L"[+] LEAVE executed: RSP=" << std::hex << g_regs.rsp.q
-            << L", RBP=" << g_regs.rbp.q);
+        LOG(L"[+] LEAVE executed: RSP=" << std::hex << g_regs.rsp.q << L", RBP="
+            << g_regs.rbp.q);
     }
     void emulate_jl(const ZydisDisassembledInstruction* instr) {
         uint64_t target = 0;
         const auto& op = instr->operands[0];
         uint32_t width = instr->info.operand_width;
-
 
         if (g_regs.rflags.flags.SF != g_regs.rflags.flags.OF) {
             if (!read_operand_value(op, width, target)) {
@@ -12127,9 +10854,8 @@ private:
 
         g_regs.rdi.q += delta;
 
-        LOG(L"[+] STOSD: Wrote 0x" << std::hex << eax_val
-            << L" to [RDI] = 0x" << dest
-            << L", new RDI = 0x" << g_regs.rdi.q);
+        LOG(L"[+] STOSD: Wrote 0x" << std::hex << eax_val << L" to [RDI] = 0x"
+            << dest << L", new RDI = 0x" << g_regs.rdi.q);
     }
     void emulate_setp(const ZydisDisassembledInstruction* instr) {
         const auto& dst = instr->operands[0];
@@ -12154,21 +10880,29 @@ private:
         uint8_t imm8 = (uint8_t)instr->operands[2].imm.value.u;
 
         __m128i a, b;
-        if (!read_operand_value(src1, 128, a)) { LOG(L"[!] Failed to read first operand"); return; }
-        if (!read_operand_value(src2, 128, b)) { LOG(L"[!] Failed to read second operand"); return; }
+        if (!read_operand_value(src1, 128, a)) {
+            LOG(L"[!] Failed to read first operand");
+            return;
+        }
+        if (!read_operand_value(src2, 128, b)) {
+            LOG(L"[!] Failed to read second operand");
+            return;
+        }
 
         PcmpistriResult res = emulate_pcmpistri_logic(a, b, imm8);
 
-
-        const int elem_bytes = ((imm8 & 0x3) == _SIDD_UBYTE_OPS ||
-            (imm8 & 0x3) == _SIDD_SBYTE_OPS) ? 1 : 2;
+        const int elem_bytes =
+            ((imm8 & 0x3) == _SIDD_UBYTE_OPS || (imm8 & 0x3) == _SIDD_SBYTE_OPS)
+            ? 1
+            : 2;
         const int elem_count = (elem_bytes == 1) ? 16 : 8;
 
         g_regs.rcx.q = res.idx;
 
         uint32_t IntRes2 = 0;
         for (size_t i = 0; i < res.mask.size() && i < 32; ++i)
-            if (res.mask[i]) IntRes2 |= (1u << i);
+            if (res.mask[i])
+                IntRes2 |= (1u << i);
 
         g_regs.rflags.flags.CF = (IntRes2 != 0);
         g_regs.rflags.flags.OF = (IntRes2 & 1u) != 0;
@@ -12180,17 +10914,19 @@ private:
 
         {
             std::vector<int64_t> elemsB;
-            extract_elements(b, elem_bytes,
-                ((imm8 & 0x3) == _SIDD_SBYTE_OPS ||
-                    (imm8 & 0x3) == _SIDD_SWORD_OPS),
+            extract_elements(
+                b, elem_bytes,
+                ((imm8 & 0x3) == _SIDD_SBYTE_OPS || (imm8 & 0x3) == _SIDD_SWORD_OPS),
                 elemsB);
             bool hasZero = false;
             for (auto v : elemsB) {
-                if (v == 0) { hasZero = true; break; }
+                if (v == 0) {
+                    hasZero = true;
+                    break;
+                }
             }
             g_regs.rflags.flags.ZF = hasZero ? 1 : 0;
         }
-
 
         LOG(L"[+] PCMPISTRI executed -> idx=" << res.idx
             << ", ZF=" << g_regs.rflags.flags.ZF
@@ -12290,16 +11026,23 @@ private:
 
         auto round_float = [](float f, int mode) -> float {
             switch (mode) {
-            case 0x00: return f;                  // Default (nearest)
-            case 0x01: return std::floorf(f);     // Floor
-            case 0x02: return std::ceilf(f);      // Ceil
-            case 0x03: return std::truncf(f);     // Trunc
-            case 0x08: return std::nearbyintf(f); // Nearest no-exception
-            default:   return f;
+            case 0x00:
+                return f; // Default (nearest)
+            case 0x01:
+                return std::floorf(f); // Floor
+            case 0x02:
+                return std::ceilf(f); // Ceil
+            case 0x03:
+                return std::truncf(f); // Trunc
+            case 0x08:
+                return std::nearbyintf(f); // Nearest no-exception
+            default:
+                return f;
             }
             };
 
-        for (int i = 0; i < 4; i++) tmp[i] = round_float(tmp[i], roundMode);
+        for (int i = 0; i < 4; i++)
+            tmp[i] = round_float(tmp[i], roundMode);
 
         __m128 result = _mm_loadu_ps(tmp);
 
@@ -12330,19 +11073,25 @@ private:
 
         auto round_float = [](float f, int mode) -> float {
             switch (mode) {
-            case 0x00: return f;                  // Default (nearest)
-            case 0x01: return std::floorf(f);     // Floor
-            case 0x02: return std::ceilf(f);      // Ceil
-            case 0x03: return std::truncf(f);     // Trunc
-            case 0x08: return std::nearbyintf(f); // Nearest no-exception
-            default:   return f;
+            case 0x00:
+                return f; // Default (nearest)
+            case 0x01:
+                return std::floorf(f); // Floor
+            case 0x02:
+                return std::ceilf(f); // Ceil
+            case 0x03:
+                return std::truncf(f); // Trunc
+            case 0x08:
+                return std::nearbyintf(f); // Nearest no-exception
+            default:
+                return f;
             }
             };
 
-        for (int i = 0; i < 8; i++) tmp[i] = round_float(tmp[i], roundMode);
+        for (int i = 0; i < 8; i++)
+            tmp[i] = round_float(tmp[i], roundMode);
 
         __m256 result = _mm256_loadu_ps(tmp);
-
 
         YMM oldYmm;
         if (!read_operand_value(dst, 256, oldYmm)) {
@@ -12379,7 +11128,8 @@ private:
             if (isImmForm) {
                 uint8_t imm = (uint8_t)src2.imm.value.u;
                 r = emulate_permute_ps(a, imm);
-                LOG(L"[+] VPERMILPS (XMM imm) executed, imm=0x" << std::hex << (int)imm);
+                LOG(L"[+] VPERMILPS (XMM imm) executed, imm=0x" << std::hex
+                    << (int)imm);
             }
             else {
                 __m128i c{};
@@ -12407,7 +11157,8 @@ private:
             if (isImmForm) {
                 uint8_t imm = (uint8_t)src2.imm.value.u;
                 r = emulate_permute_ps_256(a, imm);
-                LOG(L"[+] VPERMILPS (YMM imm) executed, imm=0x" << std::hex << (int)imm);
+                LOG(L"[+] VPERMILPS (YMM imm) executed, imm=0x" << std::hex
+                    << (int)imm);
             }
             else {
                 __m256i c{};
@@ -12418,7 +11169,6 @@ private:
                 r = _mm256_permutevar_ps(a, c);
                 LOG(L"[+] VPERMILPS (YMM var) executed");
             }
-
 
             if (!write_operand_value(dst, 256, r)) {
                 LOG(L"[!] Failed to write dst in vpermilps (256)");
@@ -12435,7 +11185,8 @@ private:
         if (width == 512) {
             __m512d val;
 
-            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(src, 64, instr)) {
+            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(src, 64, instr)) {
                 LOG(L"[!] Misaligned memory access in VMOVAPD (ZMM)");
                 return;
             }
@@ -12445,7 +11196,8 @@ private:
                 return;
             }
 
-            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(dst, 64, instr)) {
+            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(dst, 64, instr)) {
                 LOG(L"[!] Misaligned memory write in VMOVAPD (ZMM)");
                 return;
             }
@@ -12460,7 +11212,8 @@ private:
         else if (width == 256) {
             __m256d val;
 
-            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(src, 32, instr)) {
+            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(src, 32, instr)) {
                 LOG(L"[!] Misaligned memory access in VMOVAPD (YMM)");
                 return;
             }
@@ -12470,7 +11223,8 @@ private:
                 return;
             }
 
-            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(dst, 32, instr)) {
+            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(dst, 32, instr)) {
                 LOG(L"[!] Misaligned memory write in VMOVAPD (YMM)");
                 return;
             }
@@ -12485,7 +11239,8 @@ private:
         else if (width == 128) {
             __m128d val;
 
-            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(src, 16, instr)) {
+            if (src.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(src, 16, instr)) {
                 LOG(L"[!] Misaligned memory access in VMOVAPD (XMM)");
                 return;
             }
@@ -12495,14 +11250,16 @@ private:
                 return;
             }
 
-            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY && !is_aligned_address(dst, 16, instr)) {
+            if (dst.type == ZYDIS_OPERAND_TYPE_MEMORY &&
+                !is_aligned_address(dst, 16, instr)) {
                 LOG(L"[!] Misaligned memory write in VMOVAPD (XMM)");
                 return;
             }
 
-
             if (dst.type == ZYDIS_REGCLASS_XMM) {
-                ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+                ZydisRegister dstYMM =
+                    (ZydisRegister)(ZYDIS_REGISTER_YMM0 +
+                        (dst.reg.value - ZYDIS_REGISTER_XMM0));
                 set_register_value(dstYMM, YMM{});
             }
 
@@ -12563,9 +11320,10 @@ private:
 
             if (dst.type == ZYDIS_OPERAND_TYPE_REGISTER &&
                 dst.reg.value >= ZYDIS_REGISTER_XMM0 &&
-                dst.reg.value <= ZYDIS_REGISTER_XMM31)
-            {
-                ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+                dst.reg.value <= ZYDIS_REGISTER_XMM31) {
+                ZydisRegister dstYMM =
+                    (ZydisRegister)(ZYDIS_REGISTER_YMM0 +
+                        (dst.reg.value - ZYDIS_REGISTER_XMM0));
                 set_register_value(dstYMM, YMM{});
             }
 
@@ -12597,11 +11355,12 @@ private:
         }
 
         __m128 extracted;
-        extracted = _mm_loadu_ps(reinterpret_cast<const float*>(
-            lane == 0 ? srcYmm.xmm : srcYmm.ymmh
-            ));
+        extracted = _mm_loadu_ps(
+            reinterpret_cast<const float*>(lane == 0 ? srcYmm.xmm : srcYmm.ymmh));
 
-        ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+        ZydisRegister dstYMM =
+            (ZydisRegister)(ZYDIS_REGISTER_YMM0 +
+                (dst.reg.value - ZYDIS_REGISTER_XMM0));
         set_register_value(dstYMM, YMM{});
 
         if (!write_operand_value(dst, 128, extracted)) {
@@ -12682,20 +11441,18 @@ private:
         uint32_t width = dst.size;
 
         if (width == 256) {
-
             if (src.size == 128) {
                 if (src.type == ZYDIS_OPERAND_TYPE_REGISTER) {
-
                     __m128 src_val = get_register_value<__m128>(src.reg.value);
                     __m256 result = _mm256_broadcast_ps(&src_val);
                     write_operand_value(dst, 256, result);
                     LOG(L"[+] VBROADCASTF128 executed (float), source=XMM, dest=YMM");
                 }
                 else if (src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
-
                     __m128d src_val;
                     if (!read_operand_value(src, 128, src_val)) {
-                        LOG(L"[!] Failed to read source operand for VBROADCASTF128 (memory)");
+                        LOG(L"[!] Failed to read source operand for VBROADCASTF128 "
+                            L"(memory)");
                         return;
                     }
                     __m256d result = _mm256_broadcast_pd(&src_val);
@@ -12764,7 +11521,6 @@ private:
             return;
         }
 
-
         __m128i dstVal;
         if (!read_operand_value(dst, 128, dstVal)) {
             LOG(L"[!] Failed to read destination operand for PMINUW");
@@ -12787,7 +11543,6 @@ private:
         }
 
         __m128i result = _mm_min_epu16(dstVal, srcVal);
-
 
         if (!write_operand_value(dst, 128, result)) {
             LOG(L"[!] Failed to write result for PMINUW");
@@ -12935,7 +11690,6 @@ private:
             return;
         }
 
-
         if (!read_operand_value(src2, width, b)) {
             LOG(L"[!] Failed to read second source operand in VPADDW");
             return;
@@ -12966,7 +11720,6 @@ private:
 
             __m128 and_mask = _mm_and_ps(v_dst, v_src);
             __m128 nand_mask = _mm_andnot_ps(v_dst, v_src);
-
 
             __m128i sign_mask = _mm_set1_epi32(0x80000000);
 
@@ -13030,7 +11783,6 @@ private:
             __m128d and_mask = _mm_and_pd(v_dst, v_src);
             __m128d nand_mask = _mm_andnot_pd(v_dst, v_src);
 
-
             __m128i sign_mask = _mm_set1_epi64x(0x8000000000000000ULL);
 
             bool zf = _mm_testz_si128(_mm_castpd_si128(and_mask), sign_mask);
@@ -13079,7 +11831,6 @@ private:
         const auto& src = instr->operands[1];
         uint32_t width = dst.size;
 
-
         uint8_t imm8 = 0;
         bool has_imm = instr->info.operand_count_visible > 2 &&
             instr->operands[2].type == ZYDIS_OPERAND_TYPE_IMMEDIATE;
@@ -13096,7 +11847,6 @@ private:
 
             __m128d result;
             if (has_imm) {
-
                 alignas(16) double vals[2];
                 _mm_storeu_pd(vals, v_src);
 
@@ -13109,7 +11859,6 @@ private:
                 LOG(L"RESULT: [" << out[0] << " " << out[1] << "]");
             }
             else {
-
                 __m128i control;
                 if (!read_operand_value<__m128i>(instr->operands[2], width, control)) {
                     LOG(L"[!] Failed to read control operand in VPERMILPD (128-bit)");
@@ -13118,7 +11867,9 @@ private:
                 result = _mm_permutevar_pd(v_src, control);
             }
 
-            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            ZydisRegister dstYMM =
+                (ZydisRegister)(ZYDIS_REGISTER_YMM0 +
+                    (dst.reg.value - ZYDIS_REGISTER_XMM0));
             set_register_value(dstYMM, YMM{});
 
             if (!write_operand_value(dst, 128, result)) {
@@ -13137,7 +11888,6 @@ private:
 
             __m256d result;
             if (has_imm) {
-
                 alignas(32) double vals[4];
                 _mm256_storeu_pd(vals, v_src);
 
@@ -13148,11 +11898,12 @@ private:
                 out[3] = vals[2 + ((imm8 >> 3) & 1)];
                 result = _mm256_loadu_pd(out);
 
-                LOG(L"SRC: [" << vals[0] << " " << vals[1] << " " << vals[2] << " " << vals[3] << "]");
-                LOG(L"RESULT: [" << out[0] << " " << out[1] << " " << out[2] << " " << out[3] << "]");
+                LOG(L"SRC: [" << vals[0] << " " << vals[1] << " " << vals[2] << " "
+                    << vals[3] << "]");
+                LOG(L"RESULT: [" << out[0] << " " << out[1] << " " << out[2] << " "
+                    << out[3] << "]");
             }
             else {
-
                 __m256i control;
                 if (!read_operand_value<__m256i>(instr->operands[2], width, control)) {
                     LOG(L"[!] Failed to read control operand in VPERMILPD (256-bit)");
@@ -13199,14 +11950,26 @@ private:
                 _mm_storeu_pd(s1, v_src1);
                 _mm_storeu_pd(s2, v_src2);
 
-
                 switch (imm8 & 0x3) {
-                case 0: out[0] = s1[0]; out[1] = s1[1]; break;
-                case 1: out[0] = s1[0]; out[1] = s1[1]; break;
-                case 2: out[0] = s2[0]; out[1] = s2[1]; break;
-                case 3: out[0] = s2[0]; out[1] = s2[1]; break;
+                case 0:
+                    out[0] = s1[0];
+                    out[1] = s1[1];
+                    break;
+                case 1:
+                    out[0] = s1[0];
+                    out[1] = s1[1];
+                    break;
+                case 2:
+                    out[0] = s2[0];
+                    out[1] = s2[1];
+                    break;
+                case 3:
+                    out[0] = s2[0];
+                    out[1] = s2[1];
+                    break;
                 }
-                if (imm8 & 0x8) out[0] = out[1] = 0.0;
+                if (imm8 & 0x8)
+                    out[0] = out[1] = 0.0;
 
                 result = _mm_loadu_pd(out);
             }
@@ -13219,7 +11982,9 @@ private:
                 result = _mm_permutevar_pd(v_src1, control);
             }
 
-            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            ZydisRegister dstYMM =
+                (ZydisRegister)(ZYDIS_REGISTER_YMM0 +
+                    (dst.reg.value - ZYDIS_REGISTER_XMM0));
             set_register_value(dstYMM, YMM{});
 
             if (!write_operand_value(dst, 128, result)) {
@@ -13244,23 +12009,50 @@ private:
                 _mm256_storeu_pd(s1, v_src1);
                 _mm256_storeu_pd(s2, v_src2);
 
-
                 switch (imm8 & 0x3) {
-                case 0: out[0] = s1[0]; out[1] = s1[1]; break;
-                case 1: out[0] = s1[2]; out[1] = s1[3]; break;
-                case 2: out[0] = s2[0]; out[1] = s2[1]; break;
-                case 3: out[0] = s2[2]; out[1] = s2[3]; break;
+                case 0:
+                    out[0] = s1[0];
+                    out[1] = s1[1];
+                    break;
+                case 1:
+                    out[0] = s1[2];
+                    out[1] = s1[3];
+                    break;
+                case 2:
+                    out[0] = s2[0];
+                    out[1] = s2[1];
+                    break;
+                case 3:
+                    out[0] = s2[2];
+                    out[1] = s2[3];
+                    break;
                 }
 
                 switch ((imm8 >> 4) & 0x3) {
-                case 0: out[2] = s1[0]; out[3] = s1[1]; break;
-                case 1: out[2] = s1[2]; out[3] = s1[3]; break;
-                case 2: out[2] = s2[0]; out[3] = s2[1]; break;
-                case 3: out[2] = s2[2]; out[3] = s2[3]; break;
+                case 0:
+                    out[2] = s1[0];
+                    out[3] = s1[1];
+                    break;
+                case 1:
+                    out[2] = s1[2];
+                    out[3] = s1[3];
+                    break;
+                case 2:
+                    out[2] = s2[0];
+                    out[3] = s2[1];
+                    break;
+                case 3:
+                    out[2] = s2[2];
+                    out[3] = s2[3];
+                    break;
                 }
 
-                if (imm8 & 0x8) { out[0] = out[1] = 0.0; }
-                if (imm8 & 0x80) { out[2] = out[3] = 0.0; }
+                if (imm8 & 0x8) {
+                    out[0] = out[1] = 0.0;
+                }
+                if (imm8 & 0x80) {
+                    out[2] = out[3] = 0.0;
+                }
 
                 result = _mm256_loadu_pd(out);
             }
@@ -13311,17 +12103,29 @@ private:
             _mm_storeu_si128(reinterpret_cast<__m128i*>(s2), v_src2);
 
             if (has_imm) {
-
                 switch (imm8 & 0x3) {
-                case 0: for (int i = 0; i < 4; i++) out[i] = s1[i]; break;
-                case 1: for (int i = 0; i < 4; i++) out[i] = s1[i]; break;
-                case 2: for (int i = 0; i < 4; i++) out[i] = s2[i]; break;
-                case 3: for (int i = 0; i < 4; i++) out[i] = s2[i]; break;
+                case 0:
+                    for (int i = 0; i < 4; i++)
+                        out[i] = s1[i];
+                    break;
+                case 1:
+                    for (int i = 0; i < 4; i++)
+                        out[i] = s1[i];
+                    break;
+                case 2:
+                    for (int i = 0; i < 4; i++)
+                        out[i] = s2[i];
+                    break;
+                case 3:
+                    for (int i = 0; i < 4; i++)
+                        out[i] = s2[i];
+                    break;
                 }
-                if (imm8 & 0x8) for (int i = 0; i < 4; i++) out[i] = 0;
+                if (imm8 & 0x8)
+                    for (int i = 0; i < 4; i++)
+                        out[i] = 0;
             }
             else {
-
                 __m128i control;
                 if (!read_operand_value<__m128i>(src2, width, control)) {
                     LOG(L"[!] Failed to read control operand in VPERM2I128 (128-bit)");
@@ -13330,12 +12134,15 @@ private:
                 alignas(16) int32_t idx[4], c[4];
                 _mm_storeu_si128(reinterpret_cast<__m128i*>(idx), v_src1);
                 _mm_storeu_si128(reinterpret_cast<__m128i*>(c), control);
-                for (int i = 0; i < 4; i++) out[i] = idx[c[i] & 3];
+                for (int i = 0; i < 4; i++)
+                    out[i] = idx[c[i] & 3];
             }
 
             __m128i result = _mm_loadu_si128(reinterpret_cast<__m128i*>(out));
 
-            ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+            ZydisRegister dstYMM =
+                (ZydisRegister)(ZYDIS_REGISTER_YMM0 +
+                    (dst.reg.value - ZYDIS_REGISTER_XMM0));
             set_register_value(dstYMM, YMM{});
 
             if (!write_operand_value(dst, 128, result)) {
@@ -13358,26 +12165,70 @@ private:
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(s2), v_src2);
 
             if (has_imm) {
-
                 switch (imm8 & 0x3) {
-                case 0: out[0] = s1[0]; out[1] = s1[1]; out[2] = s1[2]; out[3] = s1[3]; break;
-                case 1: out[0] = s1[4]; out[1] = s1[5]; out[2] = s1[6]; out[3] = s1[7]; break;
-                case 2: out[0] = s2[0]; out[1] = s2[1]; out[2] = s2[2]; out[3] = s2[3]; break;
-                case 3: out[0] = s2[4]; out[1] = s2[5]; out[2] = s2[6]; out[3] = s2[7]; break;
+                case 0:
+                    out[0] = s1[0];
+                    out[1] = s1[1];
+                    out[2] = s1[2];
+                    out[3] = s1[3];
+                    break;
+                case 1:
+                    out[0] = s1[4];
+                    out[1] = s1[5];
+                    out[2] = s1[6];
+                    out[3] = s1[7];
+                    break;
+                case 2:
+                    out[0] = s2[0];
+                    out[1] = s2[1];
+                    out[2] = s2[2];
+                    out[3] = s2[3];
+                    break;
+                case 3:
+                    out[0] = s2[4];
+                    out[1] = s2[5];
+                    out[2] = s2[6];
+                    out[3] = s2[7];
+                    break;
                 }
 
                 switch ((imm8 >> 4) & 0x3) {
-                case 0: out[4] = s1[0]; out[5] = s1[1]; out[6] = s1[2]; out[7] = s1[3]; break;
-                case 1: out[4] = s1[4]; out[5] = s1[5]; out[6] = s1[6]; out[7] = s1[7]; break;
-                case 2: out[4] = s2[0]; out[5] = s2[1]; out[6] = s2[2]; out[7] = s2[3]; break;
-                case 3: out[4] = s2[4]; out[5] = s2[5]; out[6] = s2[6]; out[7] = s2[7]; break;
+                case 0:
+                    out[4] = s1[0];
+                    out[5] = s1[1];
+                    out[6] = s1[2];
+                    out[7] = s1[3];
+                    break;
+                case 1:
+                    out[4] = s1[4];
+                    out[5] = s1[5];
+                    out[6] = s1[6];
+                    out[7] = s1[7];
+                    break;
+                case 2:
+                    out[4] = s2[0];
+                    out[5] = s2[1];
+                    out[6] = s2[2];
+                    out[7] = s2[3];
+                    break;
+                case 3:
+                    out[4] = s2[4];
+                    out[5] = s2[5];
+                    out[6] = s2[6];
+                    out[7] = s2[7];
+                    break;
                 }
 
-                if (imm8 & 0x8) { for (int i = 0; i < 4; i++) out[i] = 0; }
-                if (imm8 & 0x80) { for (int i = 4; i < 8; i++) out[i] = 0; }
+                if (imm8 & 0x8) {
+                    for (int i = 0; i < 4; i++)
+                        out[i] = 0;
+                }
+                if (imm8 & 0x80) {
+                    for (int i = 4; i < 8; i++)
+                        out[i] = 0;
+                }
             }
             else {
-
                 __m256i control;
                 if (!read_operand_value<__m256i>(src2, width, control)) {
                     LOG(L"[!] Failed to read control operand in VPERM2I128 (256-bit)");
@@ -13386,7 +12237,8 @@ private:
                 alignas(32) int32_t idx[8], c[8];
                 _mm256_storeu_si256(reinterpret_cast<__m256i*>(idx), v_src1);
                 _mm256_storeu_si256(reinterpret_cast<__m256i*>(c), control);
-                for (int i = 0; i < 8; i++) out[i] = idx[c[i] & 7];
+                for (int i = 0; i < 8; i++)
+                    out[i] = idx[c[i] & 7];
             }
 
             __m256i result = _mm256_loadu_si256(reinterpret_cast<__m256i*>(out));
@@ -13420,7 +12272,6 @@ private:
             LOG(L"[!] Unsupported width in VINSERTI128: " << width);
             return;
         }
-
 
         __m256i val1;
         __m128i val2;
@@ -13482,7 +12333,6 @@ private:
 
         alignas(16) int64_t out[2];
 
-
         if ((imm8 & 0x1) == 0) {
             out[0] = temp[0];
             out[1] = temp[1];
@@ -13493,7 +12343,9 @@ private:
         }
 
         __m128i result = _mm_load_si128((__m128i*)out);
-        ZydisRegister dstYMM = (ZydisRegister)(ZYDIS_REGISTER_YMM0 + (dst.reg.value - ZYDIS_REGISTER_XMM0));
+        ZydisRegister dstYMM =
+            (ZydisRegister)(ZYDIS_REGISTER_YMM0 +
+                (dst.reg.value - ZYDIS_REGISTER_XMM0));
         set_register_value(dstYMM, YMM{});
 
         if (!write_operand_value<__m128i>(dst, 128, result)) {
@@ -13507,64 +12359,97 @@ private:
         g_regs.rflags.flags.DF = 0;
         LOG(L"[+] CLD => DF = 0x0");
     }
-    void emulate_syscall(const ZydisDisassembledInstruction* instr) {
-
-    }
-    void emulate_lsl(const ZydisDisassembledInstruction* instr) {
-    }
-
-
-
-
+    void emulate_syscall(const ZydisDisassembledInstruction* instr) {}
+    void emulate_lsl(const ZydisDisassembledInstruction* instr) {}
 
     //----------------------- read / write instruction  -------------------------
     inline uint64_t zero_extend(uint64_t value, uint8_t width) {
-        if (width >= 64) return value;
+        if (width >= 64)
+            return value;
         return value & ((1ULL << width) - 1);
     }
-    template<typename T>
-    uint64_t sign_extend(T value, unsigned bit_width) {
+    template <typename T> uint64_t sign_extend(T value, unsigned bit_width) {
         uint64_t mask = 1ULL << (bit_width - 1);
         uint64_t v = static_cast<uint64_t>(value);
         return (v ^ mask) - mask;
     }
-    bool read_operand_value(const ZydisDecodedOperand& op, uint32_t width, uint64_t& out) {
+    bool read_operand_value(const ZydisDecodedOperand& op, uint32_t width,
+        uint64_t& out) {
         if (op.type == ZYDIS_OPERAND_TYPE_REGISTER) {
             switch (width) {
-            case 8:  out = zero_extend(get_register_value<uint8_t>(op.reg.value), 8); break;
-            case 16: out = zero_extend(get_register_value<uint16_t>(op.reg.value), 16); break;
-            case 32: out = zero_extend(get_register_value<uint32_t>(op.reg.value), 32); break;
-            case 64: out = get_register_value<uint64_t>(op.reg.value); break;
-            default: return false;
+            case 8:
+                out = zero_extend(get_register_value<uint8_t>(op.reg.value), 8);
+                break;
+            case 16:
+                out = zero_extend(get_register_value<uint16_t>(op.reg.value), 16);
+                break;
+            case 32:
+                out = zero_extend(get_register_value<uint32_t>(op.reg.value), 32);
+                break;
+            case 64:
+                out = get_register_value<uint64_t>(op.reg.value);
+                break;
+            default:
+                return false;
             }
             return true;
         }
         else if (op.type == ZYDIS_OPERAND_TYPE_MEMORY) {
             switch (width) {
-            case 8: { uint8_t val;  if (!ReadEffectiveMemory(op, &val)) return false; out = zero_extend(val, 8); } break;
-            case 16: { uint16_t val; if (!ReadEffectiveMemory(op, &val)) return false; out = zero_extend(val, 16); } break;
-            case 32: { uint32_t val; if (!ReadEffectiveMemory(op, &val)) return false; out = zero_extend(val, 32); } break;
-            case 64: { uint64_t val; if (!ReadEffectiveMemory(op, &val)) return false; out = val; } break;
-            default: return false;
+            case 8: {
+                uint8_t val;
+                if (!ReadEffectiveMemory(op, &val))
+                    return false;
+                out = zero_extend(val, 8);
+            } break;
+            case 16: {
+                uint16_t val;
+                if (!ReadEffectiveMemory(op, &val))
+                    return false;
+                out = zero_extend(val, 16);
+            } break;
+            case 32: {
+                uint32_t val;
+                if (!ReadEffectiveMemory(op, &val))
+                    return false;
+                out = zero_extend(val, 32);
+            } break;
+            case 64: {
+                uint64_t val;
+                if (!ReadEffectiveMemory(op, &val))
+                    return false;
+                out = val;
+            } break;
+            default:
+                return false;
             }
             return true;
         }
         else if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
             switch (width) {
-            case 8:  out = zero_extend(static_cast<uint8_t>(op.imm.value.s), 8); break;
-            case 16: out = zero_extend(static_cast<uint16_t>(op.imm.value.s), 16); break;
-            case 32: out = zero_extend(static_cast<uint32_t>(op.imm.value.s), 32); break;
-            case 64: out = static_cast<uint64_t>(op.imm.value.s); break;
-            default: return false;
+            case 8:
+                out = zero_extend(static_cast<uint8_t>(op.imm.value.s), 8);
+                break;
+            case 16:
+                out = zero_extend(static_cast<uint16_t>(op.imm.value.s), 16);
+                break;
+            case 32:
+                out = zero_extend(static_cast<uint32_t>(op.imm.value.s), 32);
+                break;
+            case 64:
+                out = static_cast<uint64_t>(op.imm.value.s);
+                break;
+            default:
+                return false;
             }
             return true;
         }
         return false;
     }
 
-    template<typename T>
-    bool read_operand_value(const ZydisDecodedOperand& op, uint32_t width, T& out) {
-
+    template <typename T>
+    bool read_operand_value(const ZydisDecodedOperand& op, uint32_t width,
+        T& out) {
         switch (op.type) {
         case ZYDIS_OPERAND_TYPE_REGISTER:
             out = get_register_value<T>(op.reg.value);
@@ -13579,8 +12464,7 @@ private:
                 return true;
             }
             else if (width <= 64) {
-                uint64_t tmp = op.imm.is_signed
-                    ? static_cast<uint64_t>(op.imm.value.s)
+                uint64_t tmp = op.imm.is_signed ? static_cast<uint64_t>(op.imm.value.s)
                     : static_cast<uint64_t>(op.imm.value.u);
                 std::memcpy(&out, &tmp, sizeof(tmp));
                 return true;
@@ -13596,7 +12480,6 @@ private:
         }
     }
 
-
     int64_t read_signed_operand(const ZydisDecodedOperand& op, uint32_t width) {
         uint64_t val = 0;
         if (!read_operand_value(op, width, val)) {
@@ -13604,44 +12487,67 @@ private:
             return 0;
         }
         switch (width) {
-        case 8:  return static_cast<int8_t>(val);
-        case 16: return static_cast<int16_t>(val);
-        case 32: return static_cast<int32_t>(val);
-        case 64: return static_cast<int64_t>(val);
-        default: return 0;
+        case 8:
+            return static_cast<int8_t>(val);
+        case 16:
+            return static_cast<int16_t>(val);
+        case 32:
+            return static_cast<int32_t>(val);
+        case 64:
+            return static_cast<int64_t>(val);
+        default:
+            return 0;
         }
     }
 
-    bool write_operand_value(const ZydisDecodedOperand& op, uint32_t width, uint64_t value) {
+    bool write_operand_value(const ZydisDecodedOperand& op, uint32_t width,
+        uint64_t value) {
         switch (op.type) {
         case ZYDIS_OPERAND_TYPE_REGISTER:
             switch (width) {
-            case 8:  set_register_value<uint8_t>(op.reg.value, static_cast<uint8_t>(value)); break;
-            case 16: set_register_value<uint16_t>(op.reg.value, static_cast<uint16_t>(value)); break;
-            case 32: set_register_value<uint64_t>(op.reg.value, static_cast<uint32_t>(value)); break;
-            case 64: set_register_value<uint64_t>(op.reg.value, static_cast<uint64_t>(value)); break;
-            default: return false;
+            case 8:
+                set_register_value<uint8_t>(op.reg.value, static_cast<uint8_t>(value));
+                break;
+            case 16:
+                set_register_value<uint16_t>(op.reg.value,
+                    static_cast<uint16_t>(value));
+                break;
+            case 32:
+                set_register_value<uint64_t>(op.reg.value,
+                    static_cast<uint32_t>(value));
+                break;
+            case 64:
+                set_register_value<uint64_t>(op.reg.value,
+                    static_cast<uint64_t>(value));
+                break;
+            default:
+                return false;
             }
             return true;
 
         case ZYDIS_OPERAND_TYPE_MEMORY:
             switch (width) {
-            case 8:  return WriteEffectiveMemory(op, static_cast<uint8_t>(value));
-            case 16: return WriteEffectiveMemory(op, static_cast<uint16_t>(value));
-            case 32: return WriteEffectiveMemory(op, static_cast<uint32_t>(value));
-            case 64: return WriteEffectiveMemory(op, static_cast<uint64_t>(value));
-            default: return false;
+            case 8:
+                return WriteEffectiveMemory(op, static_cast<uint8_t>(value));
+            case 16:
+                return WriteEffectiveMemory(op, static_cast<uint16_t>(value));
+            case 32:
+                return WriteEffectiveMemory(op, static_cast<uint32_t>(value));
+            case 64:
+                return WriteEffectiveMemory(op, static_cast<uint64_t>(value));
+            default:
+                return false;
             }
 
         default:
             return false;
         }
     }
-    template<typename T>
-    bool write_operand_value(const ZydisDecodedOperand& op, uint32_t width, const T& value) {
+    template <typename T>
+    bool write_operand_value(const ZydisDecodedOperand& op, uint32_t width,
+        const T& value) {
         switch (op.type) {
         case ZYDIS_OPERAND_TYPE_REGISTER:
-
 
             set_register_value<T>(op.reg.value, static_cast<T>(value));
             return true;
@@ -13649,15 +12555,10 @@ private:
         case ZYDIS_OPERAND_TYPE_MEMORY:
             return WriteEffectiveMemory(op, static_cast<T>(value));
 
-
-
         default:
             return false;
         }
     }
-
-
-
 
     // ----------------------- Break point helper ------------------
 
@@ -13667,7 +12568,7 @@ private:
         struct FlagCheck {
             std::wstring name;
             uint64_t emu;
-            uint64_t  real;
+            uint64_t real;
         };
         std::vector<FlagCheck> checks = {
             {L"CF", g_regs.rflags.flags.CF, regs.rflags.flags.CF},
@@ -13680,7 +12581,6 @@ private:
             {L"OF", g_regs.rflags.flags.OF, regs.rflags.flags.OF},
         };
 
-
         for (auto& c : checks) {
             if (c.emu != c.real) {
                 std::wcout << L"[!] " << c.name << L" mismatch: Emulated=" << c.emu
@@ -13688,7 +12588,6 @@ private:
 
                 DumpRegisters();
                 exit(0);
-
             }
         }
     }
@@ -13701,36 +12600,26 @@ private:
         };
 
         std::vector<RegCheck> checks = {
-            {L"RIP", g_regs.rip, regs.rip},
-            {L"RSP", g_regs.rsp.q, regs.rsp.q},
-            {L"RBP", g_regs.rbp.q, regs.rbp.q},
-            {L"RAX", g_regs.rax.q, regs.rax.q},
-            {L"RBX", g_regs.rbx.q, regs.rbx.q},
-            {L"RCX", g_regs.rcx.q, regs.rcx.q},
-            {L"RDX", g_regs.rdx.q, regs.rdx.q},
-            {L"RSI", g_regs.rsi.q, regs.rsi.q},
-            {L"RDI", g_regs.rdi.q, regs.rdi.q},
-            {L"R8",  g_regs.r8.q,  regs.r8.q},
-            {L"R9",  g_regs.r9.q,  regs.r9.q},
-            {L"R10", g_regs.r10.q, regs.r10.q},
-            {L"R11", g_regs.r11.q, regs.r11.q},
-            {L"R12", g_regs.r12.q, regs.r12.q},
-            {L"R13", g_regs.r13.q, regs.r13.q},
-            {L"R14", g_regs.r14.q, regs.r14.q},
+            {L"RIP", g_regs.rip, regs.rip},     {L"RSP", g_regs.rsp.q, regs.rsp.q},
+            {L"RBP", g_regs.rbp.q, regs.rbp.q}, {L"RAX", g_regs.rax.q, regs.rax.q},
+            {L"RBX", g_regs.rbx.q, regs.rbx.q}, {L"RCX", g_regs.rcx.q, regs.rcx.q},
+            {L"RDX", g_regs.rdx.q, regs.rdx.q}, {L"RSI", g_regs.rsi.q, regs.rsi.q},
+            {L"RDI", g_regs.rdi.q, regs.rdi.q}, {L"R8", g_regs.r8.q, regs.r8.q},
+            {L"R9", g_regs.r9.q, regs.r9.q},    {L"R10", g_regs.r10.q, regs.r10.q},
+            {L"R11", g_regs.r11.q, regs.r11.q}, {L"R12", g_regs.r12.q, regs.r12.q},
+            {L"R13", g_regs.r13.q, regs.r13.q}, {L"R14", g_regs.r14.q, regs.r14.q},
             {L"R15", g_regs.r15.q, regs.r15.q},
         };
 
         for (auto& c : checks) {
             if (c.emu != c.real) {
-                std::wcout << L"[!] " << c.name << L" mismatch: Emulated=0x"
-                    << std::hex << c.emu << L", Actual=0x" << c.real << std::endl;
+                std::wcout << L"[!] " << c.name << L" mismatch: Emulated=0x" << std::hex
+                    << c.emu << L", Actual=0x" << c.real << std::endl;
 
                 DumpRegisters();
                 exit(0);
-
             }
         }
-
 
         // RFLAGS
         if (g_regs.rflags.value != regs.rflags.value) {
@@ -13775,14 +12664,16 @@ private:
         ctx.ContextFlags = CONTEXT_FULL;
 
         if (!GetThreadContext(hThread, &ctx)) {
-            std::wcout << L"[!] Failed to get thread context before single step" << std::endl;
+            std::wcout << L"[!] Failed to get thread context before single step"
+                << std::endl;
             return;
         }
 
         ctx.EFlags |= 0x100; // Trap Flag
 
         if (!SetThreadContext(hThread, &ctx)) {
-            std::wcout << L"[!] Failed to set thread context with Trap Flag" << std::endl;
+            std::wcout << L"[!] Failed to set thread context with Trap Flag"
+                << std::endl;
             return;
         }
 
@@ -13791,7 +12682,8 @@ private:
         DEBUG_EVENT dbgEvent;
         while (true) {
             if (!WaitForDebugEvent(&dbgEvent, 1000)) {
-                std::wcout << L"[!] WaitForDebugEvent failed at : 0x" << std::hex << g_regs.rip << std::endl;
+                std::wcout << L"[!] WaitForDebugEvent failed at : 0x" << std::hex
+                    << g_regs.rip << std::endl;
                 break;
             }
 
@@ -13801,11 +12693,10 @@ private:
                 auto& er = dbgEvent.u.Exception.ExceptionRecord;
 
                 if (er.ExceptionCode == EXCEPTION_SINGLE_STEP) {
-
                     DWORD ctxSize = 0;
-                    if (!pfnInitializeContext(NULL, CONTEXT_ALL | CONTEXT_XSTATE, NULL, &ctxSize) &&
-                        GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-                    {
+                    if (!pfnInitializeContext(NULL, CONTEXT_ALL | CONTEXT_XSTATE, NULL,
+                        &ctxSize) &&
+                        GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
                         LOG(L"[-] InitializeContext query size failed");
                         break;
                     }
@@ -13817,7 +12708,8 @@ private:
                     }
 
                     PCONTEXT pCtx = NULL;
-                    if (!pfnInitializeContext(buf, CONTEXT_ALL | CONTEXT_XSTATE, &pCtx, &ctxSize)) {
+                    if (!pfnInitializeContext(buf, CONTEXT_ALL | CONTEXT_XSTATE, &pCtx,
+                        &ctxSize)) {
                         LOG(L"[-] InitializeContext failed");
                         free(buf);
                         break;
@@ -13856,8 +12748,10 @@ private:
                     reg.rflags.value = pCtx->EFlags;
 
                     DWORD featureLength = 0;
-                    PM128A pXmm = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE, &featureLength);
-                    PM128A pYmmHigh = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_AVX, NULL);
+                    PM128A pXmm = (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_LEGACY_SSE,
+                        &featureLength);
+                    PM128A pYmmHigh =
+                        (PM128A)pfnLocateXStateFeature(pCtx, XSTATE_AVX, NULL);
 
                     if (pXmm && pYmmHigh) {
                         for (int i = 0; i < 16; i++) {
@@ -13902,24 +12796,26 @@ private:
                             if (my_mange.size <= sizeof(readBuffer)) {
                                 if (ReadMemory(my_mange.address, readBuffer, my_mange.size)) {
                                     if (memcmp(readBuffer, my_mange.buffer, my_mange.size) != 0) {
-
-                                        std::wcout << L"what emulation write on memory :" << std::endl;
+                                        std::wcout << L"what emulation write on memory :"
+                                            << std::endl;
                                         for (size_t i = 0; i < my_mange.size; ++i) {
-                                            std::wcout << std::hex
-                                                << std::setw(2)
-                                                << std::setfill(L'0')
-                                                << static_cast<unsigned int>(static_cast<unsigned char>(readBuffer[i]))
+                                            std::wcout
+                                                << std::hex << std::setw(2) << std::setfill(L'0')
+                                                << static_cast<unsigned int>(
+                                                    static_cast<unsigned char>(readBuffer[i]))
                                                 << L" ";
                                         }
                                         std::wcout << std::endl;
 
-                                        std::wcout << L"what real cpu write on memory:" << std::endl;
-                                        const char* buf = static_cast<const char*>(my_mange.buffer);
+                                        std::wcout << L"what real cpu write on memory:"
+                                            << std::endl;
+                                        const char* buf =
+                                            static_cast<const char*>(my_mange.buffer);
                                         for (size_t i = 0; i < my_mange.size; ++i) {
-                                            std::wcout << std::hex
-                                                << std::setw(2)
+                                            std::wcout << std::hex << std::setw(2)
                                                 << std::setfill(L'0')
-                                                << static_cast<unsigned int>(static_cast<unsigned char>(buf[i]))
+                                                << static_cast<unsigned int>(
+                                                    static_cast<unsigned char>(buf[i]))
                                                 << L" ";
                                         }
                                         std::wcout << std::endl;
@@ -13934,7 +12830,6 @@ private:
                                 }
                             }
                         }
-
                     }
 
                     break;
@@ -13944,16 +12839,15 @@ private:
                 continueStatus = DBG_EXCEPTION_NOT_HANDLED;
             }
 
-            ContinueDebugEvent(dbgEvent.dwProcessId, dbgEvent.dwThreadId, continueStatus);
+            ContinueDebugEvent(dbgEvent.dwProcessId, dbgEvent.dwThreadId,
+                continueStatus);
         }
     }
-
 
 #endif DB_ENABLED
 #if AUTO_PATCH_HW
 
-    bool ApplyInlineHook(const char* payloadBuffer, size_t payloadSize)
-    {
+    bool ApplyInlineHook(const char* payloadBuffer, size_t payloadSize) {
         const size_t jmpSize = 5;
 
         if (!IsInPatchRange(g_regs.rip)) {
@@ -13961,16 +12855,16 @@ private:
             return false;
         }
 
-
         BYTE buffer[32] = { 0 };
         SIZE_T bytesRead = 0;
-        if (!ReadProcessMemory(pi.hProcess, (LPCVOID)g_regs.rip, buffer, sizeof(buffer), &bytesRead) || bytesRead == 0) {
+        if (!ReadProcessMemory(pi.hProcess, (LPCVOID)g_regs.rip, buffer,
+            sizeof(buffer), &bytesRead) ||
+            bytesRead == 0) {
             DWORD err = GetLastError();
             std::wcerr << L"[!] Failed to read memory at 0x" << std::hex << g_regs.rip
                 << L", GetLastError = " << std::dec << err << L"\n";
             return false;
         }
-
 
         Zydis disasm(true);
         size_t offset = 0;
@@ -13978,13 +12872,16 @@ private:
         std::vector<uint8_t> stolenBytes;
 
         while (stolenSize < jmpSize && offset < bytesRead) {
-            if (!disasm.Disassemble(g_regs.rip + offset, buffer + offset, bytesRead - offset)) {
-                std::wcerr << L"Disassembly failed at offset " << std::hex << offset << L"\n";
+            if (!disasm.Disassemble(g_regs.rip + offset, buffer + offset,
+                bytesRead - offset)) {
+                std::wcerr << L"Disassembly failed at offset " << std::hex << offset
+                    << L"\n";
                 return false;
             }
 
             const ZydisDisassembledInstruction* op = disasm.GetInstr();
-            stolenBytes.insert(stolenBytes.end(), buffer + offset, buffer + offset + op->info.length);
+            stolenBytes.insert(stolenBytes.end(), buffer + offset,
+                buffer + offset + op->info.length);
 
             offset += op->info.length;
             stolenSize += op->info.length;
@@ -13995,12 +12892,11 @@ private:
             return false;
         }
 
-
         char jumpToPatch[jmpSize];
-        int32_t relToPatch = (int32_t)(patchSectionAddress - (g_regs.rip + jmpSize));
+        int32_t relToPatch =
+            (int32_t)(patchSectionAddress - (g_regs.rip + jmpSize));
         jumpToPatch[0] = (char)0xE9;
         memcpy(jumpToPatch + 1, &relToPatch, sizeof(relToPatch));
-
 
         std::vector<char> hookPatch(stolenSize, (char)0x90);
         memcpy(hookPatch.data(), jumpToPatch, jmpSize);
@@ -14008,43 +12904,44 @@ private:
         if (!PatchFileSingle(g_regs.rip, hookPatch.data(), stolenSize))
             return false;
 
-
         std::vector<char> trampoline;
-
 
         trampoline.insert(trampoline.end(), stolenBytes.begin(), stolenBytes.end());
 
-
-        trampoline.insert(trampoline.end(), payloadBuffer, payloadBuffer + payloadSize);
+        trampoline.insert(trampoline.end(), payloadBuffer,
+            payloadBuffer + payloadSize);
 
         size_t padCount = 8;
         trampoline.insert(trampoline.end(), padCount, (char)0x90);
 
-
         char jumpBack[jmpSize];
-        int32_t relBack = (int32_t)((g_regs.rip + stolenSize) - (patchSectionAddress + trampoline.size() + jmpSize));
+        int32_t relBack =
+            (int32_t)((g_regs.rip + stolenSize) -
+                (patchSectionAddress + trampoline.size() + jmpSize));
         jumpBack[0] = (char)0xE9;
         memcpy(jumpBack + 1, &relBack, sizeof(relBack));
         trampoline.insert(trampoline.end(), jumpBack, jumpBack + jmpSize);
 
-
-        if (!PatchFileSingle(patchSectionAddress, trampoline.data(), trampoline.size()))
+        if (!PatchFileSingle(patchSectionAddress, trampoline.data(),
+            trampoline.size()))
             return false;
 
         patchSectionAddress += trampoline.size();
 
-        std::wcout << L"Inline hook applied successfully. Next patchSectionAddress: 0x"
+        std::wcout
+            << L"Inline hook applied successfully. Next patchSectionAddress: 0x"
             << std::hex << patchSectionAddress << L"\n";
 
         return true;
     }
 
-    std::vector<uint8_t> BuildCpuidPatch(uint64_t rax, uint64_t rbx, uint64_t rcx, uint64_t rdx) {
+    std::vector<uint8_t> BuildCpuidPatch(uint64_t rax, uint64_t rbx, uint64_t rcx,
+        uint64_t rdx) {
         std::vector<uint8_t> code;
 
         auto emitMovRegImm64 = [&](uint8_t opcode, uint64_t imm) {
-            code.push_back(0x48);       // REX.W
-            code.push_back(opcode);     // MOV reg, imm64
+            code.push_back(0x48);   // REX.W
+            code.push_back(opcode); // MOV reg, imm64
             for (int i = 0; i < 8; i++) {
                 code.push_back((imm >> (i * 8)) & 0xFF);
             }
@@ -14064,14 +12961,16 @@ private:
         ctx.ContextFlags = CONTEXT_FULL;
 
         if (!GetThreadContext(hThread, &ctx)) {
-            std::wcout << L"[!] Failed to get thread context before single step" << std::endl;
+            std::wcout << L"[!] Failed to get thread context before single step"
+                << std::endl;
             return;
         }
 
         ctx.EFlags |= 0x100; // Trap Flag
 
         if (!SetThreadContext(hThread, &ctx)) {
-            std::wcout << L"[!] Failed to set thread context with Trap Flag" << std::endl;
+            std::wcout << L"[!] Failed to set thread context with Trap Flag"
+                << std::endl;
             return;
         }
 
@@ -14080,7 +12979,8 @@ private:
         DEBUG_EVENT dbgEvent;
         while (true) {
             if (!WaitForDebugEvent(&dbgEvent, 1000)) {
-                std::wcout << L"[!] WaitForDebugEvent failed at : 0x" << std::hex << g_regs.rip << std::endl;
+                std::wcout << L"[!] WaitForDebugEvent failed at : 0x" << std::hex
+                    << g_regs.rip << std::endl;
                 break;
             }
 
@@ -14090,10 +12990,7 @@ private:
                 auto& er = dbgEvent.u.Exception.ExceptionRecord;
 
                 if (er.ExceptionCode == EXCEPTION_SINGLE_STEP) {
-
                     UpdateRegistersFromContext();
-
-
 
                     break;
                 }
@@ -14102,11 +12999,8 @@ private:
                 continueStatus = DBG_EXCEPTION_NOT_HANDLED;
             }
 
-            ContinueDebugEvent(dbgEvent.dwProcessId, dbgEvent.dwThreadId, continueStatus);
+            ContinueDebugEvent(dbgEvent.dwProcessId, dbgEvent.dwThreadId,
+                continueStatus);
         }
     }
-
-
-
 };
-
