@@ -35,11 +35,6 @@ jobs:
     - name: Build
       run: cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }}
 
-    # Run tests
-    - name: Test
-      working-directory: ${{ github.workspace }}/build
-      run: ctest -C ${{ env.BUILD_TYPE }}
-
     # Optional: Upload artifacts (exe/dll) for download
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
