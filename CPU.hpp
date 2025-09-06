@@ -36,7 +36,7 @@
 // stealth
 #define Stealth_Mode_ENABLED 1
 // emulate everything in dll user mode
-#define FUll_user_MODE 1
+#define FUll_user_MODE 0
 // Multithread_the_MultiThread
 #define Multithread_the_MultiThread 0
 // Enable automatic patching of hardware checks
@@ -46,6 +46,23 @@
 //------------------------------------------
 
 std::pair<uint64_t, size_t> noexec_range;
+struct SectionRange {
+    uint64_t start;
+    uint64_t end;
+    std::wstring name;
+};
+std::vector<SectionRange> sections_ranges;
+bool hasWatchSection = false;
+std::vector<std::wstring> watchSections;
+bool watchAllSections = false;
+std::wstring GetSectionNameFromAddr(uint64_t addr) {
+    for (const auto& sec : sections_ranges) {
+        if (addr >= sec.start && addr < sec.end) {
+            return sec.name;
+        }
+    }
+    return L"";
+}
 
 #if LOG_ENABLED
 #define LOG(x) std::wcout << x << std::endl
@@ -927,6 +944,23 @@ public:
             if (!disasm.IsJump() && instr.mnemonic != ZYDIS_MNEMONIC_CALL &&
                 instr.mnemonic != ZYDIS_MNEMONIC_RET) {
               g_regs.rip += instr.length;
+            }
+            else if (hasWatchSection && IsInEmulationRange(address)) {
+                std::wstring secName_here = GetSectionNameFromAddr(address);
+                std::wstring secName_jump_to = GetSectionNameFromAddr(g_regs.rip);
+
+                if (!(secName_here == secName_jump_to)) {
+                    bool isWatched = watchAllSections ||
+                        (std::find(watchSections.begin(), watchSections.end(), secName_here) != watchSections.end()) ||
+                        (std::find(watchSections.begin(), watchSections.end(), secName_jump_to) != watchSections.end());
+
+                    if (isWatched) {
+                        LOG_analyze(BRIGHT_RED, L" >>>> [JMP]: From [" + secName_here + L"] To [" + secName_jump_to << "] at [RIP :0x" << std::hex << address << "]");
+
+                    }
+                }
+
+
             }
 
 #if DB_ENABLED
