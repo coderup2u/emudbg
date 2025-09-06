@@ -84,7 +84,7 @@ emudbg.exe <exe_path> [-m target.dll] [-b software|hardware]
 | `-m <target.dll>`| ❌       | Wait for a specific DLL to load before setting breakpoints        |
 | `-b <type>`      | ❌       | Breakpoint type: `software` (default) or `hardware` or `noexec`              |
 | `-r <rva>`      | ❌       | Set a breakpoint at a Relative Virtual Address (RVA) inside the target module. Note: Cannot be used together with -b noexec           |
-| `-watch_section <section1 section2 , all>`      | ❌       | Monitor execution in specific sections.|
+| `-watch_section <sections>` | ❌ | Monitor execution in specific sections. Can list section names or use `all` to watch all sections. |
 
 
 ## 📌 Note on -watch_section:
