@@ -769,6 +769,8 @@ public:
         {ZYDIS_MNEMONIC_SUBPS, &CPU::emulate_subps },
         {ZYDIS_MNEMONIC_ANDNPS, &CPU::emulate_andnps },
         {ZYDIS_MNEMONIC_VANDNPS, &CPU::emulate_vandnps },
+        {ZYDIS_MNEMONIC_ADDPS, &CPU::emulate_addps },
+        {ZYDIS_MNEMONIC_MOVHLPS, &CPU::emulate_movhlps },
 
     };
   }
@@ -12326,6 +12328,73 @@ private:
       }
 
       LOG(L"[+] VANDNPS executed (256-bit), dst = ~src1 & src2");
+  }
+  void emulate_addps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];  
+      const auto& src = instr->operands[1];  
+
+      uint32_t width = dst.size;
+      if (width != 128) {
+          LOG(L"[!] Unsupported width in ADDPS: " << width);
+          return;
+      }
+
+      __m128 a, b;
+
+      if (!read_operand_value<__m128>(dst, width, a)) {
+          LOG(L"[!] Failed to read dst operand in ADDPS");
+          return;
+      }
+      if (!read_operand_value<__m128>(src, width, b)) {
+          LOG(L"[!] Failed to read src operand in ADDPS");
+          return;
+      }
+
+      __m128 result = _mm_add_ps(a, b);
+
+      if (!write_operand_value(dst, width, result)) {
+          LOG(L"[!] Failed to write result in ADDPS");
+          return;
+      }
+
+      LOG(L"[+] ADDPS executed (128-bit), dst = dst + src");
+  }
+  void emulate_movhlps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.type != ZYDIS_OPERAND_TYPE_REGISTER ||
+          src.type != ZYDIS_OPERAND_TYPE_REGISTER) {
+          LOG(L"[!] Unsupported operand types for MOVHLPS");
+          return;
+      }
+
+      __m128 dst_val, src_val;
+
+      if (!read_operand_value(dst, 128, dst_val) ||
+          !read_operand_value(src, 128, src_val)) {
+          LOG(L"[!] Failed to read operands in MOVHLPS");
+          return;
+      }
+
+      alignas(16) float dst_arr[4], src_arr[4], res_arr[4];
+      _mm_store_ps(dst_arr, dst_val);
+      _mm_store_ps(src_arr, src_val);
+
+
+      res_arr[0] = src_arr[2];
+      res_arr[1] = src_arr[3];
+      res_arr[2] = dst_arr[2];
+      res_arr[3] = dst_arr[3];
+
+      __m128 result = _mm_load_ps(res_arr);
+
+      if (!write_operand_value(dst, 128, result)) {
+          LOG(L"[!] Failed to write result in MOVHLPS");
+          return;
+      }
+
+      LOG(L"[+] MOVHLPS executed, dst = movehl(dst, src)");
   }
 
 
