@@ -767,6 +767,8 @@ public:
         {ZYDIS_MNEMONIC_MULPS, &CPU::emulate_mulps },
         {ZYDIS_MNEMONIC_VSUBPS, &CPU::emulate_vsubps },
         {ZYDIS_MNEMONIC_SUBPS, &CPU::emulate_subps },
+        {ZYDIS_MNEMONIC_ANDNPS, &CPU::emulate_andnps },
+        {ZYDIS_MNEMONIC_VANDNPS, &CPU::emulate_vandnps },
 
     };
   }
@@ -12262,6 +12264,68 @@ private:
       }
 
       LOG(L"[+] SUBPS executed (128-bit), dst = dst - src");
+  }
+  void emulate_andnps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];  
+      const auto& src = instr->operands[1];  
+
+      uint32_t width = dst.size;
+      if (width != 128) {
+          LOG(L"[!] Unsupported width in ANDNPS: " << width);
+          return;
+      }
+
+      __m128 a, b;
+
+
+      if (!read_operand_value<__m128>(dst, width, a)) {
+          LOG(L"[!] Failed to read dst operand in ANDNPS");
+          return;
+      }
+      if (!read_operand_value<__m128>(src, width, b)) {
+          LOG(L"[!] Failed to read src operand in ANDNPS");
+          return;
+      }
+
+      __m128 result = _mm_andnot_ps(a, b);
+
+      if (!write_operand_value(dst, width, result)) {
+          LOG(L"[!] Failed to write result in ANDNPS");
+          return;
+      }
+
+      LOG(L"[+] ANDNPS executed (128-bit), dst = ~dst & src");
+  }
+  void emulate_vandnps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0]; 
+      const auto& src1 = instr->operands[1]; 
+      const auto& src2 = instr->operands[2]; 
+
+      uint32_t width = dst.size;
+      if (width != 256) {
+          LOG(L"[!] Unsupported width in VANDNPS: " << width);
+          return;
+      }
+
+      __m256 a, b;
+
+      if (!read_operand_value<__m256>(src1, width, a)) {
+          LOG(L"[!] Failed to read src1 in VANDNPS");
+          return;
+      }
+      if (!read_operand_value<__m256>(src2, width, b)) {
+          LOG(L"[!] Failed to read src2 in VANDNPS");
+          return;
+      }
+
+      __m256 result = _mm256_andnot_ps(a, b);
+
+      if (!write_operand_value(dst, width, result)) {
+          LOG(L"[!] Failed to write result in VANDNPS");
+          return;
+      }
+
+      LOG(L"[+] VANDNPS executed (256-bit), dst = ~src1 & src2");
   }
 
 
