@@ -28,11 +28,11 @@
 
 //------------------------------------------
 // LOG analyze
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 // LOG everything
 #define LOG_ENABLED 0
 // test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 // stealth
 #define Stealth_Mode_ENABLED 1
 // emulate everything in dll user mode
@@ -5684,7 +5684,13 @@ private:
     const auto &dst = instr->operands[0];
     const auto &src = instr->operands[1];
     const uint32_t width = instr->info.operand_width;
+#if DB_ENABLED
+    is_Parity_FLAG_SKIP = 1;
+    is_Auxiliary_Carry_FLAG_SKIP = 1;
+    is_Sign_FLAG_SKIP = 1;
+    is_OVERFLOW_FLAG_SKIP = 1;
 
+#endif
     uint64_t src_val = 0;
     if (!read_operand_value(src, width, src_val)) {
       LOG(L"[!] Failed to read operand for BSF");
