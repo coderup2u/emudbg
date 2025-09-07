@@ -28,11 +28,11 @@
 
 //------------------------------------------
 // LOG analyze
-#define analyze_ENABLED 1
+#define analyze_ENABLED 0
 // LOG everything
 #define LOG_ENABLED 0
 // test with real cpu
-#define DB_ENABLED 0
+#define DB_ENABLED 1
 // stealth
 #define Stealth_Mode_ENABLED 1
 // emulate everything in dll user mode
@@ -764,6 +764,7 @@ public:
         {ZYDIS_MNEMONIC_COMISD, &CPU::emulate_comisd},
         {ZYDIS_MNEMONIC_SYSCALL, &CPU::emulate_syscall},
         {ZYDIS_MNEMONIC_LSL, &CPU::emulate_lsl},
+        {ZYDIS_MNEMONIC_MULPS, &CPU::emulate_mulps },
 
     };
   }
@@ -12146,6 +12147,55 @@ private:
   }
   void emulate_syscall(const ZydisDisassembledInstruction *instr) {}
   void emulate_lsl(const ZydisDisassembledInstruction *instr) {}
+  void emulate_mulps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      uint32_t width = dst.size;
+
+      if (width == 128) {
+          __m128 a, b;
+
+
+          read_operand_value<__m128>(dst, 128, a);
+
+
+          read_operand_value<__m128>(src, 128, b);
+
+          alignas(16) float avals[4], bvals[4], res[4];
+          _mm_storeu_ps(avals, a);
+          _mm_storeu_ps(bvals, b);
+
+          for (int i = 0; i < 4; i++)
+              res[i] = avals[i] * bvals[i];
+
+          __m128 result = _mm_loadu_ps(res);
+          write_operand_value(dst, 128, result);
+
+          LOG(L"[+] MULPS executed (128-bit), element-wise multiplication done");
+      }
+      else if (width == 256) {
+          __m256 a, b;
+
+          read_operand_value<__m256>(dst, width, a);
+          read_operand_value<__m256>(src, width, b);
+
+          alignas(32) float avals[8], bvals[8], result_vals[8];
+          _mm256_storeu_ps(avals, a);
+          _mm256_storeu_ps(bvals, b);
+          for (int i = 0; i < 8; i++)
+              result_vals[i] = avals[i] * bvals[i];
+
+          __m256 result = _mm256_loadu_ps(result_vals);
+          write_operand_value(dst, width, result);
+
+          LOG(L"[+] MULPS executed (256-bit), element-wise multiplication done");
+      }
+      else {
+          LOG(L"[!] Unsupported operand width in MULPS: " << width);
+      }
+  }
+
 
   //----------------------- read / write instruction  -------------------------
   inline uint64_t zero_extend(uint64_t value, uint8_t width) {
