@@ -771,6 +771,8 @@ public:
         {ZYDIS_MNEMONIC_VANDNPS, &CPU::emulate_vandnps },
         {ZYDIS_MNEMONIC_ADDPS, &CPU::emulate_addps },
         {ZYDIS_MNEMONIC_MOVHLPS, &CPU::emulate_movhlps },
+        {ZYDIS_MNEMONIC_UNPCKLPD, &CPU::emulate_unpcklpd },
+        {ZYDIS_MNEMONIC_VUNPCKLPD, &CPU::emulate_vunpcklpd },
 
     };
   }
@@ -12395,6 +12397,82 @@ private:
       }
 
       LOG(L"[+] MOVHLPS executed, dst = movehl(dst, src)");
+  }
+  void emulate_unpcklpd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];  
+      const auto& src = instr->operands[1];  
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for UNPCKLPD: " << dst.size);
+          return;
+      }
+
+      __m128d a_val, b_val;
+
+      if (!read_operand_value<__m128d>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first source operand (dst) for UNPCKLPD");
+          return;
+      }
+      if (!read_operand_value<__m128d>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second source operand (src) for UNPCKLPD");
+          return;
+      }
+
+      alignas(16) double a_arr[2], b_arr[2], out[2];
+      _mm_store_pd(a_arr, a_val);
+      _mm_store_pd(b_arr, b_val);
+
+      out[0] = a_arr[0];
+      out[1] = b_arr[0];
+
+      __m128d result = _mm_load_pd(out);
+
+      if (!write_operand_value<__m128d>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for UNPCKLPD");
+          return;
+      }
+
+      LOG(L"[+] UNPCKLPD executed (128-bit)");
+  }
+  void emulate_vunpcklpd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];  
+      const auto& src1 = instr->operands[1]; 
+      const auto& src2 = instr->operands[2]; 
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VUNPCKLPD: " << dst.size);
+          return;
+      }
+
+      __m256d a_val, b_val;
+
+      if (!read_operand_value<__m256d>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 in VUNPCKLPD");
+          return;
+      }
+      if (!read_operand_value<__m256d>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 in VUNPCKLPD");
+          return;
+      }
+
+      alignas(32) double a_arr[4], b_arr[4], out[4];
+      _mm256_store_pd(a_arr, a_val);
+      _mm256_store_pd(b_arr, b_val);
+
+
+      out[0] = a_arr[0];
+      out[1] = b_arr[0];
+      out[2] = a_arr[2];
+      out[3] = b_arr[2];
+
+      __m256d result = _mm256_load_pd(out);
+
+      if (!write_operand_value(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VUNPCKLPD");
+          return;
+      }
+
+      LOG(L"[+] VUNPCKLPD executed (256-bit)");
   }
 
 
