@@ -765,6 +765,8 @@ public:
         {ZYDIS_MNEMONIC_SYSCALL, &CPU::emulate_syscall},
         {ZYDIS_MNEMONIC_LSL, &CPU::emulate_lsl},
         {ZYDIS_MNEMONIC_MULPS, &CPU::emulate_mulps },
+        {ZYDIS_MNEMONIC_VSUBPS, &CPU::emulate_vsubps },
+        {ZYDIS_MNEMONIC_SUBPS, &CPU::emulate_subps },
 
     };
   }
@@ -12195,6 +12197,73 @@ private:
           LOG(L"[!] Unsupported operand width in MULPS: " << width);
       }
   }
+  void emulate_vsubps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      uint32_t width = dst.size;
+
+      if (width != 256) {
+          LOG(L"[!] Unsupported width in VSUBPS: " << width);
+          return;
+      }
+
+      __m256 a, b;
+
+
+      if (!read_operand_value<__m256>(src1, width, a)) {
+          LOG(L"[!] Failed to read src1 in VSUBPS");
+          return;
+      }
+      if (!read_operand_value<__m256>(src2, width, b)) {
+          LOG(L"[!] Failed to read src2 in VSUBPS");
+          return;
+      }
+
+
+      __m256 result = _mm256_sub_ps(a, b);
+
+      if (!write_operand_value(dst, width, result)) {
+          LOG(L"[!] Failed to write destination in VSUBPS");
+          return;
+      }
+
+      LOG(L"[+] VSUBPS executed (256-bit), dst = src1 - src2");
+  }
+  void emulate_subps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0]; 
+      const auto& src = instr->operands[1];
+
+      uint32_t width = dst.size;
+      if (width != 128) {
+          LOG(L"[!] Unsupported width in SUBPS: " << width);
+          return;
+      }
+
+      __m128 a, b;
+
+
+      if (!read_operand_value<__m128>(dst, width, a)) {
+          LOG(L"[!] Failed to read dst operand in SUBPS");
+          return;
+      }
+      if (!read_operand_value<__m128>(src, width, b)) {
+          LOG(L"[!] Failed to read src operand in SUBPS");
+          return;
+      }
+
+
+      __m128 result = _mm_sub_ps(a, b);
+
+      if (!write_operand_value(dst, width, result)) {
+          LOG(L"[!] Failed to write result in SUBPS");
+          return;
+      }
+
+      LOG(L"[+] SUBPS executed (128-bit), dst = dst - src");
+  }
+
 
 
   //----------------------- read / write instruction  -------------------------
