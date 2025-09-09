@@ -773,6 +773,8 @@ public:
         {ZYDIS_MNEMONIC_MOVHLPS, &CPU::emulate_movhlps },
         {ZYDIS_MNEMONIC_UNPCKLPD, &CPU::emulate_unpcklpd },
         {ZYDIS_MNEMONIC_VUNPCKLPD, &CPU::emulate_vunpcklpd },
+        {ZYDIS_MNEMONIC_PMAXUB, &CPU::emulate_pmaxub },
+        {ZYDIS_MNEMONIC_VPMAXUB, &CPU::emulate_vpmaxub },
 
     };
   }
@@ -1968,9 +1970,10 @@ private:
 
   // ------------------- Memory Access Helpers -------------------
   bool ReadMemory(uint64_t address, void *buffer, SIZE_T size) {
+      const uint64_t kuser_base = 0x00000007FFE0000;
+      const uint64_t kuser_size = 0x1000;
 #if Save_Rva
-    const uint64_t kuser_base = 0x00000007FFE0000;
-    const uint64_t kuser_size = 0x1000;
+
 
     // KUSER_SHARED_DATA
     if (address >= kuser_base && address < kuser_base + kuser_size) {
@@ -1983,8 +1986,7 @@ private:
     }
 #endif
 #if analyze_ENABLED
-    const uint64_t kuser_base = 0x00000007FFE0000;
-    const uint64_t kuser_size = 0x1000;
+
 
     // KUSER_SHARED_DATA
     if (address >= kuser_base && address < kuser_base + kuser_size) {
@@ -4703,7 +4705,6 @@ private:
         << L", CF=" << g_regs.rflags.flags.CF << L", PF="
         << g_regs.rflags.flags.PF);
   }
-
   void emulate_cdqe(const ZydisDisassembledInstruction *instr) {
     g_regs.rax.q = static_cast<int64_t>(static_cast<int32_t>(g_regs.rax.d));
 
@@ -6575,7 +6576,6 @@ private:
                 : L"[mem]")
         << L" => " << std::fixed << converted);
   }
-
   void emulate_cvtsi2ss(const ZydisDisassembledInstruction *instr) {
     const auto &dst = instr->operands[0]; // XMM register
     const auto &src = instr->operands[1]; // Integer (reg/mem)
@@ -12479,6 +12479,85 @@ private:
       }
 
       LOG(L"[+] VUNPCKLPD executed (256-bit)");
+  }
+  void emulate_pmaxub(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PMAXUB: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PMAXUB");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PMAXUB");
+          return;
+      }
+
+
+      alignas(16) uint8_t a_arr[16], b_arr[16], out[16];
+      _mm_store_si128((__m128i*)a_arr, a_val);
+      _mm_store_si128((__m128i*)b_arr, b_val);
+
+
+      for (int i = 0; i < 16; i++) {
+          out[i] = (a_arr[i] > b_arr[i]) ? a_arr[i] : b_arr[i];
+      }
+
+
+      __m128i result = _mm_load_si128((__m128i*)out);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PMAXUB");
+          return;
+      }
+
+      LOG(L"[+] PMAXUB executed (128-bit)");
+  }
+  void emulate_vpmaxub(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPMAXUB: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPMAXUB");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPMAXUB");
+          return;
+      }
+
+      alignas(32) uint8_t a_arr[32], b_arr[32], out[32];
+      _mm256_store_si256((__m256i*)a_arr, a_val);
+      _mm256_store_si256((__m256i*)b_arr, b_val);
+
+      for (int i = 0; i < 32; i++) {
+          out[i] = (a_arr[i] > b_arr[i]) ? a_arr[i] : b_arr[i];
+      }
+
+      __m256i result = _mm256_load_si256((__m256i*)out);
+
+      if (!write_operand_value(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPMAXUB");
+          return;
+      }
+
+      LOG(L"[+] VPMAXUB executed (256-bit)");
   }
 
 

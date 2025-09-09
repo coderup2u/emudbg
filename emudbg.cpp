@@ -1,4 +1,4 @@
-﻿#include "cpu.hpp"
+﻿#include "headers/CPU.hpp"
 #include <thread>
 
 std::unordered_map<DWORD, CPU> cpuThreads;

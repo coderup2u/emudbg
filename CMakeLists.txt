@@ -14,14 +14,14 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # Create the main executable
-add_executable(emudbg "emudbg.cpp" "CPU.hpp" "PE.hpp" "Registers.hpp" "SaveRVA.hpp" "Structs.hpp" "XState.hpp" "asm_function.asm")
+add_executable(emudbg "emudbg.cpp" "headers/CPU.hpp" "headers/PE.hpp" "headers/Registers.hpp" "headers/SaveRVA.hpp" "headers/Structs.hpp" "headers/XState.hpp" "asm_function.asm")
 
 # Optional: Use C++20 if available
 if (CMAKE_VERSION VERSION_GREATER 3.12)
     set_property(TARGET emudbg PROPERTY CXX_STANDARD 20)
 endif()
 
-
+include_directories(headers/)
 target_link_libraries(emudbg PRIVATE
     $<$<CONFIG:Debug>:${CMAKE_SOURCE_DIR}/libs/zydis_wrapper_d.lib>
     $<$<CONFIG:Release>:${CMAKE_SOURCE_DIR}/libs/zydis_wrapper.lib>
