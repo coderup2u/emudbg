@@ -781,6 +781,10 @@ public:
         {ZYDIS_MNEMONIC_VPMAXSB, &CPU::emulate_vpmaxsb },
         {ZYDIS_MNEMONIC_VPMAXSW, &CPU::emulate_vpmaxsw },
         {ZYDIS_MNEMONIC_VPMAXSD, &CPU::emulate_vpmaxsd },
+        {ZYDIS_MNEMONIC_PMAXUD, &CPU::emulate_pmaxud },
+        {ZYDIS_MNEMONIC_VPMAXUD, &CPU::emulate_vpmaxud },
+        {ZYDIS_MNEMONIC_PMADDUBSW, &CPU::emulate_pmaddubsw },
+        {ZYDIS_MNEMONIC_VPMADDUBSW, &CPU::emulate_vpmaddubsw },
 
     };
   }
@@ -12799,6 +12803,165 @@ private:
       }
 
       LOG(L"[+] VPMAXSD executed (256-bit)");
+  }
+  void emulate_pmaxud(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PMAXUD: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PMAXUD");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PMAXUD");
+          return;
+      }
+
+      alignas(16) uint32_t a_arr[4], b_arr[4], out[4];
+      _mm_store_si128((__m128i*)a_arr, a_val);
+      _mm_store_si128((__m128i*)b_arr, b_val);
+
+      for (int i = 0; i < 4; i++) {
+          out[i] = (a_arr[i] > b_arr[i]) ? a_arr[i] : b_arr[i];
+      }
+
+      __m128i result = _mm_load_si128((__m128i*)out);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PMAXUD");
+          return;
+      }
+
+      LOG(L"[+] PMAXUD executed (128-bit)");
+  }
+  void emulate_vpmaxud(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPMAXUD: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPMAXUD");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPMAXUD");
+          return;
+      }
+
+      alignas(32) uint32_t a_arr[8], b_arr[8], out[8];
+      _mm256_store_si256((__m256i*)a_arr, a_val);
+      _mm256_store_si256((__m256i*)b_arr, b_val);
+
+      for (int i = 0; i < 8; i++) {
+          out[i] = (a_arr[i] > b_arr[i]) ? a_arr[i] : b_arr[i];
+      }
+
+      __m256i result = _mm256_load_si256((__m256i*)out);
+
+      if (!write_operand_value(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPMAXUD");
+          return;
+      }
+
+      LOG(L"[+] VPMAXUD executed (256-bit)");
+  }
+  void emulate_pmaddubsw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PMADDUBSW: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PMADDUBSW");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PMADDUBSW");
+          return;
+      }
+
+      alignas(16) uint8_t a_arr[16], b_arr[16];
+      alignas(16) int16_t out[8];
+      _mm_store_si128((__m128i*)a_arr, a_val);
+      _mm_store_si128((__m128i*)b_arr, b_val);
+
+      for (int i = 0; i < 8; i++) {
+          int16_t sum = 0;
+          sum += (int16_t)(a_arr[2 * i] * (int8_t)b_arr[2 * i]);
+          sum += (int16_t)(a_arr[2 * i + 1] * (int8_t)b_arr[2 * i + 1]);
+          out[i] = sum;
+      }
+
+      __m128i result = _mm_load_si128((__m128i*)out);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PMADDUBSW");
+          return;
+      }
+
+      LOG(L"[+] PMADDUBSW executed (128-bit)");
+  }
+  void emulate_vpmaddubsw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPMADDUBSW: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPMADDUBSW");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPMADDUBSW");
+          return;
+      }
+
+      alignas(32) uint8_t a_arr[32], b_arr[32];
+      alignas(32) int16_t out[16];
+      _mm256_store_si256((__m256i*)a_arr, a_val);
+      _mm256_store_si256((__m256i*)b_arr, b_val);
+
+      for (int i = 0; i < 16; i++) {
+          int16_t sum = 0;
+          sum += (int16_t)(a_arr[2 * i] * (int8_t)b_arr[2 * i]);
+          sum += (int16_t)(a_arr[2 * i + 1] * (int8_t)b_arr[2 * i + 1]);
+          out[i] = sum;
+      }
+
+      __m256i result = _mm256_load_si256((__m256i*)out);
+
+      if (!write_operand_value(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPMADDUBSW");
+          return;
+      }
+
+      LOG(L"[+] VPMADDUBSW executed (256-bit)");
   }
 
 
