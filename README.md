@@ -86,6 +86,8 @@ emudbg.exe <exe_path> [-m target.dll] [-b software|hardware]
 | `-r <rva>`      | ❌       | Set a breakpoint at a Relative Virtual Address (RVA) inside the target module. Note: Cannot be used together with -b noexec           |
 | `-watch_section <sections>` | ❌ | Monitor execution in specific sections. Can list section names or use `all` to watch all sections. |
 
+## what is noexec breakpoint?
+noexec removes execution permission from memory regions where code is about to run, so that it triggers an access violation and acts like a breakpoint. It's very useful because it can be used without requiring full user mode. It provides almost the best performance among all types of breakpoints. but doesn’t work with RVA.
 
 ## 📌 Note on -watch_section:
 When using the -watch_section option, emudbg will log the sections being executed or accessed. For example, it will record transitions like from which section to which section the code jumps.
