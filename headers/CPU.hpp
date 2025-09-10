@@ -787,6 +787,12 @@ public:
         {ZYDIS_MNEMONIC_VPMADDUBSW, &CPU::emulate_vpmaddubsw },
         {ZYDIS_MNEMONIC_PMULHRSW, &CPU::emulate_pmulhrsw },
         {ZYDIS_MNEMONIC_VPMULHRSW, &CPU::emulate_vpmulhrsw },
+        {ZYDIS_MNEMONIC_PSIGNB, &CPU::emulate_psignb },
+        {ZYDIS_MNEMONIC_PSIGNW, &CPU::emulate_psignw },
+        {ZYDIS_MNEMONIC_PSIGND, &CPU::emulate_psignd },
+        {ZYDIS_MNEMONIC_VPSIGNB, &CPU::emulate_vpsignb },
+        {ZYDIS_MNEMONIC_VPSIGNW, &CPU::emulate_vpsignw },
+        {ZYDIS_MNEMONIC_VPSIGND, &CPU::emulate_vpsignd },
 
     };
   }
@@ -13023,6 +13029,184 @@ private:
       }
 
       LOG(L"[+] VPMULHRSW executed (256-bit)");
+  }
+  void emulate_psignb(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PSIGNB: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PSIGNB");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PSIGNB");
+          return;
+      }
+
+      __m128i result = _mm_sign_epi8(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PSIGNB");
+          return;
+      }
+
+      LOG(L"[+] PSIGNB executed (128-bit)");
+  }
+  void emulate_psignw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PSIGNW: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PSIGNW");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PSIGNW");
+          return;
+      }
+
+
+      __m128i result = _mm_sign_epi16(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PSIGNW");
+          return;
+      }
+
+      LOG(L"[+] PSIGNW executed (128-bit)");
+  }
+  void emulate_psignd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PSIGND: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PSIGND");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PSIGND");
+          return;
+      }
+
+      __m128i result = _mm_sign_epi32(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PSIGND");
+          return;
+      }
+
+      LOG(L"[+] PSIGND executed (128-bit)");
+  }
+  void emulate_vpsignb(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPSIGNB: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPSIGNB");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPSIGNB");
+          return;
+      }
+
+      __m256i result = _mm256_sign_epi8(a_val, b_val);
+
+      if (!write_operand_value(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPSIGNB");
+          return;
+      }
+
+      LOG(L"[+] VPSIGNB executed (256-bit)");
+  }
+  void emulate_vpsignw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPSIGNW: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPSIGNW");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPSIGNW");
+          return;
+      }
+
+      __m256i result = _mm256_sign_epi16(a_val, b_val);
+
+      if (!write_operand_value(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPSIGNW");
+          return;
+      }
+
+      LOG(L"[+] VPSIGNW executed (256-bit)");
+  }
+  void emulate_vpsignd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPSIGND: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPSIGND");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPSIGND");
+          return;
+      }
+
+      __m256i result = _mm256_sign_epi32(a_val, b_val);
+
+      if (!write_operand_value(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPSIGND");
+          return;
+      }
+
+      LOG(L"[+] VPSIGND executed (256-bit)");
   }
 
 
