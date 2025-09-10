@@ -73,7 +73,7 @@ Windows API functions are skipped through debugger stepping, allowing seamless e
 ## 🛠 Usage
 
 ```bash
-emudbg.exe <exe_path> [-m target.dll] [-b software|hardware]
+emudbg.exe <exe_path> [-m target.dll] [-b software|hardware|noexec]
 ```
 
 ## 📌 Arguments
