@@ -785,6 +785,8 @@ public:
         {ZYDIS_MNEMONIC_VPMAXUD, &CPU::emulate_vpmaxud },
         {ZYDIS_MNEMONIC_PMADDUBSW, &CPU::emulate_pmaddubsw },
         {ZYDIS_MNEMONIC_VPMADDUBSW, &CPU::emulate_vpmaddubsw },
+        {ZYDIS_MNEMONIC_PMULHRSW, &CPU::emulate_pmulhrsw },
+        {ZYDIS_MNEMONIC_VPMULHRSW, &CPU::emulate_vpmulhrsw },
 
     };
   }
@@ -12963,6 +12965,66 @@ private:
 
       LOG(L"[+] VPMADDUBSW executed (256-bit)");
   }
+  void emulate_pmulhrsw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for MULHRSW: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for MULHRSW");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for MULHRSW");
+          return;
+      }
+
+      __m128i result = _mm_mulhrs_epi16(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for MULHRSW");
+          return;
+      }
+
+      LOG(L"[+] MULHRSW executed (128-bit)");
+  }
+  void emulate_vpmulhrsw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPMULHRSW: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPMULHRSW");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPMULHRSW");
+          return;
+      }
+
+      __m256i result = _mm256_mulhrs_epi16(a_val, b_val);
+
+      if (!write_operand_value(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPMULHRSW");
+          return;
+      }
+
+      LOG(L"[+] VPMULHRSW executed (256-bit)");
+  }
+
 
 
 
