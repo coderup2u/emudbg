@@ -793,6 +793,7 @@ public:
         {ZYDIS_MNEMONIC_VPSIGNB, &CPU::emulate_vpsignb },
         {ZYDIS_MNEMONIC_VPSIGNW, &CPU::emulate_vpsignw },
         {ZYDIS_MNEMONIC_VPSIGND, &CPU::emulate_vpsignd },
+        {ZYDIS_MNEMONIC_VPBLENDD, &CPU::emulate_vpblendd },
 
     };
   }
@@ -13207,6 +13208,72 @@ private:
       }
 
       LOG(L"[+] VPSIGND executed (256-bit)");
+  }
+  void emulate_vpblendd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+      const auto& imm8 = instr->operands[3];
+
+      int width = dst.size;
+
+      if (width != 128 && width != 256) {
+          LOG(L"[!] Unsupported width for VPBLENDD: " << width);
+          return;
+      }
+
+      int mask;
+      if (!read_operand_value<int>(imm8, 8, mask)) {
+          LOG(L"[!] Failed to read immediate mask in VPBLENDD");
+          return;
+      }
+
+      if (width == 128) {
+          __m128i a_val, b_val;
+          if (!read_operand_value<__m128i>(src1, 128, a_val) ||
+              !read_operand_value<__m128i>(src2, 128, b_val)) {
+              LOG(L"[!] Failed to read operands in VPBLENDD (128-bit)");
+              return;
+          }
+
+          alignas(16) int32_t a_arr[4], b_arr[4], out[4];
+          _mm_store_si128((__m128i*)a_arr, a_val);
+          _mm_store_si128((__m128i*)b_arr, b_val);
+
+          for (int i = 0; i < 4; i++) {
+              out[i] = (mask & (1 << i)) ? b_arr[i] : a_arr[i];
+          }
+
+          __m128i result = _mm_load_si128((__m128i*)out);
+          if (!write_operand_value<__m128i>(dst, 128, result)) {
+              LOG(L"[!] Failed to write result for VPBLENDD (128-bit)");
+              return;
+          }
+      }
+      else { // 256-bit
+          __m256i a_val, b_val;
+          if (!read_operand_value<__m256i>(src1, 256, a_val) ||
+              !read_operand_value<__m256i>(src2, 256, b_val)) {
+              LOG(L"[!] Failed to read operands in VPBLENDD (256-bit)");
+              return;
+          }
+
+          alignas(32) int32_t a_arr[8], b_arr[8], out[8];
+          _mm256_store_si256((__m256i*)a_arr, a_val);
+          _mm256_store_si256((__m256i*)b_arr, b_val);
+
+          for (int i = 0; i < 8; i++) {
+              out[i] = (mask & (1 << i)) ? b_arr[i] : a_arr[i];
+          }
+
+          __m256i result = _mm256_load_si256((__m256i*)out);
+          if (!write_operand_value<__m256i>(dst, 256, result)) {
+              LOG(L"[!] Failed to write result for VPBLENDD (256-bit)");
+              return;
+          }
+      }
+
+      LOG(L"[+] VPBLENDD executed (" << width << L"-bit)");
   }
 
 
