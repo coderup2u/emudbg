@@ -804,6 +804,10 @@ public:
         {ZYDIS_MNEMONIC_VPMINSW, &CPU::emulate_vpminsw },
         {ZYDIS_MNEMONIC_PMINUD, &CPU::emulate_pminud },
         {ZYDIS_MNEMONIC_VPMINUD, &CPU::emulate_vpminud },
+        {ZYDIS_MNEMONIC_PHADDW, &CPU::emulate_phaddw },
+        {ZYDIS_MNEMONIC_VPHADDW, &CPU::emulate_vphaddw },
+        {ZYDIS_MNEMONIC_PHADDD, &CPU::emulate_phaddd },
+        {ZYDIS_MNEMONIC_VPHADDD, &CPU::emulate_vphaddd },
 
     };
   }
@@ -13578,6 +13582,127 @@ private:
       }
 
       LOG(L"[+] VPMINUD executed (256-bit)");
+  }
+  void emulate_phaddw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PHADDW: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read src1 for PHADDW");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read src2 for PHADDW");
+          return;
+      }
+
+      __m128i result = _mm_hadd_epi16(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PHADDW");
+          return;
+      }
+
+      LOG(L"[+] PHADDW executed (128-bit)");
+  }
+  void emulate_vphaddw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPHADDW: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPHADDW");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPHADDW");
+          return;
+      }
+
+
+      __m256i result = _mm256_hadd_epi16(a_val, b_val);
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPHADDW");
+          return;
+      }
+
+      LOG(L"[+] VPHADDW executed (256-bit)");
+  }
+  void emulate_phaddd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PHADDD: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read src1 for PHADDD");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read src2 for PHADDD");
+          return;
+      }
+
+      __m128i result = _mm_hadd_epi32(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PHADDD");
+          return;
+      }
+
+      LOG(L"[+] PHADDD executed (128-bit)");
+  }
+  void emulate_vphaddd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPHADDD: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPHADDD");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPHADDD");
+          return;
+      }
+
+      __m256i result = _mm256_hadd_epi32(a_val, b_val);
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPHADDD");
+          return;
+      }
+
+      LOG(L"[+] VPHADDD executed (256-bit)");
   }
 
 
