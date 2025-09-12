@@ -794,6 +794,8 @@ public:
         {ZYDIS_MNEMONIC_VPSIGNW, &CPU::emulate_vpsignw },
         {ZYDIS_MNEMONIC_VPSIGND, &CPU::emulate_vpsignd },
         {ZYDIS_MNEMONIC_VPBLENDD, &CPU::emulate_vpblendd },
+        {ZYDIS_MNEMONIC_PMINSB, &CPU::emulate_pminsb },
+        {ZYDIS_MNEMONIC_VPMINSB, &CPU::emulate_vpminsb },
 
     };
   }
@@ -13274,6 +13276,65 @@ private:
       }
 
       LOG(L"[+] VPBLENDD executed (" << width << L"-bit)");
+  }
+  void emulate_pminsb(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PMINSB: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PMINSB");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PMINSB");
+          return;
+      }
+
+      __m128i result = _mm_min_epi8(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PMINSB");
+          return;
+      }
+
+      LOG(L"[+] PMINSB executed (128-bit)");
+  }
+  void emulate_vpminsb(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPMINSB: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPMINSB");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPMINSB");
+          return;
+      }
+
+      __m256i result = _mm256_min_epi8(a_val, b_val);
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPMINSB");
+          return;
+      }
+
+      LOG(L"[+] VPMINSB executed (256-bit)");
   }
 
 
