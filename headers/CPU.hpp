@@ -802,6 +802,8 @@ public:
         {ZYDIS_MNEMONIC_VPMAXUW, &CPU::emulate_vpmaxuw },
         {ZYDIS_MNEMONIC_PMINSW, &CPU::emulate_pminsw },
         {ZYDIS_MNEMONIC_VPMINSW, &CPU::emulate_vpminsw },
+        {ZYDIS_MNEMONIC_PMINUD, &CPU::emulate_pminud },
+        {ZYDIS_MNEMONIC_VPMINUD, &CPU::emulate_vpminud },
 
     };
   }
@@ -13517,6 +13519,65 @@ private:
       }
 
       LOG(L"[+] VPMINSW executed (256-bit)");
+  }
+  void emulate_pminud(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PMINUD: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PMINUD");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PMINUD");
+          return;
+      }
+
+      __m128i result = _mm_min_epu32(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PMINUD");
+          return;
+      }
+
+      LOG(L"[+] PMINUD executed (128-bit)");
+  }
+  void emulate_vpminud(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPMINUD: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPMINUD");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPMINUD");
+          return;
+      }
+
+      __m256i result = _mm256_min_epu32(a_val, b_val);
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPMINUD");
+          return;
+      }
+
+      LOG(L"[+] VPMINUD executed (256-bit)");
   }
 
 
