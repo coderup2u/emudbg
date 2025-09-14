@@ -814,6 +814,8 @@ public:
         {ZYDIS_MNEMONIC_VPHSUBW, &CPU::emulate_vphsubw },
         {ZYDIS_MNEMONIC_PHSUBD, &CPU::emulate_phsubd },
         {ZYDIS_MNEMONIC_VPHSUBD, &CPU::emulate_vphsubd },
+        {ZYDIS_MNEMONIC_VPGATHERDQ, &CPU::emulate_vpgatherdq },
+        {ZYDIS_MNEMONIC_VPGATHERQQ, &CPU::emulate_vpgatherqq },
 
     };
   }
@@ -10299,24 +10301,42 @@ private:
                                                        << " bits");
     }
   }
-  void emulate_vmovdqu(const ZydisDisassembledInstruction *instr) {
-    const auto &dst = instr->operands[0];
-    const auto &src = instr->operands[1];
-    constexpr uint32_t width = 256;
+  void emulate_vmovdqu(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+      auto width = dst.size;
 
-    __m256i value;
+      if (width == 128) {
+          __m128i value;
+          if (!read_operand_value<__m128i>(src, 128, value)) {
+              LOG(L"[!] Failed to read source operand in VMOVDQU (128-bit)");
+              return;
+          }
 
-    if (!read_operand_value(src, width, value)) {
-      LOG(L"[!] Failed to read source operand in vmovdqu");
-      return;
-    }
+          if (!write_operand_value<__m128i>(dst, 128, value)) {
+              LOG(L"[!] Failed to write destination operand in VMOVDQU (128-bit)");
+              return;
+          }
 
-    if (!write_operand_value(dst, width, value)) {
-      LOG(L"[!] Failed to write destination operand in vmovdqu");
-      return;
-    }
+          LOG(L"[+] VMOVDQU executed (128-bit)");
+      }
+      else if (width == 256) {
+          __m256i value;
+          if (!read_operand_value<__m256i>(src, 256, value)) {
+              LOG(L"[!] Failed to read source operand in VMOVDQU (256-bit)");
+              return;
+          }
 
-    LOG(L"[+] VMOVDQU executed");
+          if (!write_operand_value<__m256i>(dst, 256, value)) {
+              LOG(L"[!] Failed to write destination operand in VMOVDQU (256-bit)");
+              return;
+          }
+
+          LOG(L"[+] VMOVDQU executed (256-bit)");
+      }
+      else {
+          LOG(L"[!] Unsupported operand size for VMOVDQU: " << width);
+      }
   }
   void emulate_vmovntdq(const ZydisDisassembledInstruction *instr) {
     const auto &dst = instr->operands[0];
@@ -13887,6 +13907,190 @@ private:
 
       LOG(L"[+] VPHSUBD executed (256-bit)");
   }
+  void emulate_vpgatherdq(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& mem_op = instr->operands[1];
+      const auto& mask_op = instr->operands[2];
+
+      uint32_t width = dst.size;
+
+      if (width == 128) {
+          __m128i index_vec = get_register_value<__m128i>(mem_op.mem.index);
+          alignas(16) int32_t indices[2];
+          _mm_storeu_si128((__m128i*)indices, index_vec);
+
+          __m128i mask_vec = get_register_value<__m128i>(mask_op.reg.value);
+          alignas(16) uint32_t mask_arr[2];
+          _mm_storeu_si128((__m128i*)mask_arr, mask_vec);
+
+          __m128i zero_mask = _mm_setzero_si128();
+          write_operand_value(mask_op, 128, zero_mask);
+
+          alignas(16) int64_t result_arr[2];
+          __m128i prev_dst = get_register_value<__m128i>(dst.reg.value);
+          _mm_storeu_si128((__m128i*)result_arr, prev_dst);
+
+          for (int i = 0; i < 2; i++) {
+              if (!(mask_arr[i] & 0x80000000)) continue;
+
+              uint64_t base_val = 0;
+              if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                  base_val = get_register_value<uint64_t>(mem_op.mem.base);
+                  if (mem_op.mem.base == ZYDIS_REGISTER_RIP)
+                      base_val += instr->info.length;
+              }
+
+              uint64_t addr = base_val + static_cast<uint64_t>(indices[i]) * mem_op.mem.scale + mem_op.mem.disp.value;
+              if (!ReadMemory(addr, &result_arr[i], sizeof(int64_t))) {
+                  LOG(L"[!] Failed to read memory lane " << i << " in VPGATHERDQ(128)");
+                  result_arr[i] = 0;
+              }
+          }
+
+          __m128i result = _mm_loadu_si128((__m128i*)result_arr);
+          write_operand_value(dst, 128, result);
+          LOG(L"[+] VPGATHERDQ executed (128-bit)");
+      }
+      else if (width == 256) {
+          __m256i index_vec = get_register_value<__m256i>(mem_op.mem.index);
+          alignas(32) int32_t indices[4];
+          _mm256_storeu_si256((__m256i*)indices, index_vec);
+
+          __m256i mask_vec = get_register_value<__m256i>(mask_op.reg.value);
+          alignas(32) uint32_t mask_arr[4];
+          _mm256_storeu_si256((__m256i*)mask_arr, mask_vec);
+
+          __m256i zero_mask = _mm256_setzero_si256();
+          write_operand_value(mask_op, 256, zero_mask);
+
+          alignas(32) int64_t result_arr[4];
+          __m256i prev_dst = get_register_value<__m256i>(dst.reg.value);
+          _mm256_storeu_si256((__m256i*)result_arr, prev_dst);
+
+          for (int i = 0; i < 4; i++) {
+              if (!(mask_arr[i] & 0x80000000)) continue;
+
+              uint64_t base_val = 0;
+              if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                  base_val = get_register_value<uint64_t>(mem_op.mem.base);
+                  if (mem_op.mem.base == ZYDIS_REGISTER_RIP)
+                      base_val += instr->info.length;
+              }
+
+              uint64_t addr = base_val + static_cast<uint64_t>(indices[i]) * mem_op.mem.scale + mem_op.mem.disp.value;
+              if (!ReadMemory(addr, &result_arr[i], sizeof(int64_t))) {
+                  LOG(L"[!] Failed to read memory lane " << i << " in VPGATHERDQ(256)");
+                  result_arr[i] = 0;
+              }
+          }
+
+          __m256i result = _mm256_loadu_si256((__m256i*)result_arr);
+          write_operand_value(dst, 256, result);
+          LOG(L"[+] VPGATHERDQ executed (256-bit)");
+      }
+      else {
+          LOG(L"[!] Unsupported width in VPGATHERDQ: " << width);
+      }
+  }
+  void emulate_vpgatherqq(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& mem_op = instr->operands[1];
+      const auto& mask_op = instr->operands[2];
+      uint32_t width = dst.size;
+
+      if (width == 128) {
+          __m128i mask_vec = get_register_value<__m128i>(mask_op.reg.value);
+          alignas(16) int64_t mask_arr[2];
+          _mm_storeu_si128((__m128i*)mask_arr, mask_vec);
+
+          __m128i zero_mask = _mm_setzero_si128();
+          write_operand_value(mask_op, 128, zero_mask);
+
+          __m128i index_vec = get_register_value<__m128i>(mem_op.mem.index);
+          alignas(16) int64_t indices[2];
+          _mm_storeu_si128((__m128i*)indices, index_vec);
+
+          alignas(16) int64_t result_arr[2];
+          __m128i prev_dst = get_register_value<__m128i>(dst.reg.value);
+          _mm_storeu_si128((__m128i*)result_arr, prev_dst);
+
+          for (int i = 0; i < 2; i++) {
+              if (!(mask_arr[i] & 0x8000000000000000ULL)) continue;
+
+              uint64_t base_val = 0;
+              if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                  base_val = get_register_value<uint64_t>(mem_op.mem.base);
+                  if (mem_op.mem.base == ZYDIS_REGISTER_RIP)
+                      base_val += instr->info.length;
+              }
+
+              int64_t disp = mem_op.mem.disp.value;
+              uint64_t addr = base_val +
+                  static_cast<uint64_t>(indices[i]) * mem_op.mem.scale + disp;
+
+              if (!ReadMemory(addr, &result_arr[i], sizeof(int64_t))) {
+                  LOG(L"[!] Failed to read memory lane " << i << " in VPGATHERQQ(128)");
+                  result_arr[i] = 0;
+              }
+          }
+
+          __m128i result = _mm_loadu_si128((__m128i*)result_arr);
+          if (!write_operand_value(dst, 128, result)) {
+              LOG(L"[!] Failed to write result in VPGATHERQQ (128-bit)");
+              return;
+          }
+          LOG(L"[+] VPGATHERQQ executed (128-bit)");
+      }
+      else if (width == 256) {
+          __m256i mask_vec = get_register_value<__m256i>(mask_op.reg.value);
+          alignas(32) int64_t mask_arr[4];
+          _mm256_storeu_si256((__m256i*)mask_arr, mask_vec);
+
+          __m256i zero_mask = _mm256_setzero_si256();
+          write_operand_value(mask_op, 256, zero_mask);
+
+          __m256i index_vec = get_register_value<__m256i>(mem_op.mem.index);
+          alignas(32) int64_t indices[4];
+          _mm256_storeu_si256((__m256i*)indices, index_vec);
+
+          alignas(32) int64_t result_arr[4];
+          __m256i prev_dst = get_register_value<__m256i>(dst.reg.value);
+          _mm256_storeu_si256((__m256i*)result_arr, prev_dst);
+
+          for (int i = 0; i < 4; i++) {
+              if (!(mask_arr[i] & 0x8000000000000000ULL)) continue;
+
+              uint64_t base_val = 0;
+              if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                  base_val = get_register_value<uint64_t>(mem_op.mem.base);
+                  if (mem_op.mem.base == ZYDIS_REGISTER_RIP)
+                      base_val += instr->info.length;
+              }
+
+              int64_t disp = mem_op.mem.disp.value;
+              uint64_t addr = base_val +
+                  static_cast<uint64_t>(indices[i]) * mem_op.mem.scale + disp;
+
+              if (!ReadMemory(addr, &result_arr[i], sizeof(int64_t))) {
+                  LOG(L"[!] Failed to read memory lane " << i << " in VPGATHERQQ(256)");
+                  result_arr[i] = 0;
+              }
+          }
+
+          __m256i result = _mm256_loadu_si256((__m256i*)result_arr);
+          if (!write_operand_value(dst, 256, result)) {
+              LOG(L"[!] Failed to write result in VPGATHERQQ (256-bit)");
+              return;
+          }
+          LOG(L"[+] VPGATHERQQ executed (256-bit)");
+      }
+      else {
+          LOG(L"[!] Unsupported width in VPGATHERQQ: " << width);
+      }
+  }
+
+
+
 
 
 
