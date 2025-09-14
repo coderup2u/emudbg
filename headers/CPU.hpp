@@ -810,6 +810,10 @@ public:
         {ZYDIS_MNEMONIC_VPHADDD, &CPU::emulate_vphaddd },
         {ZYDIS_MNEMONIC_PHADDSW, &CPU::emulate_phaddsw },
         {ZYDIS_MNEMONIC_VPHADDSW, &CPU::emulate_vphaddsw },
+        {ZYDIS_MNEMONIC_PHSUBW, &CPU::emulate_phsubw },
+        {ZYDIS_MNEMONIC_VPHSUBW, &CPU::emulate_vphsubw },
+        {ZYDIS_MNEMONIC_PHSUBD, &CPU::emulate_phsubd },
+        {ZYDIS_MNEMONIC_VPHSUBD, &CPU::emulate_vphsubd },
 
     };
   }
@@ -13764,6 +13768,124 @@ private:
       }
 
       LOG(L"[+] VPHADDSW executed (256-bit)");
+  }
+  void emulate_phsubw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PHSUBW: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PHSUBW");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PHSUBW");
+          return;
+      }
+
+      __m128i result = _mm_hsub_epi16(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PHSUBW");
+          return;
+      }
+
+      LOG(L"[+] PHSUBW executed (128-bit)");
+  }
+  void emulate_vphsubw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPHSUBW: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPHSUBW");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPHSUBW");
+          return;
+      }
+
+      __m256i result = _mm256_hsub_epi16(a_val, b_val);
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPHSUBW");
+          return;
+      }
+
+      LOG(L"[+] VPHSUBW executed (256-bit)");
+  }
+  void emulate_phsubd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PHSUBD: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PHSUBD");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PHSUBD");
+          return;
+      }
+
+      __m128i result = _mm_hsub_epi32(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PHSUBD");
+          return;
+      }
+
+      LOG(L"[+] PHSUBD executed (128-bit)");
+  }
+  void emulate_vphsubd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPHSUBD: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPHSUBD");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPHSUBD");
+          return;
+      }
+
+      __m256i result = _mm256_hsub_epi32(a_val, b_val);
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPHSUBD");
+          return;
+      }
+
+      LOG(L"[+] VPHSUBD executed (256-bit)");
   }
 
 
