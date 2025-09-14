@@ -808,6 +808,8 @@ public:
         {ZYDIS_MNEMONIC_VPHADDW, &CPU::emulate_vphaddw },
         {ZYDIS_MNEMONIC_PHADDD, &CPU::emulate_phaddd },
         {ZYDIS_MNEMONIC_VPHADDD, &CPU::emulate_vphaddd },
+        {ZYDIS_MNEMONIC_PHADDSW, &CPU::emulate_phaddsw },
+        {ZYDIS_MNEMONIC_VPHADDSW, &CPU::emulate_vphaddsw },
 
     };
   }
@@ -13703,6 +13705,65 @@ private:
       }
 
       LOG(L"[+] VPHADDD executed (256-bit)");
+  }
+  void emulate_phaddsw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PHADDSW: " << dst.size);
+          return;
+      }
+
+      __m128i a_val, b_val;
+
+      if (!read_operand_value<__m128i>(dst, 128, a_val)) {
+          LOG(L"[!] Failed to read first operand (dst) for PHADDSW");
+          return;
+      }
+      if (!read_operand_value<__m128i>(src, 128, b_val)) {
+          LOG(L"[!] Failed to read second operand (src) for PHADDSW");
+          return;
+      }
+
+      __m128i result = _mm_hadds_epi16(a_val, b_val);
+
+      if (!write_operand_value<__m128i>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for PHADDSW");
+          return;
+      }
+
+      LOG(L"[+] PHADDSW executed (128-bit)");
+  }
+  void emulate_vphaddsw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPHADDSW: " << dst.size);
+          return;
+      }
+
+      __m256i a_val, b_val;
+
+      if (!read_operand_value<__m256i>(src1, 256, a_val)) {
+          LOG(L"[!] Failed to read src1 for VPHADDSW");
+          return;
+      }
+      if (!read_operand_value<__m256i>(src2, 256, b_val)) {
+          LOG(L"[!] Failed to read src2 for VPHADDSW");
+          return;
+      }
+
+      __m256i result = _mm256_hadds_epi16(a_val, b_val);
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPHADDSW");
+          return;
+      }
+
+      LOG(L"[+] VPHADDSW executed (256-bit)");
   }
 
 
