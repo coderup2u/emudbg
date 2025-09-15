@@ -818,6 +818,7 @@ public:
         {ZYDIS_MNEMONIC_VPGATHERQQ, &CPU::emulate_vpgatherqq },
         {ZYDIS_MNEMONIC_VGATHERDPD, &CPU::emulate_vgatherdpd },
         {ZYDIS_MNEMONIC_VGATHERQPD, &CPU::emulate_vgatherqpd },
+        {ZYDIS_MNEMONIC_VGATHERDPS, &CPU::emulate_vgatherdps },
 
     };
   }
@@ -14276,6 +14277,105 @@ private:
       }
       else {
           LOG(L"[!] Unsupported width in VGATHERQPD: " << width);
+      }
+  }
+  void emulate_vgatherdps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& mem_op = instr->operands[1];
+      const auto& mask_op = instr->operands[2];
+
+      uint32_t width = dst.size;
+
+      if (width == 128) {
+
+          __m128i index_vec = get_register_value<__m128i>(mem_op.mem.index);
+          alignas(16) int32_t indices[4];
+          _mm_storeu_si128((__m128i*)indices, index_vec);
+
+
+          __m128 mask_ps = get_register_value<__m128>(mask_op.reg.value);
+          __m128i mask_i = _mm_castps_si128(mask_ps);
+          alignas(16) uint32_t mask_arr[4];
+          _mm_storeu_si128((__m128i*)mask_arr, mask_i);
+
+
+          __m128i zero_mask = _mm_setzero_si128();
+          write_operand_value(mask_op, 128, zero_mask);
+
+
+          alignas(16) float result_arr[4];
+          __m128 prev_dst = get_register_value<__m128>(dst.reg.value);
+          _mm_storeu_ps(result_arr, prev_dst);
+
+          for (int i = 0; i < 4; ++i) {
+
+              if (!(mask_arr[i] & 0x80000000U)) continue;
+
+              uint64_t base_val = 0;
+              if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                  base_val = get_register_value<uint64_t>(mem_op.mem.base);
+                  if (mem_op.mem.base == ZYDIS_REGISTER_RIP)
+                      base_val += instr->info.length;
+              }
+
+              uint64_t addr = base_val +
+                  static_cast<uint64_t>(indices[i]) * mem_op.mem.scale +
+                  mem_op.mem.disp.value;
+
+              if (!ReadMemory(addr, &result_arr[i], sizeof(float))) {
+                  LOG(L"[!] Failed to read memory lane " << i << " in VGATHERDPS(128)");
+                  result_arr[i] = 0.0f;
+              }
+          }
+
+          __m128 result = _mm_loadu_ps(result_arr);
+          write_operand_value(dst, 128, result);
+          LOG(L"[+] VGATHERDPS executed (128-bit)");
+      }
+      else if (width == 256) {
+
+          __m256i index_vec = get_register_value<__m256i>(mem_op.mem.index);
+          alignas(32) int32_t indices[8];
+          _mm256_storeu_si256((__m256i*)indices, index_vec);
+
+          __m256 mask_ps = get_register_value<__m256>(mask_op.reg.value);
+          __m256i mask_i = _mm256_castps_si256(mask_ps);
+          alignas(32) uint32_t mask_arr[8];
+          _mm256_storeu_si256((__m256i*)mask_arr, mask_i);
+
+          __m256i zero_mask = _mm256_setzero_si256();
+          write_operand_value(mask_op, 256, zero_mask);
+
+          alignas(32) float result_arr[8];
+          __m256 prev_dst = get_register_value<__m256>(dst.reg.value);
+          _mm256_storeu_ps(result_arr, prev_dst);
+
+          for (int i = 0; i < 8; ++i) {
+              if (!(mask_arr[i] & 0x80000000U)) continue;
+
+              uint64_t base_val = 0;
+              if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                  base_val = get_register_value<uint64_t>(mem_op.mem.base);
+                  if (mem_op.mem.base == ZYDIS_REGISTER_RIP)
+                      base_val += instr->info.length;
+              }
+
+              uint64_t addr = base_val +
+                  static_cast<uint64_t>(indices[i]) * mem_op.mem.scale +
+                  mem_op.mem.disp.value;
+
+              if (!ReadMemory(addr, &result_arr[i], sizeof(float))) {
+                  LOG(L"[!] Failed to read memory lane " << i << " in VGATHERDPS(256)");
+                  result_arr[i] = 0.0f;
+              }
+          }
+
+          __m256 result = _mm256_loadu_ps(result_arr);
+          write_operand_value(dst, 256, result);
+          LOG(L"[+] VGATHERDPS executed (256-bit)");
+      }
+      else {
+          LOG(L"[!] Unsupported width in VGATHERDPS: " << width);
       }
   }
 
