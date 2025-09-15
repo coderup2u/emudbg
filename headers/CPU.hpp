@@ -14386,9 +14386,10 @@ private:
       const auto& mem_op = instr->operands[1];
       const auto& mask_op = instr->operands[2];
 
-      auto width = ZydisRegisterGetWidth(ZYDIS_MACHINE_MODE_LONG_64, dst.reg.value);
 
-      if (width == 128) {
+      auto index_width = ZydisRegisterGetWidth(ZYDIS_MACHINE_MODE_LONG_64, mem_op.mem.index);
+
+      if (index_width == 128) {
 
           __m128i index_vec = get_register_value<__m128i>(mem_op.mem.index);
           alignas(16) int64_t indices[2];
@@ -14401,15 +14402,13 @@ private:
           __m128 zero_mask = _mm_setzero_ps();
           write_operand_value(mask_op, 128, zero_mask);
 
-
           __m128 prev_dst = get_register_value<__m128>(dst.reg.value);
           alignas(16) float result_arr[4];
           _mm_storeu_ps(result_arr, prev_dst);
 
-
           for (int j = 0; j < 2; ++j) {
               uint32_t mask_bits = *(uint32_t*)&mask_arr[j];
-              if (!(mask_bits & 0x80000000U)) continue;
+              if (!(mask_bits & 0x80000000U)) continue;  
 
               uint64_t base_val = 0;
               if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
@@ -14427,32 +14426,34 @@ private:
               }
           }
 
+
           result_arr[2] = 0.0f;
           result_arr[3] = 0.0f;
+
+ 
 
           __m128 result = _mm_loadu_ps(result_arr);
           write_operand_value(dst, 128, result);
       }
-      else if (width == 256) {
+      else if (index_width == 256) {
 
           __m256i index_vec = get_register_value<__m256i>(mem_op.mem.index);
           alignas(32) int64_t indices[4];
           _mm256_storeu_si256((__m256i*)indices, index_vec);
 
+          __m128 mask_ps = get_register_value<__m128>(mask_op.reg.value);  
+          alignas(16) float mask_arr[4];
+          _mm_storeu_ps(mask_arr, mask_ps);
 
-          __m256 mask_ps = get_register_value<__m256>(mask_op.reg.value);
-          alignas(32) float mask_arr[8];
-          _mm256_storeu_ps(mask_arr, mask_ps);
+          __m128 zero_mask = _mm_setzero_ps();
+          write_operand_value(mask_op, 128, zero_mask);
 
-          __m256 zero_mask = _mm256_setzero_ps();
-          write_operand_value(mask_op, 256, zero_mask);
-
-          __m256 prev_dst = get_register_value<__m256>(dst.reg.value);
-          alignas(32) float result_arr[8];
-          _mm256_storeu_ps(result_arr, prev_dst);
+          __m128 prev_dst = get_register_value<__m128>(dst.reg.value);  
+          alignas(16) float result_arr[4];
+          _mm_storeu_ps(result_arr, prev_dst);
 
 
-          for (int j = 0; j < 4; ++j) {
+          for (int j = 0; j < 4; ++j) {  
               uint32_t mask_bits = *(uint32_t*)&mask_arr[j];
               if (!(mask_bits & 0x80000000U)) continue;
 
@@ -14464,7 +14465,7 @@ private:
               }
 
               uint64_t addr = base_val + (indices[j] * mem_op.mem.scale) + mem_op.mem.disp.value;
-              std::cout << "[DEBUG] Lane " << j << " addr=0x" << std::hex << addr << std::dec << "\n";
+
 
               if (!ReadMemory(addr, &result_arr[j], sizeof(float))) {
                   std::cout << "[!] Failed to read memory lane " << j << "\n";
@@ -14472,15 +14473,12 @@ private:
               }
           }
 
-          for (int k = 4; k < 8; ++k) {
-              result_arr[k] = 0.0f;
-          }
 
-          __m256 result = _mm256_loadu_ps(result_arr);
-          write_operand_value(dst, 256, result);
+          __m128 result = _mm_loadu_ps(result_arr);
+          write_operand_value(dst, 128, result);
       }
       else {
-          LOG(L"[!] Unsupported width in VGATHERQPS: " << width);
+          LOG(L"[!] Unsupported width in VGATHERQPS: " << index_width);
       }
   }
   void emulate_pextrq(const ZydisDisassembledInstruction* instr) {
