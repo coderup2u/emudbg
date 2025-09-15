@@ -819,6 +819,9 @@ public:
         {ZYDIS_MNEMONIC_VGATHERDPD, &CPU::emulate_vgatherdpd },
         {ZYDIS_MNEMONIC_VGATHERQPD, &CPU::emulate_vgatherqpd },
         {ZYDIS_MNEMONIC_VGATHERDPS, &CPU::emulate_vgatherdps },
+        {ZYDIS_MNEMONIC_VGATHERQPS, &CPU::emulate_vgatherqps },
+        {ZYDIS_MNEMONIC_PEXTRQ, &CPU::emulate_pextrq },
+        {ZYDIS_MNEMONIC_VPEXTRQ, &CPU::emulate_vpextrq },
 
     };
   }
@@ -14378,6 +14381,219 @@ private:
           LOG(L"[!] Unsupported width in VGATHERDPS: " << width);
       }
   }
+  void emulate_vgatherqps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& mem_op = instr->operands[1];
+      const auto& mask_op = instr->operands[2];
+
+      auto width = ZydisRegisterGetWidth(ZYDIS_MACHINE_MODE_LONG_64, dst.reg.value);
+
+      if (width == 128) {
+
+          __m128i index_vec = get_register_value<__m128i>(mem_op.mem.index);
+          alignas(16) int64_t indices[2];
+          _mm_storeu_si128((__m128i*)indices, index_vec);
+
+          __m128 mask_ps = get_register_value<__m128>(mask_op.reg.value);
+          alignas(16) float mask_arr[4];
+          _mm_storeu_ps(mask_arr, mask_ps);
+
+          __m128 zero_mask = _mm_setzero_ps();
+          write_operand_value(mask_op, 128, zero_mask);
+
+
+          __m128 prev_dst = get_register_value<__m128>(dst.reg.value);
+          alignas(16) float result_arr[4];
+          _mm_storeu_ps(result_arr, prev_dst);
+
+
+          for (int j = 0; j < 2; ++j) {
+              uint32_t mask_bits = *(uint32_t*)&mask_arr[j];
+              if (!(mask_bits & 0x80000000U)) continue;
+
+              uint64_t base_val = 0;
+              if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                  base_val = get_register_value<uint64_t>(mem_op.mem.base);
+                  if (mem_op.mem.base == ZYDIS_REGISTER_RIP)
+                      base_val += instr->info.length;
+              }
+
+              uint64_t addr = base_val + (indices[j] * mem_op.mem.scale) + mem_op.mem.disp.value;
+              std::cout << "[DEBUG] Lane " << j << " addr=0x" << std::hex << addr << std::dec << "\n";
+
+              if (!ReadMemory(addr, &result_arr[j], sizeof(float))) {
+                  std::cout << "[!] Failed to read memory lane " << j << "\n";
+                  result_arr[j] = 0.0f;
+              }
+          }
+
+          result_arr[2] = 0.0f;
+          result_arr[3] = 0.0f;
+
+          __m128 result = _mm_loadu_ps(result_arr);
+          write_operand_value(dst, 128, result);
+      }
+      else if (width == 256) {
+
+          __m256i index_vec = get_register_value<__m256i>(mem_op.mem.index);
+          alignas(32) int64_t indices[4];
+          _mm256_storeu_si256((__m256i*)indices, index_vec);
+
+
+          __m256 mask_ps = get_register_value<__m256>(mask_op.reg.value);
+          alignas(32) float mask_arr[8];
+          _mm256_storeu_ps(mask_arr, mask_ps);
+
+          __m256 zero_mask = _mm256_setzero_ps();
+          write_operand_value(mask_op, 256, zero_mask);
+
+          __m256 prev_dst = get_register_value<__m256>(dst.reg.value);
+          alignas(32) float result_arr[8];
+          _mm256_storeu_ps(result_arr, prev_dst);
+
+
+          for (int j = 0; j < 4; ++j) {
+              uint32_t mask_bits = *(uint32_t*)&mask_arr[j];
+              if (!(mask_bits & 0x80000000U)) continue;
+
+              uint64_t base_val = 0;
+              if (mem_op.mem.base != ZYDIS_REGISTER_NONE) {
+                  base_val = get_register_value<uint64_t>(mem_op.mem.base);
+                  if (mem_op.mem.base == ZYDIS_REGISTER_RIP)
+                      base_val += instr->info.length;
+              }
+
+              uint64_t addr = base_val + (indices[j] * mem_op.mem.scale) + mem_op.mem.disp.value;
+              std::cout << "[DEBUG] Lane " << j << " addr=0x" << std::hex << addr << std::dec << "\n";
+
+              if (!ReadMemory(addr, &result_arr[j], sizeof(float))) {
+                  std::cout << "[!] Failed to read memory lane " << j << "\n";
+                  result_arr[j] = 0.0f;
+              }
+          }
+
+          for (int k = 4; k < 8; ++k) {
+              result_arr[k] = 0.0f;
+          }
+
+          __m256 result = _mm256_loadu_ps(result_arr);
+          write_operand_value(dst, 256, result);
+      }
+      else {
+          LOG(L"[!] Unsupported width in VGATHERQPS: " << width);
+      }
+  }
+  void emulate_pextrq(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+      const auto& imm_op = instr->operands[2];
+
+      uint8_t imm = 0;
+      if (!read_operand_value(imm_op, sizeof(imm), imm)) {
+          LOG(L"[!] Failed to read immediate in PEXTRQ");
+          return;
+      }
+
+      auto width = src.size;
+
+      if (width == 128) {
+          __m128i v;
+          if (!read_operand_value(src, width, v)) {
+              LOG(L"[!] Failed to read source operand (128-bit)");
+              return;
+          }
+
+          alignas(16) uint64_t lanes[2];
+          _mm_storeu_si128((__m128i*)lanes, v);
+
+          uint64_t extracted = lanes[imm & 1]; 
+
+          if (!write_operand_value(dst, 64, extracted)) {
+              LOG(L"[!] Failed to write extracted qword");
+              return;
+          }
+
+          LOG(L"[+] PEXTRQ executed (128-bit), lane=" << (int)(imm & 1));
+      }
+      else if (width == 256) {
+          __m256i v;
+          if (!read_operand_value(src, width, v)) {
+              LOG(L"[!] Failed to read source operand (256-bit)");
+              return;
+          }
+
+          alignas(32) uint64_t lanes[4];
+          _mm256_storeu_si256((__m256i*)lanes, v);
+
+          uint64_t extracted = lanes[imm & 3]; 
+
+          if (!write_operand_value(dst, 64, extracted)) {
+              LOG(L"[!] Failed to write extracted qword");
+              return;
+          }
+
+          LOG(L"[+] PEXTRQ executed (256-bit), lane=" << (int)(imm & 3));
+      }
+      else {
+          LOG(L"[!] Unsupported width in PEXTRQ: " << width);
+      }
+  }
+  void emulate_vpextrq(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0]; 
+      const auto& src = instr->operands[1]; 
+      const auto& imm_op = instr->operands[2]; 
+
+      uint8_t imm = 0;
+      if (!read_operand_value(imm_op, sizeof(imm), imm)) {
+          LOG(L"[!] Failed to read immediate in VPEXTRQ");
+          return;
+      }
+
+      auto width = src.size;
+
+      if (width == 128) {
+     
+          __m128i v;
+          if (!read_operand_value(src, 128, v)) {
+              LOG(L"[!] Failed to read XMM source operand");
+              return;
+          }
+
+          alignas(16) uint64_t lanes[2];
+          _mm_storeu_si128((__m128i*)lanes, v);
+
+          uint64_t extracted = lanes[imm & 1]; 
+
+          if (!write_operand_value(dst, 64, extracted)) {
+              LOG(L"[!] Failed to write extracted qword");
+              return;
+          }
+          LOG(L"[+] VPEXTRQ executed (128-bit XMM), lane=" << (int)(imm & 1));
+      }
+      else if (width == 256) {
+ 
+          __m256i v;
+          if (!read_operand_value(src, 256, v)) {
+              LOG(L"[!] Failed to read YMM source operand");
+              return;
+          }
+
+          alignas(32) uint64_t lanes[4];
+          _mm256_storeu_si256((__m256i*)lanes, v);
+
+          uint64_t extracted = lanes[imm & 3];
+
+          if (!write_operand_value(dst, 64, extracted)) {
+              LOG(L"[!] Failed to write extracted qword");
+              return;
+          }
+          LOG(L"[+] VPEXTRQ executed (256-bit YMM), lane=" << (int)(imm & 3));
+      }
+      else {
+          LOG(L"[!] Unsupported source width in VPEXTRQ: " << (int)width);
+      }
+  }
+
 
 
 
