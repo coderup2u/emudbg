@@ -822,6 +822,10 @@ public:
         {ZYDIS_MNEMONIC_VGATHERQPS, &CPU::emulate_vgatherqps },
         {ZYDIS_MNEMONIC_PEXTRQ, &CPU::emulate_pextrq },
         {ZYDIS_MNEMONIC_VPEXTRQ, &CPU::emulate_vpextrq },
+        {ZYDIS_MNEMONIC_VPBROADCASTB, &CPU::emulate_vpbroadcastb },
+        { ZYDIS_MNEMONIC_VPBROADCASTW, &CPU::emulate_vpbroadcastw },
+        { ZYDIS_MNEMONIC_VPBROADCASTD, &CPU::emulate_vpbroadcastd },
+        { ZYDIS_MNEMONIC_VPBROADCASTQ, &CPU::emulate_vpbroadcastq },
 
     };
   }
@@ -14589,6 +14593,158 @@ private:
       }
       else {
           LOG(L"[!] Unsupported source width in VPEXTRQ: " << (int)width);
+      }
+  }
+  void emulate_vpbroadcastb(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size == 128) {
+          __m128i a_val;
+          if (!read_operand_value<__m128i>(src, 128, a_val)) {
+              LOG(L"[!] Failed to read src for VPBROADCASTB (128-bit)");
+              return;
+          }
+
+          __m128i result = _mm_broadcastb_epi8(a_val);
+          if (!write_operand_value<__m128i>(dst, 128, result)) {
+              LOG(L"[!] Failed to write result for VPBROADCASTB (128-bit)");
+              return;
+          }
+
+          LOG(L"[+] VPBROADCASTB executed (128-bit)");
+      }
+      else if (dst.size == 256) {
+          __m128i a_val;
+          if (!read_operand_value<__m128i>(src, 128, a_val)) {
+              LOG(L"[!] Failed to read src for VPBROADCASTB (256-bit)");
+              return;
+          }
+
+          __m256i result = _mm256_broadcastb_epi8(a_val);
+          if (!write_operand_value<__m256i>(dst, 256, result)) {
+              LOG(L"[!] Failed to write result for VPBROADCASTB (256-bit)");
+              return;
+          }
+
+          LOG(L"[+] VPBROADCASTB executed (256-bit)");
+      }
+      else {
+          LOG(L"[!] Unsupported operand size for VPBROADCASTB: " << dst.size);
+      }
+  }
+  void emulate_vpbroadcastw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size == 128) {
+          __m128i a_val;
+          if (!read_operand_value<__m128i>(src, 128, a_val)) {
+              LOG(L"[!] Failed to read src for VPBROADCASTW (128-bit)");
+              return;
+          }
+
+          __m128i result = _mm_broadcastw_epi16(a_val);
+          if (!write_operand_value<__m128i>(dst, 128, result)) {
+              LOG(L"[!] Failed to write result for VPBROADCASTW (128-bit)");
+              return;
+          }
+
+          LOG(L"[+] VPBROADCASTW executed (128-bit)");
+      }
+      else if (dst.size == 256) {
+          __m128i a_val;
+          if (!read_operand_value<__m128i>(src, 128, a_val)) {
+              LOG(L"[!] Failed to read src for VPBROADCASTW (256-bit)");
+              return;
+          }
+
+          __m256i result = _mm256_broadcastw_epi16(a_val);
+          if (!write_operand_value<__m256i>(dst, 256, result)) {
+              LOG(L"[!] Failed to write result for VPBROADCASTW (256-bit)");
+              return;
+          }
+
+          LOG(L"[+] VPBROADCASTW executed (256-bit)");
+      }
+      else {
+          LOG(L"[!] Unsupported operand size for VPBROADCASTW: " << dst.size);
+      }
+  }
+  void emulate_vpbroadcastd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size == 128) {
+          __m128i a_val;
+          if (!read_operand_value<__m128i>(src, 128, a_val)) {
+              LOG(L"[!] Failed to read src for VPBROADCASTD (128-bit)");
+              return;
+          }
+
+          __m128i result = _mm_broadcastd_epi32(a_val);
+          if (!write_operand_value<__m128i>(dst, 128, result)) {
+              LOG(L"[!] Failed to write result for VPBROADCASTD (128-bit)");
+              return;
+          }
+
+          LOG(L"[+] VPBROADCASTD executed (128-bit)");
+      }
+      else if (dst.size == 256) {
+          __m128i a_val;
+          if (!read_operand_value<__m128i>(src, 128, a_val)) {
+              LOG(L"[!] Failed to read src for VPBROADCASTD (256-bit)");
+              return;
+          }
+
+          __m256i result = _mm256_broadcastd_epi32(a_val);
+          if (!write_operand_value<__m256i>(dst, 256, result)) {
+              LOG(L"[!] Failed to write result for VPBROADCASTD (256-bit)");
+              return;
+          }
+
+          LOG(L"[+] VPBROADCASTD executed (256-bit)");
+      }
+      else {
+          LOG(L"[!] Unsupported operand size for VPBROADCASTD: " << dst.size);
+      }
+  }
+  void emulate_vpbroadcastq(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size == 128) {
+          __m128i a_val;
+          if (!read_operand_value<__m128i>(src, 128, a_val)) {
+              LOG(L"[!] Failed to read src for VPBROADCASTQ (128-bit)");
+              return;
+          }
+
+          __m128i result = _mm_broadcastq_epi64(a_val);
+          if (!write_operand_value<__m128i>(dst, 128, result)) {
+              LOG(L"[!] Failed to write result for VPBROADCASTQ (128-bit)");
+              return;
+          }
+
+          LOG(L"[+] VPBROADCASTQ executed (128-bit)");
+      }
+      else if (dst.size == 256) {
+          __m128i a_val;
+          if (!read_operand_value<__m128i>(src, 128, a_val)) {
+              LOG(L"[!] Failed to read src for VPBROADCASTQ (256-bit)");
+              return;
+          }
+
+          __m256i result = _mm256_broadcastq_epi64(a_val);
+          if (!write_operand_value<__m256i>(dst, 256, result)) {
+              LOG(L"[!] Failed to write result for VPBROADCASTQ (256-bit)");
+              return;
+          }
+
+          LOG(L"[+] VPBROADCASTQ executed (256-bit)");
+      }
+      else {
+          LOG(L"[!] Unsupported operand size for VPBROADCASTQ: " << dst.size);
       }
   }
 
