@@ -826,6 +826,11 @@ public:
         { ZYDIS_MNEMONIC_VPBROADCASTW, &CPU::emulate_vpbroadcastw },
         { ZYDIS_MNEMONIC_VPBROADCASTD, &CPU::emulate_vpbroadcastd },
         { ZYDIS_MNEMONIC_VPBROADCASTQ, &CPU::emulate_vpbroadcastq },
+        { ZYDIS_MNEMONIC_PSRLD, &CPU::emulate_psrld },
+        { ZYDIS_MNEMONIC_PSRLQ, &CPU::emulate_psrlq },
+        { ZYDIS_MNEMONIC_VPSRLW, &CPU::emulate_vpsrlw },
+        { ZYDIS_MNEMONIC_VPSRLD, &CPU::emulate_vpsrld },
+        { ZYDIS_MNEMONIC_VPSRLQ, &CPU::emulate_vpsrlq },
 
     };
   }
@@ -14745,6 +14750,257 @@ private:
       }
       else {
           LOG(L"[!] Unsupported operand size for VPBROADCASTQ: " << dst.size);
+      }
+  }
+  void emulate_psrld(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];  
+      const auto& src = instr->operands[1];   
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PSRLD: " << dst.size);
+          return;
+      }
+
+      __m128i dst_val;
+      if (!read_operand_value(dst, 128, dst_val)) {
+          LOG(L"[!] Failed to read destination operand (128-bit)");
+          return;
+      }
+
+      __m128i result;
+
+      if (src.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+
+          uint8_t imm = 0;
+          if (!read_operand_value(src, sizeof(imm), imm)) {
+              LOG(L"[!] Failed to read immediate for PSRLD");
+              return;
+          }
+
+          result = _mm_srli_epi32(dst_val, imm);
+          LOG(L"[+] PSRLD executed with imm=" << (int)imm);
+      }
+      else if (src.type == ZYDIS_OPERAND_TYPE_REGISTER ||
+          src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+
+          __m128i src_val;
+          if (!read_operand_value(src, 128, src_val)) {
+              LOG(L"[!] Failed to read source operand (reg/mem) for PSRLD");
+              return;
+          }
+
+          result = _mm_srl_epi32(dst_val, src_val);
+          LOG(L"[+] PSRLD executed with "
+              << (src.type == ZYDIS_OPERAND_TYPE_REGISTER ? "register" : "memory")
+              << " source");
+      }
+      else {
+          LOG(L"[!] Unsupported source operand type in PSRLD");
+          return;
+      }
+
+      if (!write_operand_value(dst, 128, result)) {
+          LOG(L"[!] Failed to write result of PSRLD");
+          return;
+      }
+  }
+  void emulate_psrlq(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];  
+      const auto& src = instr->operands[1];  
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for PSRLQ: " << dst.size);
+          return;
+      }
+
+      __m128i dst_val;
+      if (!read_operand_value(dst, 128, dst_val)) {
+          LOG(L"[!] Failed to read destination operand (128-bit)");
+          return;
+      }
+
+      __m128i result;
+
+      if (src.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+ 
+          uint8_t imm = 0;
+          if (!read_operand_value(src, sizeof(imm), imm)) {
+              LOG(L"[!] Failed to read immediate for PSRLQ");
+              return;
+          }
+
+          result = _mm_srli_epi64(dst_val, imm);
+          LOG(L"[+] PSRLQ executed with imm=" << (int)imm);
+      }
+      else if (src.type == ZYDIS_OPERAND_TYPE_REGISTER ||
+          src.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+
+          __m128i src_val;
+          if (!read_operand_value(src, 128, src_val)) {
+              LOG(L"[!] Failed to read source operand (reg/mem) for PSRLQ");
+              return;
+          }
+
+          result = _mm_srl_epi64(dst_val, src_val);
+          LOG(L"[+] PSRLQ executed with "
+              << (src.type == ZYDIS_OPERAND_TYPE_REGISTER ? "register" : "memory")
+              << " source");
+      }
+      else {
+          LOG(L"[!] Unsupported source operand type in PSRLQ");
+          return;
+      }
+
+      if (!write_operand_value(dst, 128, result)) {
+          LOG(L"[!] Failed to write result of PSRLQ");
+          return;
+      }
+  }
+  void emulate_vpsrlw(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+      const auto& count_op = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPSRLW: " << dst.size);
+          return;
+      }
+
+      __m256i src_val;
+      if (!read_operand_value<__m256i>(src, 256, src_val)) {
+          LOG(L"[!] Failed to read src operand for VPSRLW");
+          return;
+      }
+
+      __m256i result;
+
+      if (count_op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+          uint8_t imm = 0;
+          if (!read_operand_value(count_op, sizeof(imm), imm)) {
+              LOG(L"[!] Failed to read immediate for VPSRLW");
+              return;
+          }
+          result = _mm256_srli_epi16(src_val, imm);
+          LOG(L"[+] VPSRLW executed with imm=" << (int)imm);
+      }
+      else if (count_op.type == ZYDIS_OPERAND_TYPE_REGISTER ||
+          count_op.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+          __m128i count_val;
+          if (!read_operand_value(count_op, 128, count_val)) {
+              LOG(L"[!] Failed to read count operand (reg/mem) for VPSRLW");
+              return;
+          }
+          result = _mm256_srl_epi16(src_val, count_val);
+          LOG(L"[+] VPSRLW executed with "
+              << (count_op.type == ZYDIS_OPERAND_TYPE_REGISTER ? "register" : "memory")
+              << " count");
+      }
+      else {
+          LOG(L"[!] Unsupported count operand type in VPSRLW");
+          return;
+      }
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPSRLW");
+          return;
+      }
+  }
+  void emulate_vpsrld(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+      const auto& count_op = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPSRLD: " << dst.size);
+          return;
+      }
+
+      __m256i src_val;
+      if (!read_operand_value<__m256i>(src, 256, src_val)) {
+          LOG(L"[!] Failed to read src operand for VPSRLD");
+          return;
+      }
+
+      __m256i result;
+
+      if (count_op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+          uint8_t imm = 0;
+          if (!read_operand_value(count_op, sizeof(imm), imm)) {
+              LOG(L"[!] Failed to read immediate for VPSRLD");
+              return;
+          }
+          result = _mm256_srli_epi32(src_val, imm);
+          LOG(L"[+] VPSRLD executed with imm=" << (int)imm);
+      }
+      else if (count_op.type == ZYDIS_OPERAND_TYPE_REGISTER ||
+          count_op.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+          __m128i count_val;
+          if (!read_operand_value(count_op, 128, count_val)) {
+              LOG(L"[!] Failed to read count operand (reg/mem) for VPSRLD");
+              return;
+          }
+          result = _mm256_srl_epi32(src_val, count_val);
+          LOG(L"[+] VPSRLD executed with "
+              << (count_op.type == ZYDIS_OPERAND_TYPE_REGISTER ? "register" : "memory")
+              << " count");
+      }
+      else {
+          LOG(L"[!] Unsupported count operand type in VPSRLD");
+          return;
+      }
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPSRLD");
+          return;
+      }
+  }
+  void emulate_vpsrlq(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+      const auto& count_op = instr->operands[2];
+
+      if (dst.size != 256) {
+          LOG(L"[!] Unsupported operand size for VPSRLQ: " << dst.size);
+          return;
+      }
+
+      __m256i src_val;
+      if (!read_operand_value<__m256i>(src, 256, src_val)) {
+          LOG(L"[!] Failed to read src operand for VPSRLQ");
+          return;
+      }
+
+      __m256i result;
+
+      if (count_op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+          uint8_t imm = 0;
+          if (!read_operand_value(count_op, sizeof(imm), imm)) {
+              LOG(L"[!] Failed to read immediate for VPSRLQ");
+              return;
+          }
+          result = _mm256_srli_epi64(src_val, imm);
+          LOG(L"[+] VPSRLQ executed with imm=" << (int)imm);
+      }
+      else if (count_op.type == ZYDIS_OPERAND_TYPE_REGISTER ||
+          count_op.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+          __m128i count_val;
+          if (!read_operand_value(count_op, 128, count_val)) {
+              LOG(L"[!] Failed to read count operand (reg/mem) for VPSRLQ");
+              return;
+          }
+          result = _mm256_srl_epi64(src_val, count_val);
+          LOG(L"[+] VPSRLQ executed with "
+              << (count_op.type == ZYDIS_OPERAND_TYPE_REGISTER ? "register" : "memory")
+              << " count");
+      }
+      else {
+          LOG(L"[!] Unsupported count operand type in VPSRLQ");
+          return;
+      }
+
+      if (!write_operand_value<__m256i>(dst, 256, result)) {
+          LOG(L"[!] Failed to write result for VPSRLQ");
+          return;
       }
   }
 
