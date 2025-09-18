@@ -831,6 +831,8 @@ public:
         { ZYDIS_MNEMONIC_VPSRLW, &CPU::emulate_vpsrlw },
         { ZYDIS_MNEMONIC_VPSRLD, &CPU::emulate_vpsrld },
         { ZYDIS_MNEMONIC_VPSRLQ, &CPU::emulate_vpsrlq },
+        { ZYDIS_MNEMONIC_BLENDVPD, &CPU::emulate_blendvpd },
+        { ZYDIS_MNEMONIC_VBLENDVPD, &CPU::emulate_vblendvpd },
 
     };
   }
@@ -15001,6 +15003,98 @@ private:
       if (!write_operand_value<__m256i>(dst, 256, result)) {
           LOG(L"[!] Failed to write result for VPSRLQ");
           return;
+      }
+  }
+  void emulate_blendvpd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for BLENDVPD: " << dst.size);
+          return;
+      }
+
+      __m128d dst_val, src_val;
+      if (!read_operand_value<__m128d>(dst, 128, dst_val)) {
+          LOG(L"[!] Failed to read dst for BLENDVPD");
+          return;
+      }
+      if (!read_operand_value<__m128d>(src, 128, src_val)) {
+          LOG(L"[!] Failed to read src for BLENDVPD");
+          return;
+      }
+
+
+      __m128d mask_val = get_register_value<__m128d>(ZYDIS_REGISTER_XMM0);
+
+
+      __m128d result = _mm_blendv_pd(dst_val, src_val, mask_val);
+
+      if (!write_operand_value<__m128d>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for BLENDVPD");
+          return;
+      }
+
+      LOG(L"[+] BLENDVPD executed (128-bit, mask=XMM0)");
+  }
+  void emulate_vblendvpd(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src1 = instr->operands[1];
+      const auto& src2 = instr->operands[2];
+      const auto& mask = instr->operands[3]; 
+
+      if (dst.size == 128) {
+          __m128d a_val, b_val, mask_val;
+
+          if (!read_operand_value<__m128d>(src1, 128, a_val)) {
+              LOG(L"[!] Failed to read src1 for VBLENDVPD(128)");
+              return;
+          }
+          if (!read_operand_value<__m128d>(src2, 128, b_val)) {
+              LOG(L"[!] Failed to read src2 for VBLENDVPD(128)");
+              return;
+          }
+          if (!read_operand_value<__m128d>(mask, 128, mask_val)) {
+              LOG(L"[!] Failed to read mask for VBLENDVPD(128)");
+              return;
+          }
+
+          __m128d result = _mm_blendv_pd(a_val, b_val, mask_val);
+
+          if (!write_operand_value<__m128d>(dst, 128, result)) {
+              LOG(L"[!] Failed to write result for VBLENDVPD(128)");
+              return;
+          }
+
+          LOG(L"[+] VBLENDVPD executed (128-bit)");
+      }
+      else if (dst.size == 256) {
+          __m256d a_val, b_val, mask_val;
+
+          if (!read_operand_value<__m256d>(src1, 256, a_val)) {
+              LOG(L"[!] Failed to read src1 for VBLENDVPD(256)");
+              return;
+          }
+          if (!read_operand_value<__m256d>(src2, 256, b_val)) {
+              LOG(L"[!] Failed to read src2 for VBLENDVPD(256)");
+              return;
+          }
+          if (!read_operand_value<__m256d>(mask, 256, mask_val)) {
+              LOG(L"[!] Failed to read mask for VBLENDVPD(256)");
+              return;
+          }
+
+          __m256d result = _mm256_blendv_pd(a_val, b_val, mask_val);
+
+          if (!write_operand_value<__m256d>(dst, 256, result)) {
+              LOG(L"[!] Failed to write result for VBLENDVPD(256)");
+              return;
+          }
+
+          LOG(L"[+] VBLENDVPD executed (256-bit)");
+      }
+      else {
+          LOG(L"[!] Unsupported operand size for VBLENDVPD: " << dst.size);
       }
   }
 
