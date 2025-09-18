@@ -833,6 +833,7 @@ public:
         { ZYDIS_MNEMONIC_VPSRLQ, &CPU::emulate_vpsrlq },
         { ZYDIS_MNEMONIC_BLENDVPD, &CPU::emulate_blendvpd },
         { ZYDIS_MNEMONIC_VBLENDVPD, &CPU::emulate_vblendvpd },
+        { ZYDIS_MNEMONIC_BLENDPS, &CPU::emulate_blendps },
 
     };
   }
@@ -15097,6 +15098,42 @@ private:
           LOG(L"[!] Unsupported operand size for VBLENDVPD: " << dst.size);
       }
   }
+  void emulate_blendps(const ZydisDisassembledInstruction* instr) {
+      const auto& dst = instr->operands[0];
+      const auto& src = instr->operands[1];
+      const auto& imm_op = instr->operands[2];
+
+      int mask = 0;
+      if (!read_operand_value(imm_op, sizeof(mask), mask)) {
+          LOG(L"[!] Failed to read immediate mask for BLENDPS");
+          return;
+      }
+
+      if (dst.size != 128) {
+          LOG(L"[!] Unsupported operand size for BLENDPS: " << dst.size);
+          return;
+      }
+
+      __m128 dst_val, src_val;
+      if (!read_operand_value<__m128>(dst, 128, dst_val)) {
+          LOG(L"[!] Failed to read dst for BLENDPS");
+          return;
+      }
+      if (!read_operand_value<__m128>(src, 128, src_val)) {
+          LOG(L"[!] Failed to read src for BLENDPS");
+          return;
+      }
+
+      __m128 result = blend_ps_runtime(dst_val, src_val, mask);
+
+      if (!write_operand_value<__m128>(dst, 128, result)) {
+          LOG(L"[!] Failed to write result for BLENDPS");
+          return;
+      }
+
+      LOG(L"[+] BLENDPS executed (128-bit, mask=" << mask << ")");
+  }
+
 
 
 
